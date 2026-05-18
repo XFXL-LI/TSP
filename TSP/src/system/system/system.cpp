@@ -521,7 +521,7 @@ static void netWorkRestoreTask(void *pvParameters)
     {
         LOG_DEBUG("Resending packet for timestamp: %llu", timestamp);
         uint64_t currentTime = timestamp * 100 + 1;
-        AllProcessedDataPacket *pendingData = filesys.readPendingPacket(currentTime);
+        AllProcessedDataPacket *pendingData = filesys.readPendingPacket(MIN_DATA, currentTime);
 
         if (pendingData)
         {

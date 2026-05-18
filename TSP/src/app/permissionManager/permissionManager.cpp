@@ -376,6 +376,7 @@ void PermissionSystem::onSetConfigRes(void *eventData, Stream *stream, String cm
         resData->release();
     }
 }
+
 void PermissionSystem::onGetRecordsRes(void *eventData, Stream *stream, String cmd, String args){
     LOG_DEBUG("TEST OK onGetRecordsRes callback");
 }
@@ -383,27 +384,37 @@ void PermissionSystem::onGetRecordsRes(void *eventData, Stream *stream, String c
 void PermissionSystem::onGALRes(void *eventData, Stream *stream, String cmd, String args){
     LOG_DEBUG("TEST OK onGALRes callback");
     auto *resData = static_cast<galDataRes *>(eventData);
-    if (resData)    {
-        String jsonRes = "{";
-        jsonRes += "\"operation\":\"" + resData->cmd + "\",";
-        jsonRes += "\"code\":\"OK\",";
-        jsonRes += "\"params\":\"gal_data\",";
-        jsonRes += "\"values\":[";
-        for (size_t i = 0; i < resData->results.size(); i++) {
-            const auto& result = resData->results[i];
-            jsonRes += "{";
-            jsonRes += "\"sensor_id\":\"" + result.sensor_id + "\",";
-            jsonRes += "\"galRes\":" + String(result.galRes ? "true" : "false");
-            jsonRes += "}";
-            if (i < resData->results.size() - 1) {
-                jsonRes += ",";
-            }
+    if (!resData) {
+        return;
+    }
+    bool isAllSuccess = !resData->results.empty(); 
+    for (const auto& result : resData->results) {
+        if (!result.galRes) {
+            isAllSuccess = false;
+            break;
         }
-        jsonRes += "]";
+    }
+    String codeStr = isAllSuccess ? "OK" : "NG";
+    String jsonRes;
+    jsonRes.reserve(256);
+    jsonRes += "{";
+    jsonRes += "\"operation\":\"" + resData->cmd + "\",";
+    jsonRes += "\"code\":\"" + codeStr + "\",";
+    jsonRes += "\"params\":\"gal_data\",";
+    jsonRes += "\"values\":[";
+    for (size_t i = 0; i < resData->results.size(); i++) {
+        const auto& result = resData->results[i];
+        jsonRes += "{";
+        jsonRes += "\"id\":\"" + result.sensor_id + "\",";
+        jsonRes += "\"galRes\":" + String(result.galRes ? "true" : "false");
         jsonRes += "}";
-        getInstance().sendMsg(stream, jsonRes.c_str());
-        resData->release();
-     }
+        if (i < resData->results.size() - 1) {
+            jsonRes += ",";
+        }
+    }
+    jsonRes += "]}";
+    getInstance().sendMsg(stream, jsonRes.c_str());
+    resData->release();
 }
 // ***************************************    »Øµ÷º¯Êý    ***************************************
 

@@ -1,6 +1,7 @@
 #include "filesysManager.h"
 #include "../../module/log/log_manager.h"
 #include "../../system/event/eventBus.h"
+#include "../../module/json/config_json.h"
 #include <sys/dirent.h>
 #include <sys/types.h>
 
@@ -134,107 +135,91 @@ void filesysManager::savePendingPacket(uint64_t timestamp) {
         }
     }
 }
-AllProcessedDataPacket* filesysManager::readPendingPacket(uint64_t timestamp) {
+AllProcessedDataPacket* filesysManager::readPendingPacket(int type, uint64_t timestamp) {
     if (!file_storage::getInstance().isSDcardReady()) {
         LOG_ERROR("SD card not ready");
         return nullptr;
     }
+    String path = getFilePath(type, timestamp);
+    FILE* f = fopen(path.c_str(), "rb");
     
-    for (int type = 1; type <= 3; type++) {
-        String path = getFilePath(type, timestamp);
-        FILE* f = fopen(path.c_str(), "rb");
-        
-        if (!f) {
-            LOG_DEBUG("File not found for type %d: %s", type, path.c_str());
-            continue;
-        }
-        LOG_DEBUG("Found file for pending packet: %s", path.c_str());
-        AllProcessedDataPacket* pkg = new AllProcessedDataPacket();
-        if (pkg == nullptr) {
-            LOG_ERROR("Failed to allocate AllProcessedDataPacket");
-            fclose(f);
-            return nullptr;
-        }
-        
-        pkg->dataTime = (DataTime)type;
-
-        fileStorage rec;
-        int recordCount = 0;
-        
-        uint64_t lasttime = 0;
-        while (fread(&rec, sizeof(fileStorage), 1, f) == 1) {
-            uint64_t fileTs10 = rec.timestamp / 100;
-            uint64_t targetTs10 = timestamp / 100;
-            lasttime = rec.timestamp;
-            if (fileTs10 == targetTs10) {
-                ProcessedDataPacket processedData;
-                processedData.value = rec.value;
-                processedData.min_val = rec.min_val;
-                processedData.max_val = rec.max_val;
-                processedData.is_valid = (rec.is_valid != 0);
-                processedData.cou_val = 0;
-                
-                String sensorId(rec.sensor_id);
-                pkg->processed_data_map[sensorId] = processedData;
-                recordCount++;
-            }
-        }
-        pkg->last_update = lasttime;
+    if (!f) {
+        LOG_DEBUG("File not found for type %d: %s", type, path.c_str());
+        return nullptr;
+    }
+    LOG_DEBUG("Found file for pending packet: %s", path.c_str());
+    AllProcessedDataPacket* pkg = new AllProcessedDataPacket();
+    if (pkg == nullptr) {
+        LOG_ERROR("Failed to allocate AllProcessedDataPacket");
         fclose(f);
-        
-        if (recordCount > 0) {
-            LOG_INFO("Successfully loaded pending packet: timestamp=%llu, type=%d, records=%d", 
-                    lasttime, type, recordCount);
-            return pkg;
-        } else {
-            LOG_WARNING("No matching records found for timestamp %llu in type %d", timestamp, type);
-            pkg->release();
+        return nullptr;
+    }
+    
+    pkg->dataTime = (DataTime)type;
+
+    fileStorage rec;
+    int recordCount = 0;
+    
+    uint64_t lasttime = 0;
+    while (fread(&rec, sizeof(fileStorage), 1, f) == 1) {
+        uint64_t fileTs10 = rec.timestamp / 100;
+        uint64_t targetTs10 = timestamp / 100;
+        lasttime = rec.timestamp;
+        if (fileTs10 == targetTs10) {
+            ProcessedDataPacket processedData;
+            processedData.value = rec.value;
+            processedData.min_val = rec.min_val;
+            processedData.max_val = rec.max_val;
+            processedData.is_valid = (rec.is_valid != 0);
+            processedData.cou_val = 0;
+            
+            String sensorId(rec.sensor_id);
+            pkg->processed_data_map[sensorId] = processedData;
+            recordCount++;
         }
+    }
+    pkg->last_update = lasttime;
+    fclose(f);
+    
+    if (recordCount > 0) {
+        LOG_INFO("Successfully loaded pending packet: timestamp=%llu, type=%d, records=%d", 
+                lasttime, type, recordCount);
+        return pkg;
+    } else {
+        LOG_WARNING("No matching records found for timestamp %llu in type %d", timestamp, type);
+        pkg->release();
     }
     
     LOG_ERROR("Failed to load pending packet for timestamp: %llu", timestamp);
     return nullptr;
 }
 void filesysManager::traverseDirectory(const char* dirPath, std::vector<uint64_t>& result) {
-    DIR* dir = opendir(dirPath); // dirPath 已经是 const char*，直接使用 
+    DIR* dir = opendir(dirPath);
     if (!dir) return;
-
     struct dirent* entry;
     while ((entry = readdir(dir)) != NULL) {
-        // 过滤系统特殊目录
         if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0) {
             continue;
         }
-
-        // 修正路径拼接：将 const char* 转换为 String 后再使用 + 操作符 
         String name = String(entry->d_name);
         String fullPath = String(dirPath) + "/" + name;
 
         if (entry->d_type == DT_DIR) {
-            // 递归调用：使用 fullPath.c_str() 转换为 const char* 
             traverseDirectory(fullPath.c_str(), result);
         } 
         else if (entry->d_type == DT_REG && name.endsWith(".flag")) {
-            // 解析秒数：从文件名 "26.flag" 提取 "26" 
             int dotIndex = name.lastIndexOf('.');
             String ssStr = name.substring(0, dotIndex);
             uint64_t min = strtoull(ssStr.c_str(), NULL, 10);
-
-            // 解析日期和小时：从路径 "/sdcard/pending/20260515/00/26.flag" 提取信息
-            // 路径结构固定为：.../pending/YYYYMMDD/HH/SS.flag 
             int lastSlash = fullPath.lastIndexOf('/');
             int secondLastSlash = fullPath.lastIndexOf('/', lastSlash - 1);
             int thirdLastSlash = fullPath.lastIndexOf('/', secondLastSlash - 1);
-
             if (thirdLastSlash != -1) {
-                // 提取日期 (YYYYMMDD) 和 小时 (HH)
                 String dateStr = fullPath.substring(thirdLastSlash + 1, secondLastSlash);
                 String hourStr = fullPath.substring(secondLastSlash + 1, lastSlash);
 
                 uint64_t datePart = strtoull(dateStr.c_str(), NULL, 10);
                 uint64_t hourPart = strtoull(hourStr.c_str(), NULL, 10);
-                
-                // 组合时间戳 (格式: YYYYMMDDHH00SS，假设目录结构中不含分钟) 20260515120055
                 uint64_t finalTs = (datePart * 10000) + (hourPart * 100) + min;
                 result.push_back(finalTs);
             }
@@ -288,6 +273,40 @@ void filesysManager::cleanEmptyDirectories(String filePath) {
         }
     }
 }
+
+void filesysManager::processQuery(JSONCmdData* req) {
+    if (req == nullptr) return;
+    LOG_INFO("Processing record query request arguments: %s", req->arguments.c_str());
+    config_json jsonParser(req->arguments.c_str());
+    String operation = jsonParser.getString("operation", "");
+    String param     = jsonParser.getString("param", "");
+    String time_str  = jsonParser.getString("time", "");
+    if (operation != "get_records" || time_str == "" || param == "") {
+        LOG_ERROR("Invalid query parameters or empty arguments.");
+        return;
+    }
+    uint64_t ts = strtoull(time_str.c_str(), nullptr, 10);
+    AllProcessedDataPacket *pendingData = nullptr;
+    if (param == "min") {
+        pendingData = readPendingPacket(MIN_DATA, ts);
+    } else if (param == "hour") {
+        pendingData = readPendingPacket(HOUR_DATA, ts);
+    } else if (param == "day") {
+        pendingData = readPendingPacket(DAY_DATA, ts);
+    } else {
+        pendingData = readPendingPacket(RAW_DATA, ts);
+    }
+    if (pendingData)
+    {
+        int subCount = EventBus::getInstance().getSubscriberCount(EventID::GAL_RES);
+        for (int i = 0; i < subCount; i++) {
+            pendingData->retain();
+        }
+        EventBus::getInstance().publish(EventID::GAL_RES, pendingData);
+        pendingData->release();
+    }
+}
+
 void filesysManager::poll() {
     EventMsg msg;
     if (EventBus::waitEvent(SaveDataFileTaskQueue, msg))
@@ -303,7 +322,9 @@ void filesysManager::poll() {
         }
         else if (msg.id == EventID::RECORD_QUERY_REQ)
         {
-            LOG_DEBUG("Received RECORD_QUERY_REQ event");
+            JSONCmdData* req = (JSONCmdData*)msg.data;
+            processQuery(req);
+            req->release();
         }
     }
 }

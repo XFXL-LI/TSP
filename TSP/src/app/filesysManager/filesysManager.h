@@ -17,6 +17,11 @@ struct fileStorage {
 }; // 合计 32 字节
 #pragma pack(pop)
 
+#define RAW_DATA 0
+#define MIN_DATA 1
+#define HOUR_DATA 2
+#define DAY_DATA 3
+
 class filesysManager {
 public:
     static filesysManager& getInstance();
@@ -24,7 +29,7 @@ public:
     void storeProcessedPacket(AllProcessedDataPacket* pkg);
     
     // 待补传数据管理接口
-    AllProcessedDataPacket* readPendingPacket(uint64_t timestamp);
+    AllProcessedDataPacket* readPendingPacket(int type, uint64_t timestamp);
     void savePendingPacket(uint64_t timestamp);                     // 保存待补传的时间戳到文件
     std::vector<uint64_t> scanPendingTimestamps();                 // 启动时扫描未补传的时间戳
     bool deletePendingPacket(uint64_t timestamp);                   // 补传成功后删除待补传数据
@@ -45,6 +50,8 @@ private:
     String getPendingFilePath(uint64_t ts);                         // 生成待补传文件路径
     void parseTimestamp(uint64_t ts, char* date, char* hour, char* min);
     void writeToFile(const String& path, const std::vector<fileStorage>& rec);
+
+    void processQuery(JSONCmdData* req);
 };
 
 #endif

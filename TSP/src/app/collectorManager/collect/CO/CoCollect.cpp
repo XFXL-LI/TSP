@@ -59,7 +59,62 @@ String CoCollect::getID() const {
 }
 
 bool CoCollect::gal(int increment, int ratio) {
-    return true;
+    if (_port == nullptr) {
+        LOG_ERROR("Gal fail: _port is null for %s", _id.c_str());
+        return false;
+    }
+    auto &sm = SerialManager::getInstance();
+    SemaphoreHandle_t _StreamMutex = sm.getMutex(SERIAL_485);
+    if (xSemaphoreTake(_StreamMutex, pdMS_TO_TICKS(3000)) == pdTRUE) {
+        LOG_DEBUG("Start CO gal calibration for %s (Slave: %d)", _id.c_str(), _slaveId);
+        uint8_t rx_buf[8];
+        uint8_t modbus_frame1[] = {0x05, 0x10, 0x4F, 0xFF, 0x00, 0x01, 0x02, 0x55, 0xAA, 0x81, 0x74};
+        if (_slaveId == 5) {
+            modbus_frame1[0] = _slaveId;
+        }
+        while(_port->available()) _port->read(); 
+        _port->write(modbus_frame1, sizeof(modbus_frame1));
+        vTaskDelay(pdMS_TO_TICKS(100)); 
+        if (_port->available() >= 8) {
+            _port->readBytes(rx_buf, 8);
+            if (rx_buf[0] != modbus_frame1[0] || rx_buf[1] != 0x10 || rx_buf[2] != 0x4F || rx_buf[3] != 0xFF) {
+                LOG_ERROR("CO Gal Frame1 response content mismatch! Unlock failed.");
+                xSemaphoreGive(_StreamMutex);
+                return false;
+            }
+        } else {
+            LOG_ERROR("CO Gal Frame1 timeout! No response from sensor.");
+            xSemaphoreGive(_StreamMutex);
+            return false;
+        }
+        vTaskDelay(pdMS_TO_TICKS(1000));
+        uint8_t modbus_frame2[] = {0x05, 0x10, 0x60, 0x06, 0x00, 0x02, 0x04, 0x10, 0x00, 0x00, 0x00, 0xCA, 0x77};
+        if (_slaveId == 5) {
+            modbus_frame2[0] = _slaveId;
+        }
+        while(_port->available()) _port->read(); 
+        _port->write(modbus_frame2, sizeof(modbus_frame2));
+        vTaskDelay(pdMS_TO_TICKS(100)); 
+        if (_port->available() >= 8) {
+            _port->readBytes(rx_buf, 8);
+            if (rx_buf[0] != modbus_frame2[0] || rx_buf[1] != 0x10 || rx_buf[2] != 0x60 || rx_buf[3] != 0x06) {
+                LOG_ERROR("CO Gal Frame2 response content mismatch! Calibration parameters rejected.");
+                xSemaphoreGive(_StreamMutex);
+                return false;
+            }
+        } else {
+            LOG_ERROR("CO Gal Frame2 timeout! Sensor failed to acknowledge calibration command.");
+            xSemaphoreGive(_StreamMutex);
+            return false;
+        }
+        xSemaphoreGive(_StreamMutex);
+        LOG_INFO("CO Gal calibration SUCCESS for %s", _id.c_str());
+        return true;
+    } 
+    else {
+        LOG_ERROR("Failed to get TTL Mutex for CO gal calibration of %s", _id.c_str());
+        return false;
+    }
 }
 DataPacket* CoCollect::collect() {
     DataPacket *packet = new DataPacket();

@@ -65,9 +65,36 @@ bool Pm25Collect::modbusInit(Stream *new_port, String id, String port_name, floa
 }
 
 bool Pm25Collect::gal(int increment, int ratio) {
-    (void)increment;
-    (void)ratio;
-    return true;
+    auto& sm = SerialManager::getInstance();
+    SemaphoreHandle_t _StreamTTLMutex = sm.getMutex("TTL");
+
+    if (xSemaphoreTake(_StreamTTLMutex, pdMS_TO_TICKS(3000)) == pdTRUE) {
+        xSemaphoreGive(_StreamTTLMutex);
+        uint16_t writeVal[2] = {0};
+        writeVal[0] = increment;
+        writeVal[1] = ratio;
+        uint16_t raw[2] = {0};
+        if (!_mb_manager->writeModbusRegs(1, 0x32, 2, writeVal)) {
+            LOG_ERROR("Failed to write increment and ratio values for %s", _id.c_str());
+            return false;
+        } else {
+            LOG_DEBUG("GAL write succeeded for %s: increment=%d, ratio=%d", _id.c_str(), increment, ratio);
+        }
+        vTaskDelay(pdMS_TO_TICKS(1000));
+        if (_mb_manager->readModbusRegs(1, 0x32, 2, raw)) {
+            if (raw[0] == increment && raw[1] == ratio) {
+                LOG_DEBUG("GAL verification succeeded for %s: increment=%d, ratio=%d", _id.c_str(), raw[0], raw[1]);
+                return true;
+            } else {
+                LOG_WARNING("GAL verification failed for %s: expected increment=%d, ratio=%d but got increment=%d, ratio=%d",
+                            _id.c_str(), increment, ratio, raw[0], raw[1]);
+                return false;
+            }
+        }
+    } else {
+        LOG_ERROR("Failed to get TTL Mutex for getID in %s", _id.c_str());
+        return false;
+    }
 }
 
 String Pm25Collect::getID() const

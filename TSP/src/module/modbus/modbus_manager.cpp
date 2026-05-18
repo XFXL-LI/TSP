@@ -94,19 +94,21 @@ bool modbus_manager::writeModbusReg(uint8_t slaveId, uint16_t startAddr, uint32_
     if (_mb_instances == nullptr || modbusResSem == NULL)
         return 0;
     if (xSemaphoreTake(_busMutex, pdMS_TO_TICKS(200)) != pdTRUE) {
+        LOG_ERROR("Failed to take bus mutex for writeModbusReg");
         return 0;
     }
     ModbusRTU *mb = _mb_instances;
     uint16_t result_buffer[1] = {0};
     int i = 0;
+    xSemaphoreTake(modbusResSem, 0);
     while (i < 3)
     {
         if (!mb->slave())
         {
-            xSemaphoreTake(modbusResSem, 0);
             mb->writeHreg(slaveId, startAddr, writeValue, cbRes);
             if (xSemaphoreTake(modbusResSem, pdMS_TO_TICKS(200)) == pdTRUE)
             {
+                xSemaphoreGive(_busMutex);
                 return true;
             }
             i++;
@@ -169,28 +171,29 @@ bool modbus_manager::writeModbusRegs(uint8_t slaveId, uint16_t startAddr, uint16
     if (_mb_instances == nullptr || modbusResSem == NULL || dataBuffer == nullptr)
         return false;
     if (xSemaphoreTake(_busMutex, pdMS_TO_TICKS(200)) != pdTRUE) {
+        LOG_ERROR("Failed to take bus mutex for writeModbusRegs");
         return 0;
     }
     ModbusRTU *mb = _mb_instances;
     int retry = 0;
-
+    xSemaphoreTake(modbusResSem, 0);
     while (retry < 3)
     {
         if (!mb->slave())
         {
-            xSemaphoreTake(modbusResSem, 0);
             mb->writeHreg(slaveId, startAddr, dataBuffer, count, cbRes);
             if (xSemaphoreTake(modbusResSem, pdMS_TO_TICKS(200)) == pdTRUE)
             {
+                xSemaphoreGive(_busMutex);
                 return true;
             }
-
             retry++;
             vTaskDelay(pdMS_TO_TICKS(100));
         }
         mb->task();
         yield();
     }
+    LOG_DEBUG("Failed to write Modbus registers after 3 attempts for slaveId %d, startAddr %d", slaveId, startAddr);
     xSemaphoreGive(_busMutex);
     return false;
 }
