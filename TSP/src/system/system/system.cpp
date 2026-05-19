@@ -373,12 +373,21 @@ static void DataProcessTask(void *pvParameters)
     }
 }
 
+
+static void TempControlTask(void *pvParameters){
+    while(true){
+        vTaskDelay(pdMS_TO_TICKS(10000));
+    }
+    vTaskDelete(NULL);
+}
+
 // 发送实时数据 / 小时数据 / 天数据
 static void Hj212_2017SendTask(void *pvParameters)
 {
     LOG_INFO("Hj212_2017SendTask Started");
     QueueHandle_t Hj212SendTaskQueue = EventBus::getInstance().createReceiverQueue(10);
     EventBus::getInstance().subscribe(EventID::PROCESSED_DATA_COLLECTED, Hj212SendTaskQueue);
+    EventBus::getInstance().subscribe(EventID::RESUME_DATA, Hj212SendTaskQueue);
 
     HJ212_DataCenter HJ212;
     const auto &config = ConfigManager::getInstance().getHJ212();
@@ -430,21 +439,38 @@ static void Hj212_2017SendTask(void *pvParameters)
                 }
                 allData->release();
             }
+            else if (msg.id == EventID::RESUME_DATA)
+            {
+                AllProcessedDataPacket *allData = static_cast<AllProcessedDataPacket *>(msg.data);
+                if (allData == nullptr)
+                {
+                    LOG_ERROR("Received null AllProcessedDataPacket pointer!");
+                    continue;
+                }
+                String HJ212_str = HJ212.build2017Hj212Packet(allData, config);
+                if (HJ212_str.length() > 0)
+                {
+                    LOG_DEBUG("Generated HJ212 Packet %d bytes", HJ212_str.length());
+                    SemaphoreHandle_t _StreamMutex = SerialManager::getInstance().getMutex(SERIAL_HJ212);
+                    if (xSemaphoreTake(_StreamMutex, pdMS_TO_TICKS(3000)) == pdTRUE)
+                    {
+                        DTUManager::getInstance().sendHJ212Packet(HJ212_str);
+                    }
+                    xSemaphoreGive(_StreamMutex);
+                }
+                allData->release();
+            }
         }
-    }
-    vTaskDelete(NULL);
-}
-
-static void TempControlTask(void *pvParameters){
-    while(true){
         vTaskDelay(pdMS_TO_TICKS(10000));
     }
     vTaskDelete(NULL);
 }
+
 static void Hj212_2025SendTask(void *pvParameters){
     LOG_INFO("Hj212_2017SendTask Started");
     QueueHandle_t Hj212SendTaskQueue = EventBus::getInstance().createReceiverQueue(10);
     EventBus::getInstance().subscribe(EventID::PROCESSED_DATA_COLLECTED, Hj212SendTaskQueue);
+    EventBus::getInstance().subscribe(EventID::RESUME_DATA, Hj212SendTaskQueue);
 
     HJ212_DataCenter HJ212;
     const auto &config = ConfigManager::getInstance().getHJ212();
@@ -496,7 +522,29 @@ static void Hj212_2025SendTask(void *pvParameters){
                 }
                 allData->release();
             }
+            else if (msg.id == EventID::RESUME_DATA)
+            {
+                AllProcessedDataPacket *allData = static_cast<AllProcessedDataPacket *>(msg.data);
+                if (allData == nullptr)
+                {
+                    LOG_ERROR("Received null AllProcessedDataPacket pointer!");
+                    continue;
+                }
+                String HJ212_str = HJ212.build2017Hj212Packet(allData, config);
+                if (HJ212_str.length() > 0)
+                {
+                    LOG_DEBUG("Generated HJ212 Packet %d bytes", HJ212_str.length());
+                    SemaphoreHandle_t _StreamMutex = SerialManager::getInstance().getMutex(SERIAL_HJ212);
+                    if (xSemaphoreTake(_StreamMutex, pdMS_TO_TICKS(3000)) == pdTRUE)
+                    {
+                        DTUManager::getInstance().sendHJ212Packet(HJ212_str);
+                    }
+                    xSemaphoreGive(_StreamMutex);
+                }
+                allData->release();
+            }
         }
+        vTaskDelay(pdMS_TO_TICKS(10000));
     }
     vTaskDelete(NULL);
 }
@@ -516,7 +564,6 @@ static void netWorkRestoreTask(void *pvParameters)
     const auto &config = ConfigManager::getInstance().getHJ212();
     auto &filesys = filesysManager::getInstance();
 
-    // 遍历待补传的数据包
     for (uint64_t timestamp : resumeData->packets)
     {
         LOG_DEBUG("Resending packet for timestamp: %llu", timestamp);
@@ -525,19 +572,13 @@ static void netWorkRestoreTask(void *pvParameters)
 
         if (pendingData)
         {
-            String HJ212_str = HJ212.build2017Hj212Packet(pendingData, config);
-            if (HJ212_str.length() > 0)
-            {
-                LOG_DEBUG("Generated HJ212 Packet %d bytes", HJ212_str.length());
-                SemaphoreHandle_t _StreamMutex = SerialManager::getInstance().getMutex(SERIAL_HJ212);
-                if (xSemaphoreTake(_StreamMutex, pdMS_TO_TICKS(3000)) == pdTRUE)
-                {
-                    DTUManager::getInstance().sendHJ212Packet(HJ212_str);
-                    filesys.deletePendingPacket(pendingData->last_update);
-                }
-                xSemaphoreGive(_StreamMutex);
+            int subCount = EventBus::getInstance().getSubscriberCount(EventID::RESUME_DATA);
+            for (int i = 0; i < subCount; i++) {
+                pendingData->retain();
             }
-        }
+            EventBus::getInstance().publish(EventID::RESUME_DATA, pendingData);
+            pendingData->release();
+        } 
         vTaskDelay(pdMS_TO_TICKS(20000));
     }
     delete resumeData;
