@@ -25,6 +25,8 @@ WindSpeedCollect::WindSpeedCollect()
     _regAddr = 0;
     _factor = 1.0f;
     _regCount = 1;
+    unitFactor = 1.0f;
+    rawUnit = "ug/m3";
     // _mb_manager = new modbus_manager();
 }
 
@@ -45,7 +47,7 @@ bool WindSpeedCollect::begin()
     return true;
 }
 
-bool WindSpeedCollect::modbusInit(Stream *new_port, String id, String port_name, float factor)
+bool WindSpeedCollect::modbusInit(Stream* new_port, String id, String port_name, float factor, String unit)
 {
     if (new_port == nullptr)
         return false;
@@ -56,6 +58,7 @@ bool WindSpeedCollect::modbusInit(Stream *new_port, String id, String port_name,
     if (_mb_manager && _port)
     {
         _id = id;
+        rawUnit = unit;
 
         _factor = factor;
         _mb_manager->modbus_init(_port);

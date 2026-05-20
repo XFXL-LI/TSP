@@ -26,6 +26,12 @@
 #include "../../app/permissionManager/permissionManager.h"
 #include "../../app/dtuManager/dtuManager.h"
 #include "../../app/filesysManager/filesysManager.h"
+#include "../../app/tempManager/tempManager.h"
+
+
+#define PUMP1_PIN 14
+#define PUMP2_PIN 40
+#define FAN_PIN 41
 
 // ********** 时间相关定义 **********
 Ds1302 rtc(17, 6, 7);
@@ -174,15 +180,20 @@ static void updateSetupTask(void *pvParameters)
 
     csqInfo.mutex = xSemaphoreCreateMutex();
     volatile bool netWorkError = false;
-
+    int countTime = 0;
     while (true)
     {
-        uint64_t currentTime = getCurrentTime();
-        if (!updateMillisTime(currentTime))
-        {
-            LOG_ERROR("Failed to update milliseconds time");
+        if (countTime >= 120) {
+            uint64_t currentTime = getCurrentTime();
+            if (!updateMillisTime(currentTime))
+            {
+                LOG_ERROR("Failed to update milliseconds time");
+            }
+            LOG_DEBUG("Current Time: %llu", currentTime);
+            countTime = 0;
+        } else {
+            countTime++;
         }
-        LOG_DEBUG("Current Time: %llu", currentTime);
 
         SemaphoreHandle_t _StreamMutex = SerialManager::getInstance().getMutex(SERIAL_HJ212);
         if (xSemaphoreTake(_StreamMutex, pdMS_TO_TICKS(3000)) == pdTRUE)
@@ -350,9 +361,13 @@ static void CollectTask(void *pvParameters)
     TickType_t xLastWakeTime = xTaskGetTickCount();
     const TickType_t xFrequency = pdMS_TO_TICKS(collectTime * 1000);
 
+    pinMode(PUMP1_PIN, OUTPUT);
     while (true)
     {
+        digitalWrite(PUMP1_PIN, HIGH);
+        vTaskDelay(pdMS_TO_TICKS(collectTime * 1000 / 2));
         collectorManager.poll();
+        digitalWrite(PUMP1_PIN, LOW);
         vTaskDelayUntil(&xLastWakeTime, xFrequency);
         xLastWakeTime = xTaskGetTickCount();
     }
@@ -375,8 +390,15 @@ static void DataProcessTask(void *pvParameters)
 
 
 static void TempControlTask(void *pvParameters){
+    TEMPCONTROLCONFIG tempCon = ConfigManager::getInstance().getTempCon();
+    auto &tempManager = TempManager::getInstance();
+    tempManager.begin();
+    tempManager.setTargetTemp(tempCon.tempUpperLimit, tempCon.tempLowerLimit);
+    tempManager.setTargetHumi(tempCon.wetnUpperLimit, tempCon.wetnLowerLimit);
+
     while(true){
-        vTaskDelay(pdMS_TO_TICKS(10000));
+        tempManager.poll();
+        vTaskDelay(pdMS_TO_TICKS(30000));
     }
     vTaskDelete(NULL);
 }
@@ -780,37 +802,31 @@ static void CollectGalTask(void *pvParameters)
 }
 
 // ******************* 时间函数实现 *******************
+// 202605201040
+// 202605010000
 void timeInit(uint64_t timestamp)
 {
     rtc.init();
-    Ds1302::DateTime now;
-    rtc.getDateTime(&now);
-    if (now.month == 0 || now.year < 26)
+    if (timestamp >= 202605010000)
     {
-        if (timestamp >= 202605010000)
-        {
-            Ds1302::DateTime dt;
-            uint64_t temp = timestamp;
-            dt.minute = temp % 100;
-            temp /= 100;
-            dt.hour = temp % 100;
-            temp /= 100;
-            dt.day = temp % 100;
-            temp /= 100;
-            dt.month = temp % 100;
-            temp /= 100;
-            dt.year = (uint8_t)(temp % 100);
-            dt.second = 0;
-            dt.dow = 3;
-            rtc.setDateTime(&dt);
-            Serial.println("RTC Init sucessfully with network time!");
-            return;
-        }
-    }
-    else
-    {
+        Ds1302::DateTime dt;
+        uint64_t temp = timestamp;
+        dt.minute = temp % 100;
+        temp /= 100;
+        dt.hour = temp % 100;
+        temp /= 100;
+        dt.day = temp % 100;
+        temp /= 100;
+        dt.month = temp % 100;
+        temp /= 100;
+        dt.year = (uint8_t)(temp % 100);
+        dt.second = 0;
+        dt.dow = 3;
+        rtc.setDateTime(&dt);
+        Serial.println("RTC Init sucessfully with network time!");
         return;
     }
+    return;
 }
 uint64_t getCurrentTime()
 {
@@ -868,15 +884,24 @@ void setUpInit(void){
     Stream *DTU_port = sm.getStream(SERIAL_DTU);
     auto &DTUMg = DTUManager::getInstance();
     DTUMg.init(*DTU_port, *HJ212_port);
-    uint64_t realTime = DTUMg.dtuSystemTime();
-    if (!updateMillisTime(realTime))
+
+    SemaphoreHandle_t DTUMutex = sm.getMutex(SERIAL_DTU);
+    if (xSemaphoreTake(DTUMutex, pdMS_TO_TICKS(3000)) == pdTRUE)
     {
-        LOG_ERROR("Failed to update milliseconds time");
+        uint64_t realTime = DTUMg.dtuSystemTime();
+        LOG_DEBUG("****** realTime Time: %llu ******", realTime);
+        xSemaphoreGive(DTUMutex);
+        timeInit(realTime);
+
+        uint64_t currentTime1 = getCurrentTime();
+        LOG_DEBUG("****** currentTime1 Time: %llu ******", currentTime1);
+
+        if (!updateMillisTime(realTime))
+        {
+            LOG_ERROR("Failed to update milliseconds time");
+        }
+        vTaskDelay(pdMS_TO_TICKS(50));
     }
-    LOG_DEBUG("****** realTime Time: %llu ******", realTime);
-    uint64_t currentTime1 = getCurrentTime();
-    LOG_DEBUG("****** currentTime1 Time: %llu ******", currentTime1);
-    timeInit(realTime);
 
     HJ212CONFIG hj212Cfg = ConfigManager::getInstance().getHJ212();
     SYSTEMCONFIG systemCfg = ConfigManager::getInstance().getSystem();

@@ -22,6 +22,8 @@ No2Collect::No2Collect()
     _regAddr = 24577;
     _factor = 1.0f;
     _regCount = 1;
+    unitFactor = 1.0f;
+    rawUnit = "ug/m3";
     // _mb_manager = new modbus_manager();
 }
 
@@ -38,7 +40,7 @@ bool No2Collect::begin() {
     return true;
 }
 
-bool No2Collect::modbusInit(Stream* new_port, String id, String port_name, float factor) { 
+bool No2Collect::modbusInit(Stream* new_port, String id, String port_name, float factor, String unit) { 
     if (new_port == nullptr) return false;
     _port = new_port;
     if (_mb_manager == nullptr) {
@@ -46,6 +48,7 @@ bool No2Collect::modbusInit(Stream* new_port, String id, String port_name, float
     }
     if (_mb_manager && _port) {
         _id = id;
+        rawUnit = unit;
         
         
         _factor = factor;

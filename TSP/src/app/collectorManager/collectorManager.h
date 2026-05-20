@@ -25,7 +25,6 @@
 #include "collect/Temp/TempCollect.h"
 #include "collect/Mete/MeteCollect.h"
 
-
 class collectorManager {
 private:
     std::vector<BaseCollector*> _collectors; // 采集器列表

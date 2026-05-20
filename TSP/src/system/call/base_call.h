@@ -8,23 +8,10 @@
 #include <map>
 #include "../../inc/sys_init.h"
 
-#define TSP_ID 1
-
-struct CollectSet {
-    String _id;
-    String _port_name;
-    
-    uint8_t _slaveId;
-    uint16_t _regAddr;
-    uint8_t _regCount;
-    float _factor;
-    bool dataValidity;
-};
-
 class BaseCollector {
 public:
     virtual ~BaseCollector() {}
-    virtual bool modbusInit(Stream* new_port, String id, String port_name, float factor) = 0;
+    virtual bool modbusInit(Stream* new_port, String id, String port_name, float factor, String unit) = 0;
     virtual bool begin() = 0;
     virtual DataPacket* collect() = 0;
     virtual bool gal(int increment, int ratio) = 0;

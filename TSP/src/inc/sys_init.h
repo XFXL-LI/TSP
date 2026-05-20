@@ -242,7 +242,7 @@ struct COLLECTCONFIG {
     String id;
     String name;
     int alarmLimit;
-    String range;
+    String unit;
 
 };
 using COLLECTMAP = std::map<String, COLLECTCONFIG>;

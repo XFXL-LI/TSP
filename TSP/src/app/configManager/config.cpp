@@ -68,8 +68,8 @@ void ConfigManager::begin(){
     // 4. 打印 传感器 (Map 遍历)
     LOG_INFO("[Sensor Collections] Total: %d", globalCfg.collectConfig.size());
     for (auto const& [id, cfg] : globalCfg.collectConfig) {
-        LOG_INFO("  - ID: %s | Name: %s |", 
-                 id.c_str(), cfg.name.c_str());
+        LOG_INFO("  - ID: %s | Name: %s | Unit: %s",
+                 id.c_str(), cfg.name.c_str(), cfg.unit.c_str());
     }
     
     _queryQueue = EventBus::getInstance().createReceiverQueue(10);
@@ -146,7 +146,7 @@ void ConfigManager::_parseSensors(cJSON *objectNode, COLLECTMAP &target_map)
             s.name = String(attr->valuestring); 
 
         if ((attr = cJSON_GetObjectItem(sensorEntry, "unit")) && cJSON_IsString(attr))
-            s.range = String(attr->valuestring);
+            s.unit = String(attr->valuestring);
             
         LOG_INFO("Successfully parsed sensor: %s (%s)", s.id.c_str(), s.name.c_str());
     }

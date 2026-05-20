@@ -25,6 +25,8 @@ Pm10Collect::Pm10Collect()
     _regAddr = 20;
     _factor = 1.0f;
     _regCount = 2;
+    unitFactor = 1.0f;
+    rawUnit = "ug/m3";
     // _mb_manager = new modbus_manager();
 }
 
@@ -45,7 +47,7 @@ bool Pm10Collect::begin()
     return true;
 }
 
-bool Pm10Collect::modbusInit(Stream *new_port, String id, String port_name, float factor)
+bool Pm10Collect::modbusInit(Stream* new_port, String id, String port_name, float factor, String unit)
 {
     if (new_port == nullptr)
         return false;
@@ -55,8 +57,17 @@ bool Pm10Collect::modbusInit(Stream *new_port, String id, String port_name, floa
     }
     if (_mb_manager && _port)
     {
+        rawUnit = unit;
+        if (rawUnit == "ug/m3") {
+            unitFactor = 1.0f;
+        } else if (rawUnit == "mg/m3") {
+            unitFactor = 0.001f;
+        } else if (rawUnit == "ng/m3") {
+            unitFactor = 1000.0f;
+        } else {
+            unitFactor = 1.0f;
+        }
         _id = id;
-
         _factor = factor;
         _mb_manager->modbus_init(_port);
         return true;
@@ -134,7 +145,7 @@ DataPacket *Pm10Collect::collect()
         if (valid_count > 0)
         {
             float average = total_f_value / (float)valid_count;
-            packet->value = (float)((int)(average * 100 + 0.5)) / 100.0f;
+            packet->value = (float)((int)(average * 100 + 0.5)) / 100.0f * unitFactor;
             packet->is_valid = true;
             // LOG_DEBUG("%s average value: %.2f (based on %d samples)", _id.c_str(), packet->value, valid_count);
         }

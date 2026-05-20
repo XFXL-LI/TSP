@@ -100,18 +100,6 @@ public:
     {
         runIf(globalCfg.systemSwitch.tempConSwitch, "TempCon", func);
     }
-    // auto &cfg = ConfigManager::getInstance();
-
-    // cfg.runIfSaveMin([&]() {
-    //     // 这里的代码只有在 system.json 中 save_min_data 为 true 时才会执行
-    //     filesysManager::getInstance().storeProcessedPacket(allData);
-    // });
-    // cfg.runIfHJ212([]() {
-    //     LOG_INFO("HJ212 service starting...");
-    //     // 启动 HJ212 相关的 Task
-    // });
-
-    // --- 定向解析接口 (传入 JSON 字符串) ---
     bool updateSystem(const char *json_str);
     bool updateHJ212(const char *json_str);
     bool updateSensors(const char *json_str);
@@ -123,6 +111,7 @@ public:
     int getCollectInterval() const { return globalCfg.system.collect_time; }
 
     GLOBALCONFIG &getConfig() { return globalCfg; }
+    TEMPCONTROLCONFIG &getTempCon() { return globalCfg.tempControl; }
     SYSTEMCONFIG &getSystem() { return globalCfg.system; }
     HJ212CONFIG &getHJ212() { return globalCfg.hj212; }
     COLLECTMAP &getCollectConfigs()

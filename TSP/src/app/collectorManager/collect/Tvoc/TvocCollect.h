@@ -25,11 +25,13 @@ String _port_name;
     float _factor;
     Stream *_port;
     modbus_manager* _mb_manager;
+    float unitFactor;
+    String rawUnit;
 
 public:
     static TvocCollect& getInstance();
     bool begin() override;
-    bool modbusInit(Stream* new_port, String id, String port_name, float factor) override;
+    bool modbusInit(Stream* new_port, String id, String port_name, float factor, String unit) override;
     bool gal(int increment, int ratio) override;
     String getID() const override;
     virtual DataPacket* collect() override;

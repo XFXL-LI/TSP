@@ -37,7 +37,7 @@ void collectorManager::begin(COLLECTMAP &collectMap)
             if (sensorPort)
             {
                 BaseCollector *collector = it->second;
-                collector->modbusInit(sensorPort, cfg.id, serialPortName, 1.0);
+                collector->modbusInit(sensorPort, cfg.id, serialPortName, 1.0, cfg.unit);
                 registerCollector(collector);
             }
             else
