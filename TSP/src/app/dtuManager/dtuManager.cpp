@@ -83,18 +83,12 @@ int DTUManager::hj212DTUCSQ() {
 bool DTUManager::updateReDtuGoalIP(String newIP){
     int sep = newIP.indexOf(':');
     if (sep < 0) return false;
-
     String ip = newIP.substring(0, sep);
     String port = newIP.substring(sep + 1);
-    
-    // 构造命令：config,set,tcp,1,rs485,1,0,00,60,IP,PORT,0,0,0,0,0,0,0,0
-    String cmd = String(SET_TCPIP_COM_ttlUart) + ip + "," + port + String(SET_IP_END);
-    
+    String cmd = String(SET_TCPIP_COM_Uart) + ip + "," + port + String(SET_IP_END);
     LOG_DEBUG("Sending to DTU: %s", cmd.c_str());
     String res = _remoteDTU->sendCommand(cmd.c_str());
     LOG_DEBUG("DTU Response: %s", res.c_str());
-
-    // 建议增加更宽松或更精确的匹配逻辑
     if (res.indexOf("ok") != -1) { 
         LOG_DEBUG("Server set success!");
         _remoteDTU->sendCommand(CONFIG_SAVE_COM); // 保存配置
@@ -110,8 +104,7 @@ bool DTUManager::updateHJDtuGoalIP(String newIP){
     if (sep < 0) return false;
     String ip = newIP.substring(0, sep);
     String port = newIP.substring(sep + 1);
-    String cmd = String(SET_TCPIP_COM_ttlUart) + ip + "," + port + String(SET_IP_END);
-    
+    String cmd = String(SET_TCPIP_COM_Uart) + ip + "," + port + String(SET_IP_END);
     LOG_DEBUG("Sending to DTU: %s", cmd.c_str());
     String res = _hj212DTU->sendCommand(cmd.c_str());
     LOG_DEBUG("DTU Response: %s", res.c_str());

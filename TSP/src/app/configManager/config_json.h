@@ -5,7 +5,7 @@
 const char *CONFIG_JSON = R"({
     "collect_time": 60,
     "upload_interval": 60,
-    "dtu_server": "39.101.67.255:111"
+    "dtu_server": "39.101.67.255:1883"
 })";
 
 const char *TEMP_CONTROL_JSON = R"({

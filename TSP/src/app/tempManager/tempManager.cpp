@@ -9,12 +9,15 @@ TempManager::TempManager() :
     _targetHumiLow(40.5f),
     _currentTemp(0.0f),
     _currentHumi(0.0f),
-    _isHeating(false) {}
+    _isHeating(false),
+    _isFanRuning(false) {}
 
 void TempManager::begin() {
     pinMode(TEMP_HEAT_PIN, OUTPUT);
+    pinMode(FAN_PIN, OUTPUT);
     digitalWrite(TEMP_HEAT_PIN, LOW);
-    if (!_sht30.begin(TEMP_I2C_SDA, TEMP_I2C_SCL)) {
+    digitalWrite(FAN_PIN, LOW);
+    if (!_sht30.begin(TEMP_I2C_SDA, TEMP_I2C_SCL, 30000)) {
         LOG_ERROR("TempManager - Failed to initialize SHT30 sensor");
     }
 }
@@ -39,6 +42,17 @@ void TempManager::executeControl() {
         if (_isHeating) {
             digitalWrite(TEMP_HEAT_PIN, LOW);
             _isHeating = false;
+        }
+    }
+    if (_currentTemp > 25.0) {
+        if (!_isFanRuning){
+            digitalWrite(FAN_PIN, HIGH);
+            _isFanRuning = true;
+        }
+    } else if (_currentTemp < 25.0) {
+        if (_isFanRuning){
+            digitalWrite(FAN_PIN, LOW);
+            _isFanRuning = false;
         }
     }
 }

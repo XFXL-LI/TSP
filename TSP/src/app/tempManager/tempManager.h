@@ -8,6 +8,7 @@
 #define TEMP_HEAT_PIN 42 // º”»»
 #define TEMP_I2C_SDA 8
 #define TEMP_I2C_SCL 18
+#define FAN_PIN 41
 
 class TempManager {
 public:
@@ -40,6 +41,7 @@ private:
     float _currentTemp;
     float _currentHumi;
     bool _isHeating;
+    bool _isFanRuning;
 
     void executeControl();
 };

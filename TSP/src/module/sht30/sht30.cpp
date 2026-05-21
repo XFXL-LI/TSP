@@ -7,7 +7,7 @@ ClosedCube_SHT31D sht3xd;
 SHT30::SHT30(uint8_t address) : _address(address), _isInitialized(false) {}
 
 bool SHT30::begin(int sdaPin, int sclPin, uint32_t frequency) {
-    _isInitialized = Wire.begin(1, 2, 30000);
+    _isInitialized = Wire.begin(sdaPin, sclPin, frequency);
     sht3xd.begin(0x44);
     if (sht3xd.periodicStart(SHT3XD_REPEATABILITY_HIGH, SHT3XD_FREQUENCY_10HZ) != SHT3XD_NO_ERROR)
 		LOG_ERROR("Cannot start periodic mode");

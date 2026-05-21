@@ -18,13 +18,12 @@ TvocCollect::TvocCollect()
     : _port(nullptr), _mb_manager(nullptr) {
     _id = "";
     
-    _slaveId = 7;
-    _regAddr = 2;
+    _slaveId = 3;
+    _regAddr = 1;
     _factor = 1.0f;
-    _regCount = 1;
+    _regCount = 3;
     unitFactor = 1.0f;
     rawUnit = "ug/m3";
-    // _mb_manager = new modbus_manager();
 }
 
 TvocCollect::~TvocCollect() {
@@ -49,8 +48,6 @@ bool TvocCollect::modbusInit(Stream* new_port, String id, String port_name, floa
     if (_mb_manager && _port) {
         _id = id;
         rawUnit = unit;
-        
-        
         _factor = factor;
         _mb_manager->modbus_init(_port);
         return true;
@@ -72,41 +69,35 @@ DataPacket* TvocCollect::collect() {
     DataPacket *packet = new DataPacket();
     strncpy(packet->sensor_id, _id.c_str(), sizeof(packet->sensor_id) - 1);
     packet->is_valid = false;
-    auto &sm = SerialManager::getInstance();
-    SemaphoreHandle_t _StreamMutex = sm.getMutex(SERIAL_485);
-
-    if (xSemaphoreTake(_StreamMutex, pdMS_TO_TICKS(3000)) == pdTRUE)
-    {
-        uint16_t raw[2] = {0};
+    auto& sm = SerialManager::getInstance();
+    SemaphoreHandle_t _Stream485Mutex = sm.getMutex(SERIAL_485);
+    if (xSemaphoreTake(_Stream485Mutex, pdMS_TO_TICKS(3000)) == pdTRUE) {
+        uint16_t raw[3] = {0};
         uint32_t valid_count = 0;
         float total_f_value = 0.0f;
-        for (int i = 0; i < 1; i++)
-        {
-            uint16_t current_val = _mb_manager->readModbusReg(_slaveId, _regAddr);
-            if (current_val != 0 && current_val != 0xFFFF)
-            {
+        for (int i = 0; i < 2; i++) { 
+            if (_mb_manager->readModbusRegs(_slaveId, _regAddr, _regCount, raw)) {
+                uint32_t current_val = ((uint32_t)raw[0] << 16) | ((uint32_t)raw[1] << 8) | raw[2];
                 float current_f = (float)current_val;
-                total_f_value += current_f;
-                valid_count++;
+                if (current_val != 0 && current_val != 0xFFFFFFFF) {
+                    total_f_value += current_f;
+                    valid_count++;
+                }
             }
             vTaskDelay(pdMS_TO_TICKS(10));
         }
-        xSemaphoreGive(_StreamMutex);
-
-        if (valid_count > 0)
-        {
+        xSemaphoreGive(_Stream485Mutex);
+        if (valid_count > 0) {
             float average = total_f_value / (float)valid_count;
-            packet->value = (float)((int)(average * 100 + 0.5)) / 100.0f;
+            packet->value = (float)((int)(average * 100 + 0.5)) / 100.0f * unitFactor;
             packet->is_valid = true;
             // LOG_DEBUG("%s average value: %.2f (based on %d samples)", _id.c_str(), packet->value, valid_count);
         }
-    }
-    else
-    {
+    } else {
+        packet->value = 0.0f;
+        packet->is_valid = false;
         LOG_ERROR("Failed to get TTL Mutex for %s", _id.c_str());
     }
-
-    
     return packet;
 }
 

@@ -31,7 +31,6 @@
 
 #define PUMP1_PIN 14
 #define PUMP2_PIN 40
-#define FAN_PIN 41
 
 // ********** 时间相关定义 **********
 Ds1302 rtc(17, 6, 7);
@@ -905,14 +904,22 @@ void setUpInit(void){
 
     HJ212CONFIG hj212Cfg = ConfigManager::getInstance().getHJ212();
     SYSTEMCONFIG systemCfg = ConfigManager::getInstance().getSystem();
-    if (!DTUMg.updateHJDtuGoalIP(hj212Cfg.ip))
-    {
-        LOG_ERROR("Failed to update HJ212 DTU IP");
+    SemaphoreHandle_t DTUHj212Mutex = sm.getMutex(SERIAL_HJ212);
+    if (xSemaphoreTake(DTUMutex, pdMS_TO_TICKS(3000)) == pdTRUE) {
+        if (!DTUMg.updateHJDtuGoalIP(hj212Cfg.ip))
+        {
+            LOG_ERROR("Failed to update HJ212 DTU IP");
+        }
+        xSemaphoreGive(DTUMutex);
     }
-    // if (!DTUMg.updateReDtuGoalIP(systemCfg.dtu_server))
-    // {
-    //     LOG_ERROR("Failed to update Remote DTU IP");
-    // }
+    SemaphoreHandle_t DTUREMutex = sm.getMutex(SERIAL_DTU);
+    if (xSemaphoreTake(DTUREMutex, pdMS_TO_TICKS(3000)) == pdTRUE) {
+        if (!DTUMg.updateReDtuGoalIP(systemCfg.dtu_server))
+        {
+            LOG_ERROR("Failed to update Remote DTU IP");
+        }
+        xSemaphoreGive(DTUREMutex);
+    }
 }
 void fileRestore(void){
     auto &filesys = filesysManager::getInstance();
