@@ -806,7 +806,7 @@ static void CollectGalTask(void *pvParameters)
 void timeInit(uint64_t timestamp)
 {
     rtc.init();
-    if (timestamp >= 202605010000)
+    if (timestamp >= 0)
     {
         Ds1302::DateTime dt;
         uint64_t temp = timestamp;
@@ -836,6 +836,7 @@ uint64_t getCurrentTime()
              now.year + 2000, now.month, now.day, now.hour, now.minute);
     return strtoull(buffer, nullptr, 10);
 }
+// 202605220939
 bool updateMillisTime(uint64_t newTime)
 {
     int year, month, day, hour, minute;
@@ -887,7 +888,10 @@ void setUpInit(void){
     SemaphoreHandle_t DTUMutex = sm.getMutex(SERIAL_DTU);
     if (xSemaphoreTake(DTUMutex, pdMS_TO_TICKS(3000)) == pdTRUE)
     {
-        uint64_t realTime = DTUMg.dtuSystemTime();
+        uint64_t realTime = DTUMg.hjSystemTime();
+        if (realTime < 198001010002) {
+            realTime = DTUMg.dtuSystemTime();
+        }
         LOG_DEBUG("****** realTime Time: %llu ******", realTime);
         xSemaphoreGive(DTUMutex);
         timeInit(realTime);

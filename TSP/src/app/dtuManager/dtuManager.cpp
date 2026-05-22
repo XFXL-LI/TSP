@@ -40,7 +40,23 @@ uint64_t DTUManager::dtuSystemTime() {
 }
 
 uint64_t DTUManager::hjSystemTime() {
-    _hj212DTU->sendCommand(GET_TIME_COMM);
+    String res = _hj212DTU->sendCommand(GET_TIME_COMM);
+    LOG_DEBUG("Send GET_TIME_COMM res: %s", res.c_str());
+
+    if (res.length() > 0) {
+        int year, month, day, hour, minute, second, week;
+        int count = sscanf(res.c_str(), "config,nettime,ok,%d,%d,%d,%d,%d,%d,%d", 
+                           &year, &month, &day, &hour, &minute, &second, &week);
+        if (count >= 5) {
+            char buf[16];
+            snprintf(buf, sizeof(buf), "%04d%02d%02d%02d%02d", year, month, day, hour, minute);
+            LOG_INFO("Parsed Time String: %s", buf);
+            uint64_t fullTime = strtoull(buf, NULL, 10);
+            return fullTime;
+        } else {
+            LOG_ERROR("Failed to parse time string, count: %d", count);
+        }
+    }
     return 0;
 }
 int DTUManager::remoteDTUCSQ() {
