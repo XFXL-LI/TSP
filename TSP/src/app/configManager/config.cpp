@@ -170,6 +170,8 @@ void ConfigManager::_parseSwitch(cJSON *node, SYSTEMSWITCH &target) {
         target.enable_hj212 = cJSON_IsTrue(item);
     if ((item = cJSON_GetObjectItem(node, "enable_remote_dtu")) && cJSON_IsBool(item))
         target.enable_remote_dtu = cJSON_IsTrue(item);
+    if ((item = cJSON_GetObjectItem(node, "mqtt_public")) && cJSON_IsBool(item))
+        target.mqtt_public = cJSON_IsTrue(item);
 }
 
 void ConfigManager::_parseSystemInfo(cJSON *node, SYSTEMCONFIG &target) {

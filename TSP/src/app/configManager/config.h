@@ -100,6 +100,10 @@ public:
     {
         runIf(globalCfg.systemSwitch.tempConSwitch, "TempCon", func);
     }
+    void runMqttCon(std::function<void()> func)
+    {
+        runIf(globalCfg.systemSwitch.mqtt_public, "MqttCon", func);
+    }
     bool updateSystem(const char *json_str);
     bool updateHJ212(const char *json_str);
     bool updateSensors(const char *json_str);

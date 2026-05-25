@@ -219,6 +219,7 @@ struct SYSTEMSWITCH {
     bool save_day_data = true;
     bool enable_hj212 = true;
     bool enable_remote_dtu = true;
+    bool mqtt_public = false;
 };
 
 // 系统主配置

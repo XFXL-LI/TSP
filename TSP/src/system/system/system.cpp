@@ -87,6 +87,8 @@ static void updateSetupTask(void *pvParameters);
 static void updateConfigTask(void *pvParameters);
 // 温度控制
 static void TempControlTask(void *pvParameters);
+// mqtt 订阅发送
+static void MqttPublicTask(void *pvParameters);
 
 System::System()
 {
@@ -124,21 +126,26 @@ void System::SystemConfigInit(void)
     HJ212CONFIG hj212Cfg = cfg.getHJ212();
     if (hj212Cfg.protocol_version == "2017") {
         LOG_INFO("HJ212 protocol version set to 2017");
-        xTaskCreatePinnedToCore(Hj212_2017SendTask, "Hj212_2017SendTask", 4 * 1024, NULL, 5, NULL, 0);
+        xTaskCreatePinnedToCore(Hj212_2017SendTask, "Hj212_2017SendTask", 8 * 1024, NULL, 5, NULL, 0);
     } else if (hj212Cfg.protocol_version == "2025") {
         LOG_INFO("HJ212 protocol version set to 2025");
-        xTaskCreatePinnedToCore(Hj212_2025SendTask, "Hj212_2025SendTask", 4 * 1024, NULL, 5, NULL, 0);
+        xTaskCreatePinnedToCore(Hj212_2025SendTask, "Hj212_2025SendTask", 8 * 1024, NULL, 5, NULL, 0);
     } else {
         LOG_WARNING("Unknown HJ212 protocol version '%s', defaulting to 2017", hj212Cfg.protocol_version.c_str());
-        xTaskCreatePinnedToCore(Hj212_2017SendTask, "Hj212_2017SendTask", 4 * 1024, NULL, 5, NULL, 0);
+        xTaskCreatePinnedToCore(Hj212_2017SendTask, "Hj212_2017SendTask", 8 * 1024, NULL, 5, NULL, 0);
     }
     cfg.runIfTempCon([]() {
         LOG_INFO("Temperature control enabled, starting related tasks...");
         xTaskCreatePinnedToCore(TempControlTask, "TempControlTask", 4 * 1024, NULL, 5, NULL, 1);
     });
+    cfg.runMqttCon([]() {
+        LOG_INFO("mqtt control enabled, starting mqtt tasks...");
+        xTaskCreatePinnedToCore(MqttPublicTask, "MqttPublicTask", 8 * 1024, NULL, 5, NULL, 1);
+    });
+    xTaskCreatePinnedToCore(updateConfigTask, "updateConfigTask", 8 * 1024, NULL, 5, NULL, 0);
 
-    xTaskCreatePinnedToCore(updateConfigTask, "updateConfigTask", 4 * 1024, NULL, 5, NULL, 0);
 }
+
 void System::SystemSetupInit(void)
 {
     xTaskCreatePinnedToCore(updateSetupTask, "updateSetupTask", 4 * 1024, NULL, 5, NULL, 1);
@@ -724,6 +731,13 @@ static void CollectGalTask(void *pvParameters)
     vTaskDelete(NULL);
 }
 
+static void MqttPublicTask(void *pvParameters){
+    while(true){
+        vTaskDelay(pdMS_TO_TICKS(1000));
+    }
+    vTaskDelete(NULL);
+}
+
 // ******************* 时间函数实现 *******************
 // 202605201040
 // 202605010000
@@ -927,13 +941,13 @@ void otaUpload(int otaSize){
 
     while (true)
     {
-        while (HJ212_port->available())
+        while (DTU_port->available())
         {
-            HJ212_port->read();
+            DTU_port->read();
             vTaskDelay(1 / portTICK_PERIOD_MS);
         }
-        HJ212_port->printf("Ready to start OTA, size: %d byte, Please send the OTA upgrade package within 300 seconds\n", otaTotalSize);
-        HJ212_port->printf("The single packet sent is 1024 bytes, with a sending interval of 1000ms\n");
+        DTU_port->printf("Ready to start OTA, size: %d byte, Please send the OTA upgrade package within 300 seconds\n", otaTotalSize);
+        DTU_port->printf("The single packet sent is 1024 bytes, with a sending interval of 1000ms\n");
         LOG_INFO("Ready to start OTA");
         uint8_t data[OTA_BUFFER_SIZE];
         unsigned long lastPrintTime = 0;
@@ -943,11 +957,11 @@ void otaUpload(int otaSize){
         int bytes_written = 0;
         while (true)
         {
-            if (HJ212_port->available() > 0)
+            if (DTU_port->available() > 0)
             {
                 int remaining = otaTotalSize - bytes_written;
                 int to_read = min(remaining, OTA_BUFFER_SIZE);
-                int len = HJ212_port->readBytes(data, to_read);
+                int len = DTU_port->readBytes(data, to_read);
                 if (len > 0)
                 {
                     if (esp_ota_write(ota_handle, data, len) != ESP_OK)

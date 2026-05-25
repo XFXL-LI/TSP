@@ -34,7 +34,8 @@ const char *SWITCH_JSON = R"({
     "save_hour_data": true,
     "save_day_data": true,
     "enable_hj212": true,
-    "enable_remote_dtu": true
+    "enable_remote_dtu": true,
+    "mqtt_public": true,
 })";
 
 #endif
