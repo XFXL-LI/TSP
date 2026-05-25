@@ -12,7 +12,8 @@ const PermissionSystem::CommandRoute PermissionSystem::ROUTE_TABLE[] = {
     {"get_config", EventID::CONFIG_QUERY_REQ, EventID::CONFIG_QUERY_RES, PermissionSystem::onConfigRes, 5000},
     {"set_config", EventID::CONFIG_SET_REQ, EventID::CONFIG_SET_RES, PermissionSystem::onSetConfigRes, 2000},
     {"get_records", EventID::RECORD_QUERY_REQ, EventID::RECORD_QUERY_RES, PermissionSystem::onGetRecordsRes, 15000},
-    {"gal_data", EventID::GAL_REQ, EventID::GAL_RES, PermissionSystem::onGALRes, 60000}
+    {"gal_data", EventID::GAL_REQ, EventID::GAL_RES, PermissionSystem::onGALRes, 60000},
+    {"upload", EventID::UPLOAD_REQ, EventID::UPLOAD_RES, PermissionSystem::onUpload, 60000}
 };
 const size_t PermissionSystem::ROUTE_COUNT = sizeof(PermissionSystem::ROUTE_TABLE) / sizeof(PermissionSystem::CommandRoute);
 
@@ -219,7 +220,15 @@ void PermissionSystem::handleLogin(String user, String pass, Stream *stream)
         _currentLevel = _userDB[user].level;
         _lastActivity = millis();
         LOG_INFO("[Auth] %s logged", user.c_str());
-        sendResponse(stream, "login", "OK", String((int)_currentLevel).c_str());
+        if ((int)_currentLevel == 0){
+            sendResponse(stream, "login", "OK", "guest");
+        } else if ((int)_currentLevel == 1) {
+            sendResponse(stream, "login", "OK", "user");
+        } else if ((int)_currentLevel == 2) {
+            sendResponse(stream, "login", "OK", "admin");
+        } else {
+            sendResponse(stream, "login", "OK", "guest");
+        }
     }
     else
     {
@@ -416,6 +425,10 @@ void PermissionSystem::onGALRes(void *eventData, Stream *stream, String cmd, Str
     getInstance().sendMsg(stream, jsonRes.c_str());
     resData->release();
 }
+void PermissionSystem::onUpload(void *eventData, Stream *stream, String cmd, String args){
+
+}
+
 // ***************************************    回调函数    ***************************************
 
 // ***************************************    打包处理    ***************************************

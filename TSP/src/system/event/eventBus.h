@@ -27,6 +27,8 @@ enum class EventID {
     RECORD_QUERY_RES,
     GAL_REQ,
     GAL_RES,
+    UPLOAD_REQ,
+    UPLOAD_RES,
 };
 
 struct EventMsg {

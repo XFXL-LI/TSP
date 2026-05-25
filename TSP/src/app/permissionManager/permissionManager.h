@@ -79,7 +79,7 @@ private:
     static void onSetConfigRes(void *eventData, Stream *stream, String cmd, String args);
     static void onGetRecordsRes(void *eventData, Stream *stream, String cmd, String args);
     static void onGALRes(void *eventData, Stream *stream, String cmd, String args);
-
+    static void onUpload(void *eventData, Stream *stream, String cmd, String args);
     struct User
     {
         String password;
@@ -103,7 +103,7 @@ private:
     String _currentUser = "Guest";
     PermissionLevel _currentLevel = PermissionLevel::GUEST;
     unsigned long _lastActivity = 0;
-    const unsigned long TIMEOUT_MS = 300000;
+    const unsigned long TIMEOUT_MS = 900000;
 };
 
 #endif

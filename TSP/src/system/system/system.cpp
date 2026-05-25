@@ -238,108 +238,32 @@ static void updateSetupTask(void *pvParameters)
 }
 static void OtaUploadTask(void *pvParameters)
 {
-    TaskHandle_t CollectTaskHandle = xTaskGetHandle("CollectTask");
-    TaskHandle_t Hj212SendHandle = xTaskGetHandle("Hj212_2017SendTask");
-    TaskHandle_t SaveDataFileHandle = xTaskGetHandle("SaveDataFileTask");
-    TaskHandle_t LedPrintHandle = xTaskGetHandle("LedPrintTask");
-    TaskHandle_t LcdControlHandle = xTaskGetHandle("SerialControlTask_lcd");
-    TaskHandle_t SerialRemoteHandle = xTaskGetHandle("CollectGalTask");
-    if (CollectTaskHandle != NULL)
-    {
-        vTaskDelete(CollectTaskHandle);
-        LOG_INFO("Stopped: collect task");
-    }
-    if (Hj212SendHandle != NULL)
-    {
-        vTaskDelete(Hj212SendHandle);
-        LOG_INFO("Stopped: LED task");
-    }
-    if (SaveDataFileHandle != NULL)
-    {
-        vTaskDelete(SaveDataFileHandle);
-        LOG_INFO("Stopped: serial task");
-    }
-    if (LedPrintHandle != NULL)
-    {
-        vTaskDelete(LedPrintHandle);
-        LOG_INFO("Stopped: calibration data task");
-    }
-    if (LcdControlHandle != NULL)
-    {
-        vTaskDelete(LcdControlHandle);
-        LOG_INFO("Stopped: calibration data task");
-    }
-    if (SerialRemoteHandle != NULL)
-    {
-        vTaskDelete(SerialRemoteHandle);
-        LOG_INFO("Stopped: calibration data task");
-    }
-    vTaskDelay(3000 / portTICK_PERIOD_MS);
-    volatile uint32_t otaTotalSize = 0;
-    esp_ota_handle_t ota_handle;
-    const esp_partition_t *update_partition = esp_ota_get_next_update_partition(NULL);
-    if (esp_ota_begin(update_partition, OTA_SIZE_UNKNOWN, &ota_handle) != ESP_OK)
-    {
-        LOG_INFO("Failed to start OTA");
-    }
-#define OTA_BUFFER_SIZE 1024
-    int uploadCount = 0;
+    LOG_DEBUG("OtaUploadTask Started");
+    QueueHandle_t OtaUploadTaskQueue = EventBus::getInstance().createReceiverQueue(5);
+    EventBus::getInstance().subscribe(EventID::UPLOAD_REQ, OtaUploadTaskQueue);
+
+    EventMsg msg;
     while (true)
     {
-        while (Serial2.available())
+        if (EventBus::waitEvent(OtaUploadTaskQueue, msg))
         {
-            Serial2.read();
-            vTaskDelay(1 / portTICK_PERIOD_MS);
+            if (msg.id == EventID::UPLOAD_REQ)
+            {
+                JSONCmdData *allData = (JSONCmdData *)msg.data;
+
+                if (allData != nullptr)
+                {
+                    String cmd = allData->command;
+                    LOG_DEBUG("cmd test , cmd print: %s", cmd.c_str());
+                }
+                LOG_DEBUG("****** OtaUploadTask Test Over ******");
+                allData->release();
+            }
         }
-        Serial2.printf("Ready to start OTA, size: %d byte, Please send the OTA upgrade package within 300 seconds\n", otaTotalSize);
-        Serial2.printf("The single packet sent is 1024 bytes, with a sending interval of 1000ms\n");
-        LOG_INFO("Ready to start OTA");
-        uint8_t data[OTA_BUFFER_SIZE];
-        unsigned long lastPrintTime = 0;
-        bool firstPacketChecked = false;
-        size_t totalBytes = 0;
-        unsigned long lastDataTime = millis();
-        int bytes_written = 0;
-        while (true)
-        {
-            if (Serial2.available() > 0)
-            {
-                int remaining = otaTotalSize - bytes_written;
-                int to_read = min(remaining, OTA_BUFFER_SIZE);
-                int len = Serial2.readBytes(data, to_read);
-                if (len > 0)
-                {
-                    if (esp_ota_write(ota_handle, data, len) != ESP_OK)
-                    {
-                        LOG_ERROR("Failed to write data");
-                        break;
-                    }
-                    bytes_written += len;
-                    Serial.printf("Write: %d bytes, otaTotalSize: %d/%d \n", len, bytes_written, otaTotalSize);
-                    lastDataTime = millis();
-                }
-            }
-            else
-            {
-                vTaskDelay(10 / portTICK_PERIOD_MS);
-            }
-            if (millis() - lastDataTime > 30000)
-            {
-                LOG_INFO("OTA upload timeout, no data for 300 seconds,upload success or fail");
-                if (esp_ota_end(ota_handle) != ESP_OK)
-                {
-                    LOG_ERROR("Failed to end OTA, please restart");
-                    ESP.restart();
-                }
-                else
-                {
-                    LOG_INFO("OTA upload, please wait 300s - 500s, esp32 system restart");
-                    esp_ota_set_boot_partition(update_partition);
-                    ESP.restart();
-                }
-            }
-            vTaskDelay(10 / portTICK_PERIOD_MS);
-        }
+        vTaskDelay(pdMS_TO_TICKS(10));
+    }
+    while(true){
+
     }
     vTaskDelete(NULL);
 }
@@ -936,3 +860,127 @@ void fileRestore(void){
         xTaskCreatePinnedToCore(netWorkRestoreTask, "netWorkRestoreTask", 8 * 1024, resumeData, 5, NULL, 0);
     }
 }
+void otaUpload(int otaSize){
+    TaskHandle_t CollectTaskHandle = xTaskGetHandle("CollectTask");
+    TaskHandle_t Hj212SendHandle = xTaskGetHandle("Hj212_2017SendTask");
+    TaskHandle_t SaveDataFileHandle = xTaskGetHandle("SaveDataFileTask");
+    TaskHandle_t LedPrintHandle = xTaskGetHandle("LedPrintTask");
+    TaskHandle_t LcdControlHandle = xTaskGetHandle("SerialControlTask_lcd");
+    TaskHandle_t SerialRemoteHandle = xTaskGetHandle("CollectGalTask");
+    TaskHandle_t Hj2122025SendHandle = xTaskGetHandle("Hj212_2025SendTask");
+    if (CollectTaskHandle != NULL)
+    {
+        vTaskDelete(CollectTaskHandle);
+        LOG_INFO("Stopped: collect task");
+    }
+    if (Hj2122025SendHandle != NULL)
+    {
+        vTaskDelete(Hj2122025SendHandle);
+        LOG_INFO("Stopped: Hj2122025SendHandle task");
+    }
+    if (Hj212SendHandle != NULL)
+    {
+        vTaskDelete(Hj212SendHandle);
+        LOG_INFO("Stopped: LED task");
+    }
+    if (SaveDataFileHandle != NULL)
+    {
+        vTaskDelete(SaveDataFileHandle);
+        LOG_INFO("Stopped: serial task");
+    }
+    if (LedPrintHandle != NULL)
+    {
+        vTaskDelete(LedPrintHandle);
+        LOG_INFO("Stopped: calibration data task");
+    }
+    if (LcdControlHandle != NULL)
+    {
+        vTaskDelete(LcdControlHandle);
+        LOG_INFO("Stopped: calibration data task");
+    }
+    if (SerialRemoteHandle != NULL)
+    {
+        vTaskDelete(SerialRemoteHandle);
+        LOG_INFO("Stopped: calibration data task");
+    }
+    vTaskDelay(3000 / portTICK_PERIOD_MS);
+    volatile uint32_t otaTotalSize = 0;
+    esp_ota_handle_t ota_handle;
+    const esp_partition_t *update_partition = esp_ota_get_next_update_partition(NULL);
+    if (esp_ota_begin(update_partition, OTA_SIZE_UNKNOWN, &ota_handle) != ESP_OK)
+    {
+        LOG_INFO("Failed to start OTA");
+    }
+#define OTA_BUFFER_SIZE 1024
+    int uploadCount = 0;
+    
+    auto &sm = SerialManager::getInstance();    
+    Stream *DTU_port = sm.getStream(SERIAL_DTU);
+    Stream *HJ212_port = sm.getStream(SERIAL_HJ212);
+
+    SemaphoreHandle_t HJMutex = sm.getMutex(SERIAL_HJ212);
+    SemaphoreHandle_t DTUMutex = sm.getMutex(SERIAL_DTU);
+
+    while (xSemaphoreTake(HJMutex, pdMS_TO_TICKS(3000)) != pdTRUE && xSemaphoreTake(DTUMutex, pdMS_TO_TICKS(3000)) != pdTRUE) {
+        
+    }
+
+    while (true)
+    {
+        while (HJ212_port->available())
+        {
+            HJ212_port->read();
+            vTaskDelay(1 / portTICK_PERIOD_MS);
+        }
+        HJ212_port->printf("Ready to start OTA, size: %d byte, Please send the OTA upgrade package within 300 seconds\n", otaTotalSize);
+        HJ212_port->printf("The single packet sent is 1024 bytes, with a sending interval of 1000ms\n");
+        LOG_INFO("Ready to start OTA");
+        uint8_t data[OTA_BUFFER_SIZE];
+        unsigned long lastPrintTime = 0;
+        bool firstPacketChecked = false;
+        size_t totalBytes = 0;
+        unsigned long lastDataTime = millis();
+        int bytes_written = 0;
+        while (true)
+        {
+            if (HJ212_port->available() > 0)
+            {
+                int remaining = otaTotalSize - bytes_written;
+                int to_read = min(remaining, OTA_BUFFER_SIZE);
+                int len = HJ212_port->readBytes(data, to_read);
+                if (len > 0)
+                {
+                    if (esp_ota_write(ota_handle, data, len) != ESP_OK)
+                    {
+                        LOG_ERROR("Failed to write data");
+                        break;
+                    }
+                    bytes_written += len;
+                    Serial.printf("Write: %d bytes, otaTotalSize: %d/%d \n", len, bytes_written, otaTotalSize);
+                    lastDataTime = millis();
+                }
+            }
+            else
+            {
+                vTaskDelay(10 / portTICK_PERIOD_MS);
+            }
+            if (millis() - lastDataTime > 30000)
+            {
+                LOG_INFO("OTA upload timeout, no data for 300 seconds,upload success or fail");
+                if (esp_ota_end(ota_handle) != ESP_OK)
+                {
+                    LOG_ERROR("Failed to end OTA, please restart");
+                    ESP.restart();
+                }
+                else
+                {
+                    LOG_INFO("OTA upload, please wait 300s - 500s, esp32 system restart");
+                    esp_ota_set_boot_partition(update_partition);
+                    ESP.restart();
+                }
+            }
+            vTaskDelay(10 / portTICK_PERIOD_MS);
+        }
+    }
+}
+
