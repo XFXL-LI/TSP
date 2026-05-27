@@ -18,9 +18,9 @@
 #define LCD_BAUD        9600
 
 #define SERIAL_DTU      "DTU"
-#define DTU_TXD         13
-#define DTU_RXD         12
-#define DTU_BAUD        9600
+#define DTU_TXD         37
+#define DTU_RXD         38
+#define DTU_BAUD        115200
 
 #define SERIAL_LED      "LED"
 #define LED_TXD         0
@@ -33,9 +33,9 @@
 #define TTL_BAUD        9600
 
 #define SERIAL_HJ212    "HJ212"
-#define HJ212_TXD       37
-#define HJ212_RXD       38
-#define HJ212_BAUD      115200
+#define HJ212_TXD       13
+#define HJ212_RXD       12
+#define HJ212_BAUD      9600
 
 struct SerialPortWrapper {
     Stream* stream;

@@ -1,0 +1,1 @@
+mosquitto.exe -c mosquitto.conf

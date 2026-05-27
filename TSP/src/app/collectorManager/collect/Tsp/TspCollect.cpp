@@ -81,7 +81,6 @@ bool TspCollect::gal(int increment, int ratio) {
     SemaphoreHandle_t _StreamTTLMutex = sm.getMutex("TTL");
 
     if (xSemaphoreTake(_StreamTTLMutex, pdMS_TO_TICKS(3000)) == pdTRUE) {
-        xSemaphoreGive(_StreamTTLMutex);
         uint16_t writeVal[2] = {0};
         writeVal[0] = increment;
         writeVal[1] = ratio;
@@ -103,6 +102,7 @@ bool TspCollect::gal(int increment, int ratio) {
                 return false;
             }
         }
+        xSemaphoreGive(_StreamTTLMutex);
     } else {
         LOG_ERROR("Failed to get TTL Mutex for getID in %s", _id.c_str());
         return false;

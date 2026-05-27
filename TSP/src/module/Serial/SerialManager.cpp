@@ -10,11 +10,11 @@ SerialManager& SerialManager::getInstance() {
 
 void SerialManager::begin(void){
     HardwarePortInit(SERIAL_TTL, &Serial1, TTL_BAUD, TTL_RXD, TTL_TXD);
-    HardwarePortInit(SERIAL_HJ212, &Serial2, HJ212_BAUD, HJ212_RXD, HJ212_TXD);
+    HardwarePortInit(SERIAL_DTU, &Serial2, DTU_BAUD, DTU_RXD, DTU_TXD);
     
     SoftwarePortInit(SERIAL_LCD, LCD_RXD, LCD_TXD, LCD_BAUD);
     SoftwarePortInit(SERIAL_485, RS485_RXD, RS485_TXD, RS485_BAUD);
-    SoftwarePortInit(SERIAL_DTU, DTU_RXD, DTU_TXD, DTU_BAUD);
+    SoftwarePortInit(SERIAL_HJ212, HJ212_RXD, HJ212_TXD, HJ212_BAUD);
     SoftwarePortInit(SERIAL_LED, LED_RXD, LED_TXD, LED_BAUD);
 
     println(SERIAL_TTL, "[INFO]: System uart TTL init");

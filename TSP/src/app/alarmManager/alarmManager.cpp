@@ -31,26 +31,26 @@ void alarmManager::printRestartInfo(void)
     {
     case POWERON_RESET:
         sys_status->last_reason = RESTART_REASON::POWERON_RESET;
-        LOG_DEBUG("Power on and restart (normal startup)");
+        LOG_ERROR("Power on and restart (normal startup)");
         break;
     case RTCWDT_RTC_RESET:
         sys_status->last_reason = RESTART_REASON::RTCWDT_RTC_RESET;
-        LOG_DEBUG("RTC watchdog reset (deep sleep anomaly)");
+        LOG_ERROR("RTC watchdog reset (deep sleep anomaly)");
         break;
     case DEEPSLEEP_RESET:
         sys_status->last_reason = RESTART_REASON::DEEPSLEEP_RESET;
-        LOG_DEBUG("Wake up and restart (normal sleep ends)");
+        LOG_ERROR("Wake up and restart (normal sleep ends)");
         break;
     case TG1WDT_CPU_RESET:
         sys_status->last_reason = RESTART_REASON::TG1WDT_CPU_RESET;
-        LOG_DEBUG("Task watchdog reset (code stuck)");
+        LOG_ERROR("Task watchdog reset (code stuck)");
         break;
     case RTC_SW_CPU_RESET:
         sys_status->last_reason = RESTART_REASON::RTC_SW_CPU_RESET;
-        LOG_DEBUG("Software restart (code call restart)");
+        LOG_ERROR("Software restart (code call restart)");
         break;
     default:
-        LOG_DEBUG("Restart for other reasons");
+        LOG_ERROR("Restart for other reasons");
     }
 }
 void alarmManager::init(void) {

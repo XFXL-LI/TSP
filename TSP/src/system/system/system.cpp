@@ -4,6 +4,7 @@
 #include <freertos/task.h>
 #include <Update.h>
 #include <esp_ota_ops.h>
+#include "esp_task_wdt.h"
 #include <esp_https_ota.h>
 #include <SoftwareSerial.h>
 #include <time.h>
@@ -28,7 +29,6 @@
 #include "../../app/filesysManager/filesysManager.h"
 #include "../../app/tempManager/tempManager.h"
 
-
 #define PUMP1_PIN 14
 #define PUMP2_PIN 40
 
@@ -52,7 +52,8 @@ uint64_t getCurrentTime();
 // ********** 其他全局定义 **********
 void setUpInit(void);
 void fileRestore(void);
-// 
+void otaUpload(int otaSize);
+//
 
 CSQINFO csqInfo;
 struct ResumeData
@@ -124,31 +125,35 @@ void System::SystemConfigInit(void)
     cfg.begin();
 
     HJ212CONFIG hj212Cfg = cfg.getHJ212();
-    if (hj212Cfg.protocol_version == "2017") {
+    if (hj212Cfg.protocol_version == "2017")
+    {
         LOG_INFO("HJ212 protocol version set to 2017");
-        xTaskCreatePinnedToCore(Hj212_2017SendTask, "Hj212_2017SendTask", 8 * 1024, NULL, 5, NULL, 0);
-    } else if (hj212Cfg.protocol_version == "2025") {
-        LOG_INFO("HJ212 protocol version set to 2025");
-        xTaskCreatePinnedToCore(Hj212_2025SendTask, "Hj212_2025SendTask", 8 * 1024, NULL, 5, NULL, 0);
-    } else {
-        LOG_WARNING("Unknown HJ212 protocol version '%s', defaulting to 2017", hj212Cfg.protocol_version.c_str());
-        xTaskCreatePinnedToCore(Hj212_2017SendTask, "Hj212_2017SendTask", 8 * 1024, NULL, 5, NULL, 0);
+        xTaskCreatePinnedToCore(Hj212_2017SendTask, "Hj2017Task", 8 * 1024, NULL, 5, NULL, 0);
     }
-    cfg.runIfTempCon([]() {
+    else if (hj212Cfg.protocol_version == "2025")
+    {
+        LOG_INFO("HJ212 protocol version set to 2025");
+        xTaskCreatePinnedToCore(Hj212_2025SendTask, "Hj2025Task", 8 * 1024, NULL, 5, NULL, 0);
+    }
+    else
+    {
+        LOG_WARNING("Unknown HJ212 protocol version '%s', defaulting to 2017", hj212Cfg.protocol_version.c_str());
+        xTaskCreatePinnedToCore(Hj212_2017SendTask, "Hj2017Task", 8 * 1024, NULL, 5, NULL, 0);
+    }
+    cfg.runIfTempCon([]()
+                     {
         LOG_INFO("Temperature control enabled, starting related tasks...");
-        xTaskCreatePinnedToCore(TempControlTask, "TempControlTask", 4 * 1024, NULL, 5, NULL, 1);
-    });
-    cfg.runMqttCon([]() {
+        xTaskCreatePinnedToCore(TempControlTask, "TempConTask", 4 * 1024, NULL, 5, NULL, 1); });
+    cfg.runMqttCon([]()
+                   {
         LOG_INFO("mqtt control enabled, starting mqtt tasks...");
-        xTaskCreatePinnedToCore(MqttPublicTask, "MqttPublicTask", 8 * 1024, NULL, 5, NULL, 1);
-    });
+        xTaskCreatePinnedToCore(MqttPublicTask, "MqttPublicTask", 8 * 1024, NULL, 5, NULL, 1); });
     xTaskCreatePinnedToCore(updateConfigTask, "updateConfigTask", 8 * 1024, NULL, 5, NULL, 0);
-
 }
 
 void System::SystemSetupInit(void)
 {
-    xTaskCreatePinnedToCore(updateSetupTask, "updateSetupTask", 4 * 1024, NULL, 5, NULL, 1);
+    xTaskCreatePinnedToCore(updateSetupTask, "udSetTask", 4 * 1024, NULL, 5, NULL, 1);
 }
 
 void System::SystemTaskInit(void)
@@ -159,11 +164,13 @@ void System::SystemTaskInit(void)
 
     xTaskCreatePinnedToCore(LedPrintTask, "LedPrintTask", 4 * 1024, NULL, 5, NULL, 0);
 
-    xTaskCreatePinnedToCore(SaveDataFileTask, "SaveDataFileTask", 4 * 1024, NULL, 5, NULL, 0);
+    xTaskCreatePinnedToCore(SaveDataFileTask, "SaveFileTask", 4 * 1024, NULL, 5, NULL, 0);
 
     xTaskCreatePinnedToCore(PermissionTask, "PermissionTask", 4 * 1024, NULL, 5, NULL, 1);
 
     xTaskCreatePinnedToCore(CollectGalTask, "CollectGalTask", 4 * 1024, NULL, 5, NULL, 0);
+
+    xTaskCreatePinnedToCore(OtaUploadTask, "OtaUploadTask", 8 * 10240, NULL, 11, NULL, 1);
 }
 
 static void updateConfigTask(void *pvParameters)
@@ -189,15 +196,22 @@ static void updateSetupTask(void *pvParameters)
     int countTime = 0;
     while (true)
     {
-        if (countTime >= 120) {
+        if (countTime >= 120)
+        {
             uint64_t currentTime = getCurrentTime();
+            if (currentTime < 202605261200) {
+                vTaskDelay(pdMS_TO_TICKS(3000));
+                currentTime = getCurrentTime();
+            }
             if (!updateMillisTime(currentTime))
             {
                 LOG_ERROR("Failed to update milliseconds time");
             }
             LOG_DEBUG("Current Time: %llu", currentTime);
             countTime = 0;
-        } else {
+        }
+        else
+        {
             countTime++;
         }
 
@@ -205,6 +219,16 @@ static void updateSetupTask(void *pvParameters)
         if (xSemaphoreTake(_StreamMutex, pdMS_TO_TICKS(3000)) == pdTRUE)
         {
             int csq = DTUManager::getInstance().hj212DTUCSQ();
+            if (csq == 99)
+            {
+                vTaskDelay(pdMS_TO_TICKS(3000));
+                csq = DTUManager::getInstance().hj212DTUCSQ();
+            }
+            if (csq == 99)
+            {
+                vTaskDelay(pdMS_TO_TICKS(3000));
+                csq = DTUManager::getInstance().hj212DTUCSQ();
+            }
             xSemaphoreGive(_StreamMutex);
             SYSTEM_SETUP newSetup = ConfigManager::getInstance().getSetup();
             newSetup.netCsq = csq;
@@ -260,17 +284,196 @@ static void OtaUploadTask(void *pvParameters)
 
                 if (allData != nullptr)
                 {
-                    String cmd = allData->command;
-                    LOG_DEBUG("cmd test , cmd print: %s", cmd.c_str());
+                    LOG_DEBUG("upload request: %s", allData->arguments.c_str());
+
+                    config_json uploadJson(allData->arguments.c_str());
+                    int otaSize = uploadJson.isValid() ? uploadJson.getInt("size", 0) : 0;
+
+                    int subscriberCount = EventBus::getInstance().getSubscriberCount(EventID::UPLOAD_RES);
+                    if (subscriberCount > 0)
+                    {
+                        allData->retain();
+                    }
+                    EventBus::getInstance().publish(EventID::UPLOAD_RES, allData);
+                    allData->release();
+
+                    if (otaSize > 0)
+                    {
+                        LOG_INFO("Starting OTA upload with size: %d", otaSize);
+                        TaskHandle_t CollectTaskHandle = xTaskGetHandle("CollectTask");
+                        TaskHandle_t Hj212SendHandle = xTaskGetHandle("Hj2017Task");
+                        TaskHandle_t SaveDataFileHandle = xTaskGetHandle("SaveFileTask");
+                        TaskHandle_t LedPrintHandle = xTaskGetHandle("LedPrintTask");
+                        TaskHandle_t LcdControlHandle = xTaskGetHandle("Controllcd");
+                        TaskHandle_t ControldtuHandle = xTaskGetHandle("Controldtu");
+                        TaskHandle_t SerialRemoteHandle = xTaskGetHandle("CollectGalTask");
+                        TaskHandle_t Hj2122025SendHandle = xTaskGetHandle("Hj2025Task");
+                        TaskHandle_t TempConTaskHandle = xTaskGetHandle("TempConTask");
+                        TaskHandle_t udSetTaskHandle = xTaskGetHandle("udSetTask");
+                        TaskHandle_t netResTaskHandle = xTaskGetHandle("netResTask");
+
+                        if (netResTaskHandle != NULL)
+                        {
+                            vTaskDelete(netResTaskHandle);
+                            LOG_INFO("Stopped: netResTaskHandle task");
+                        }
+                        if (udSetTaskHandle != NULL)
+                        {
+                            vTaskDelete(udSetTaskHandle);
+                            LOG_INFO("Stopped: udSetTask task");
+                        }
+                        if (ControldtuHandle != NULL)
+                        {
+                            vTaskDelete(ControldtuHandle);
+                            LOG_INFO("Stopped: ControldtuHandle task");
+                        }
+                        if (TempConTaskHandle != NULL)
+                        {
+                            vTaskDelete(TempConTaskHandle);
+                            LOG_INFO("Stopped: TempConTask task");
+                        }
+                        if (CollectTaskHandle != NULL)
+                        {
+                            vTaskDelete(CollectTaskHandle);
+                            LOG_INFO("Stopped: collect task");
+                        }
+                        if (Hj2122025SendHandle != NULL)
+                        {
+                            vTaskDelete(Hj2122025SendHandle);
+                            LOG_INFO("Stopped: Hj2122025SendHandle task");
+                        }
+                        if (Hj212SendHandle != NULL)
+                        {
+                            vTaskDelete(Hj212SendHandle);
+                            LOG_INFO("Stopped: LED task");
+                        }
+                        if (SaveDataFileHandle != NULL)
+                        {
+                            vTaskDelete(SaveDataFileHandle);
+                            LOG_INFO("Stopped: serial task");
+                        }
+                        if (LedPrintHandle != NULL)
+                        {
+                            vTaskDelete(LedPrintHandle);
+                            LOG_INFO("Stopped: calibration data task");
+                        }
+                        if (LcdControlHandle != NULL)
+                        {
+                            vTaskDelete(LcdControlHandle);
+                            LOG_INFO("Stopped: calibration data task");
+                        }
+                        if (SerialRemoteHandle != NULL)
+                        {
+                            vTaskDelete(SerialRemoteHandle);
+                            LOG_INFO("Stopped: calibration data task");
+                        }
+
+                        vTaskDelay(3000 / portTICK_PERIOD_MS);
+
+                        volatile uint32_t otaTotalSize = otaSize;
+                        esp_ota_handle_t ota_handle;
+                        const esp_partition_t *update_partition = esp_ota_get_next_update_partition(NULL);
+                        if (esp_ota_begin(update_partition, OTA_SIZE_UNKNOWN, &ota_handle) != ESP_OK)
+                        {
+                            LOG_ERROR("Failed to start OTA");
+                            return;
+                        }
+
+#define OTA_BUFFER_SIZE 1024
+                        auto &sm = SerialManager::getInstance();
+                        Stream *DTU_port = sm.getStream(SERIAL_DTU);
+                        SemaphoreHandle_t DTUMutex = sm.getMutex(SERIAL_DTU);
+                        LOG_INFO("Attempting to lock serial mutexes...");
+                        while (true)
+                        {
+                            if (xSemaphoreTake(DTUMutex, pdMS_TO_TICKS(3000)) == pdTRUE)
+                            {
+                                break;
+                            }
+                            vTaskDelay(500 / portTICK_PERIOD_MS);
+                        }
+                        while (DTU_port->available())
+                        {
+                            DTU_port->read();
+                            vTaskDelay(1 / portTICK_PERIOD_MS);
+                        }
+
+                        DTU_port->printf("Ready to start OTA, size: %d byte, Please send the OTA upgrade package within 300 seconds\n", otaTotalSize);
+                        DTU_port->printf("The single packet sent is 1024 bytes, with a sending interval of 1000ms\n");
+                        LOG_INFO("Ready to start OTA");
+
+                        uint8_t data[OTA_BUFFER_SIZE];
+                        int bytes_written = 0;
+                        unsigned long lastDataTime = millis();
+                        int local_buf_idx = 0;
+
+                        while (bytes_written < otaTotalSize)
+                        {
+                            while (DTU_port->available() > 0 && local_buf_idx < 1024)
+                            {
+                                if (bytes_written + local_buf_idx >= otaTotalSize)
+                                {
+                                    break;
+                                }
+                                int c = DTU_port->read();
+                                if (c != -1)
+                                {
+                                    data[local_buf_idx++] = (uint8_t)c;
+                                    lastDataTime = millis();
+                                }
+                            }
+                            if (local_buf_idx <= 1024 && local_buf_idx > 0)
+                            {
+                                if (esp_ota_write(ota_handle, data, local_buf_idx) != ESP_OK)
+                                {
+                                    LOG_ERROR("Failed to write data to flash");
+                                    break;
+                                }
+                                bytes_written += local_buf_idx;
+                                Serial.printf("%d/%d \n", bytes_written, otaTotalSize);
+                                local_buf_idx = 0;
+                                lastDataTime = millis();
+                            }
+                            if (millis() - lastDataTime > 30000)
+                            {
+                                LOG_ERROR("OTA upload timeout!");
+                                break;
+                            }
+                            vTaskDelay(1 / portTICK_PERIOD_MS);
+                        }
+                        if (bytes_written == otaTotalSize)
+                        {
+                            DTU_port->printf("OTA download complete! Finalizing...");
+                            if (esp_ota_end(ota_handle) == ESP_OK)
+                            {
+                                DTU_port->printf("OTA success! System restarting in 3 seconds...");
+                                esp_ota_set_boot_partition(update_partition);
+                                vTaskDelay(3000 / portTICK_PERIOD_MS);
+                                ESP.restart();
+                            }
+                            else
+                            {
+                                DTU_port->printf("Failed to end OTA (checksum error etc.), please restart");
+                                ESP.restart();
+                            }
+                        }
+                        else
+                        {
+                            LOG_ERROR("OTA Failed. Written %d / %d bytes. Restarting system...", bytes_written, otaTotalSize);
+                            esp_ota_end(ota_handle);
+                            vTaskDelay(3000 / portTICK_PERIOD_MS);
+                            ESP.restart();
+                        }
+                    }
+                    else
+                    {
+                        LOG_WARNING("Invalid OTA size received: %s", allData->arguments.c_str());
+                    }
                 }
                 LOG_DEBUG("****** OtaUploadTask Test Over ******");
-                allData->release();
             }
         }
         vTaskDelay(pdMS_TO_TICKS(10));
-    }
-    while(true){
-
     }
     vTaskDelete(NULL);
 }
@@ -318,15 +521,16 @@ static void DataProcessTask(void *pvParameters)
     }
 }
 
-
-static void TempControlTask(void *pvParameters){
+static void TempControlTask(void *pvParameters)
+{
     TEMPCONTROLCONFIG tempCon = ConfigManager::getInstance().getTempCon();
     auto &tempManager = TempManager::getInstance();
     tempManager.begin();
     tempManager.setTargetTemp(tempCon.tempUpperLimit, tempCon.tempLowerLimit);
     tempManager.setTargetHumi(tempCon.wetnUpperLimit, tempCon.wetnLowerLimit);
 
-    while(true){
+    while (true)
+    {
         tempManager.poll();
         vTaskDelay(pdMS_TO_TICKS(30000));
     }
@@ -374,20 +578,25 @@ static void Hj212_2017SendTask(void *pvParameters)
                         if (xSemaphoreTake(_StreamMutex, pdMS_TO_TICKS(3000)) == pdTRUE)
                         {
                             DTUManager::getInstance().sendHJ212Packet(HJ212_str);
+                            xSemaphoreGive(_StreamMutex);
                         }
-                        xSemaphoreGive(_StreamMutex);
                     }
                     else
                     {
-                        LOG_WARNING("HJ212 Packet construction failed or empty.");
-                        filesys.savePendingPacket(allData->last_update);
-                        filesys.storeProcessedPacket(allData);
+                        if (allData->last_update > 20260526120000) {
+                            LOG_WARNING("HJ212 Packet construction failed or empty.");
+                            filesys.savePendingPacket(allData->last_update);
+                            filesys.storeProcessedPacket(allData);
+                        }
                     }
                 }
                 else
                 {
-                    filesys.savePendingPacket(allData->last_update);
-                    filesys.storeProcessedPacket(allData);
+                    if (allData->last_update > 20260526120000) {
+                        LOG_WARNING("HJ212 Packet construction failed or empty.");
+                        filesys.savePendingPacket(allData->last_update);
+                        filesys.storeProcessedPacket(allData);
+                    }
                 }
                 allData->release();
             }
@@ -406,9 +615,9 @@ static void Hj212_2017SendTask(void *pvParameters)
                     SemaphoreHandle_t _StreamMutex = SerialManager::getInstance().getMutex(SERIAL_HJ212);
                     if (xSemaphoreTake(_StreamMutex, pdMS_TO_TICKS(3000)) == pdTRUE)
                     {
+                        xSemaphoreGive(_StreamMutex);
                         DTUManager::getInstance().sendHJ212Packet(HJ212_str);
                     }
-                    xSemaphoreGive(_StreamMutex);
                 }
                 allData->release();
             }
@@ -418,7 +627,8 @@ static void Hj212_2017SendTask(void *pvParameters)
     vTaskDelete(NULL);
 }
 
-static void Hj212_2025SendTask(void *pvParameters){
+static void Hj212_2025SendTask(void *pvParameters)
+{
     LOG_INFO("Hj212_2017SendTask Started");
     QueueHandle_t Hj212SendTaskQueue = EventBus::getInstance().createReceiverQueue(10);
     EventBus::getInstance().subscribe(EventID::PROCESSED_DATA_COLLECTED, Hj212SendTaskQueue);
@@ -456,9 +666,9 @@ static void Hj212_2025SendTask(void *pvParameters){
                         SemaphoreHandle_t _StreamMutex = SerialManager::getInstance().getMutex(SERIAL_HJ212);
                         if (xSemaphoreTake(_StreamMutex, pdMS_TO_TICKS(3000)) == pdTRUE)
                         {
+                            xSemaphoreGive(_StreamMutex);
                             DTUManager::getInstance().sendHJ212Packet(HJ212_str);
                         }
-                        xSemaphoreGive(_StreamMutex);
                     }
                     else
                     {
@@ -489,9 +699,9 @@ static void Hj212_2025SendTask(void *pvParameters){
                     SemaphoreHandle_t _StreamMutex = SerialManager::getInstance().getMutex(SERIAL_HJ212);
                     if (xSemaphoreTake(_StreamMutex, pdMS_TO_TICKS(3000)) == pdTRUE)
                     {
+                        xSemaphoreGive(_StreamMutex);
                         DTUManager::getInstance().sendHJ212Packet(HJ212_str);
                     }
-                    xSemaphoreGive(_StreamMutex);
                 }
                 allData->release();
             }
@@ -525,12 +735,13 @@ static void netWorkRestoreTask(void *pvParameters)
         if (pendingData)
         {
             int subCount = EventBus::getInstance().getSubscriberCount(EventID::RESUME_DATA);
-            for (int i = 0; i < subCount; i++) {
+            for (int i = 0; i < subCount; i++)
+            {
                 pendingData->retain();
             }
             EventBus::getInstance().publish(EventID::RESUME_DATA, pendingData);
             pendingData->release();
-        } 
+        }
         vTaskDelay(pdMS_TO_TICKS(20000));
     }
     delete resumeData;
@@ -583,8 +794,8 @@ static void PermissionTask(void *pvParameters)
     auto &permission = PermissionSystem::getInstance();
     permission.begin(SERIAL_LCD, SERIAL_DTU);
 
-    xTaskCreatePinnedToCore(SerialControlTask_lcd, "SerialControlTask_lcd", 4 * 1024, NULL, 10, NULL, 1);
-    xTaskCreatePinnedToCore(SerialControlTask_dtu, "SerialControlTask_dtu", 4 * 1024, NULL, 10, NULL, 1);
+    xTaskCreatePinnedToCore(SerialControlTask_lcd, "Controllcd", 4 * 1024, NULL, 10, NULL, 1);
+    xTaskCreatePinnedToCore(SerialControlTask_dtu, "Controldtu", 4 * 1024, NULL, 10, NULL, 1);
 
     while (true)
     {
@@ -717,11 +928,6 @@ static void SerialControlTask_dtu(void *pvParameters)
 
 static void CollectGalTask(void *pvParameters)
 {
-    // bool upload = false;
-    // if (upload)
-    // {
-    //     xTaskCreatePinnedToCore(OtaUploadTask, "OtaUploadTask", 8 * 1024, NULL, 11, NULL, 1);
-    // }
     auto &collectorManager = collectorManager::getInstance();
     while (true)
     {
@@ -731,8 +937,10 @@ static void CollectGalTask(void *pvParameters)
     vTaskDelete(NULL);
 }
 
-static void MqttPublicTask(void *pvParameters){
-    while(true){
+static void MqttPublicTask(void *pvParameters)
+{
+    while (true)
+    {
         vTaskDelay(pdMS_TO_TICKS(1000));
     }
     vTaskDelete(NULL);
@@ -815,7 +1023,8 @@ bool updateMillisTime(uint64_t newTime)
 }
 
 // ******************* 函数实现 *******************
-void setUpInit(void){
+void setUpInit(void)
+{
     LOG_INFO("System setup init start!");
     auto &sm = SerialManager::getInstance();
     Stream *HJ212_port = sm.getStream(SERIAL_HJ212);
@@ -827,7 +1036,16 @@ void setUpInit(void){
     if (xSemaphoreTake(DTUMutex, pdMS_TO_TICKS(3000)) == pdTRUE)
     {
         uint64_t realTime = DTUMg.hjSystemTime();
-        if (realTime < 198001010002) {
+        if (realTime < 198001010002)
+        {
+            realTime = DTUMg.dtuSystemTime();
+        }
+        if (realTime < 202605260000)
+        {
+            realTime = DTUMg.dtuSystemTime();
+        }
+        if (realTime < 202605260000)
+        {
             realTime = DTUMg.dtuSystemTime();
         }
         LOG_DEBUG("****** realTime Time: %llu ******", realTime);
@@ -847,7 +1065,8 @@ void setUpInit(void){
     HJ212CONFIG hj212Cfg = ConfigManager::getInstance().getHJ212();
     SYSTEMCONFIG systemCfg = ConfigManager::getInstance().getSystem();
     SemaphoreHandle_t DTUHj212Mutex = sm.getMutex(SERIAL_HJ212);
-    if (xSemaphoreTake(DTUMutex, pdMS_TO_TICKS(3000)) == pdTRUE) {
+    if (xSemaphoreTake(DTUMutex, pdMS_TO_TICKS(3000)) == pdTRUE)
+    {
         if (!DTUMg.updateHJDtuGoalIP(hj212Cfg.ip))
         {
             LOG_ERROR("Failed to update HJ212 DTU IP");
@@ -855,7 +1074,8 @@ void setUpInit(void){
         xSemaphoreGive(DTUMutex);
     }
     SemaphoreHandle_t DTUREMutex = sm.getMutex(SERIAL_DTU);
-    if (xSemaphoreTake(DTUREMutex, pdMS_TO_TICKS(3000)) == pdTRUE) {
+    if (xSemaphoreTake(DTUREMutex, pdMS_TO_TICKS(3000)) == pdTRUE)
+    {
         if (!DTUMg.updateReDtuGoalIP(systemCfg.dtu_server))
         {
             LOG_ERROR("Failed to update Remote DTU IP");
@@ -863,7 +1083,8 @@ void setUpInit(void){
         xSemaphoreGive(DTUREMutex);
     }
 }
-void fileRestore(void){
+void fileRestore(void)
+{
     auto &filesys = filesysManager::getInstance();
     std::vector<uint64_t> pendingTimestamps = filesys.scanPendingTimestamps();
     if (!pendingTimestamps.empty())
@@ -871,17 +1092,44 @@ void fileRestore(void){
         LOG_INFO("Found %d pending packets, creating recovery task", pendingTimestamps.size());
         ResumeData *resumeData = new ResumeData();
         resumeData->packets = pendingTimestamps;
-        xTaskCreatePinnedToCore(netWorkRestoreTask, "netWorkRestoreTask", 8 * 1024, resumeData, 5, NULL, 0);
+        xTaskCreatePinnedToCore(netWorkRestoreTask, "netResTask", 8 * 1024, resumeData, 5, NULL, 0);
     }
 }
-void otaUpload(int otaSize){
+void otaUpload(int otaSize)
+{
+
     TaskHandle_t CollectTaskHandle = xTaskGetHandle("CollectTask");
-    TaskHandle_t Hj212SendHandle = xTaskGetHandle("Hj212_2017SendTask");
-    TaskHandle_t SaveDataFileHandle = xTaskGetHandle("SaveDataFileTask");
+    TaskHandle_t Hj212SendHandle = xTaskGetHandle("Hj2017Task");
+    TaskHandle_t SaveDataFileHandle = xTaskGetHandle("SaveFileTask");
     TaskHandle_t LedPrintHandle = xTaskGetHandle("LedPrintTask");
-    TaskHandle_t LcdControlHandle = xTaskGetHandle("SerialControlTask_lcd");
+    TaskHandle_t LcdControlHandle = xTaskGetHandle("Controllcd");
+    TaskHandle_t ControldtuHandle = xTaskGetHandle("Controldtu");
     TaskHandle_t SerialRemoteHandle = xTaskGetHandle("CollectGalTask");
-    TaskHandle_t Hj2122025SendHandle = xTaskGetHandle("Hj212_2025SendTask");
+    TaskHandle_t Hj2122025SendHandle = xTaskGetHandle("Hj2025Task");
+    TaskHandle_t TempConTaskHandle = xTaskGetHandle("TempConTask");
+    TaskHandle_t udSetTaskHandle = xTaskGetHandle("udSetTask");
+    TaskHandle_t netResTaskHandle = xTaskGetHandle("netResTask");
+
+    if (netResTaskHandle != NULL)
+    {
+        vTaskDelete(netResTaskHandle);
+        LOG_INFO("Stopped: netResTaskHandle task");
+    }
+    if (udSetTaskHandle != NULL)
+    {
+        vTaskDelete(udSetTaskHandle);
+        LOG_INFO("Stopped: udSetTask task");
+    }
+    if (ControldtuHandle != NULL)
+    {
+        vTaskDelete(ControldtuHandle);
+        LOG_INFO("Stopped: ControldtuHandle task");
+    }
+    if (TempConTaskHandle != NULL)
+    {
+        vTaskDelete(TempConTaskHandle);
+        LOG_INFO("Stopped: TempConTask task");
+    }
     if (CollectTaskHandle != NULL)
     {
         vTaskDelete(CollectTaskHandle);
@@ -917,84 +1165,107 @@ void otaUpload(int otaSize){
         vTaskDelete(SerialRemoteHandle);
         LOG_INFO("Stopped: calibration data task");
     }
+
     vTaskDelay(3000 / portTICK_PERIOD_MS);
-    volatile uint32_t otaTotalSize = 0;
+
+    volatile uint32_t otaTotalSize = otaSize;
     esp_ota_handle_t ota_handle;
     const esp_partition_t *update_partition = esp_ota_get_next_update_partition(NULL);
     if (esp_ota_begin(update_partition, OTA_SIZE_UNKNOWN, &ota_handle) != ESP_OK)
     {
-        LOG_INFO("Failed to start OTA");
+        LOG_ERROR("Failed to start OTA");
+        return;
     }
+
 #define OTA_BUFFER_SIZE 1024
-    int uploadCount = 0;
-    
-    auto &sm = SerialManager::getInstance();    
+    auto &sm = SerialManager::getInstance();
     Stream *DTU_port = sm.getStream(SERIAL_DTU);
-    Stream *HJ212_port = sm.getStream(SERIAL_HJ212);
-
-    SemaphoreHandle_t HJMutex = sm.getMutex(SERIAL_HJ212);
     SemaphoreHandle_t DTUMutex = sm.getMutex(SERIAL_DTU);
-
-    while (xSemaphoreTake(HJMutex, pdMS_TO_TICKS(3000)) != pdTRUE && xSemaphoreTake(DTUMutex, pdMS_TO_TICKS(3000)) != pdTRUE) {
-        
-    }
-
+    LOG_INFO("Attempting to lock serial mutexes...");
     while (true)
     {
-        while (DTU_port->available())
+        if (xSemaphoreTake(DTUMutex, pdMS_TO_TICKS(3000)) == pdTRUE)
         {
-            DTU_port->read();
-            vTaskDelay(1 / portTICK_PERIOD_MS);
+            break;
         }
-        DTU_port->printf("Ready to start OTA, size: %d byte, Please send the OTA upgrade package within 300 seconds\n", otaTotalSize);
-        DTU_port->printf("The single packet sent is 1024 bytes, with a sending interval of 1000ms\n");
-        LOG_INFO("Ready to start OTA");
-        uint8_t data[OTA_BUFFER_SIZE];
-        unsigned long lastPrintTime = 0;
-        bool firstPacketChecked = false;
-        size_t totalBytes = 0;
-        unsigned long lastDataTime = millis();
-        int bytes_written = 0;
-        while (true)
+        vTaskDelay(500 / portTICK_PERIOD_MS);
+    }
+    while (DTU_port->available())
+    {
+        DTU_port->read();
+        vTaskDelay(1 / portTICK_PERIOD_MS);
+    }
+
+    DTU_port->printf("Ready to start OTA, size: %d byte, Please send the OTA upgrade package within 300 seconds\n", otaTotalSize);
+    DTU_port->printf("The single packet sent is 1024 bytes, with a sending interval of 1000ms\n");
+    LOG_INFO("Ready to start OTA");
+
+    uint8_t data[OTA_BUFFER_SIZE];
+    int bytes_written = 0;
+    unsigned long lastDataTime = millis();
+    int local_buf_idx = 0;
+
+    while (bytes_written < otaTotalSize)
+    {
+        while (DTU_port->available() > 0 && local_buf_idx < 1024)
         {
-            if (DTU_port->available() > 0)
+            if (bytes_written + local_buf_idx >= otaTotalSize)
             {
-                int remaining = otaTotalSize - bytes_written;
-                int to_read = min(remaining, OTA_BUFFER_SIZE);
-                int len = DTU_port->readBytes(data, to_read);
-                if (len > 0)
-                {
-                    if (esp_ota_write(ota_handle, data, len) != ESP_OK)
-                    {
-                        LOG_ERROR("Failed to write data");
-                        break;
-                    }
-                    bytes_written += len;
-                    Serial.printf("Write: %d bytes, otaTotalSize: %d/%d \n", len, bytes_written, otaTotalSize);
-                    lastDataTime = millis();
-                }
+                break;
             }
-            else
+            int c = DTU_port->read();
+            if (c != -1)
             {
-                vTaskDelay(10 / portTICK_PERIOD_MS);
+                data[local_buf_idx++] = (uint8_t)c;
+                lastDataTime = millis();
             }
-            if (millis() - lastDataTime > 30000)
+        }
+        if (local_buf_idx == 1024 || (local_buf_idx > 0 && (bytes_written + local_buf_idx >= otaTotalSize)))
+        {
+            if (esp_ota_write(ota_handle, data, local_buf_idx) != ESP_OK)
             {
-                LOG_INFO("OTA upload timeout, no data for 300 seconds,upload success or fail");
-                if (esp_ota_end(ota_handle) != ESP_OK)
-                {
-                    LOG_ERROR("Failed to end OTA, please restart");
-                    ESP.restart();
-                }
-                else
-                {
-                    LOG_INFO("OTA upload, please wait 300s - 500s, esp32 system restart");
-                    esp_ota_set_boot_partition(update_partition);
-                    ESP.restart();
-                }
+                LOG_ERROR("Failed to write data to flash");
+                break;
             }
-            vTaskDelay(10 / portTICK_PERIOD_MS);
+            bytes_written += local_buf_idx;
+            DTU_port->printf("%d/%d \n", bytes_written, otaTotalSize);
+            local_buf_idx = 0;
+            lastDataTime = millis();
+        }
+        if (millis() - lastDataTime > 30000)
+        {
+            LOG_ERROR("OTA upload timeout!");
+            break;
+        }
+        vTaskDelay(1 / portTICK_PERIOD_MS);
+    }
+    if (bytes_written == otaTotalSize)
+    {
+        esp_err_t wdt_status = esp_task_wdt_delete(NULL); // NULL 代表当前任务
+        if (wdt_status == ESP_OK) {
+            LOG_DEBUG("Task WDT successfully disabled for OTA finalization.");
+        } else {
+            LOG_DEBUG("[DEBUG] WDT delete failed or not initialized: 0x%X\n", wdt_status);
+        }
+        DTU_port->printf("OTA download complete! Finalizing...");
+        if (esp_ota_end(ota_handle) == ESP_OK)
+        {
+            DTU_port->printf("OTA success! System restarting in 3 seconds...");
+            esp_ota_set_boot_partition(update_partition);
+            vTaskDelay(3000 / portTICK_PERIOD_MS);
+            ESP.restart();
+        }
+        else
+        {
+            DTU_port->printf("Failed to end OTA (checksum error etc.), please restart");
+            ESP.restart();
         }
     }
+    else
+    {
+        LOG_ERROR("OTA Failed. Written %d / %d bytes. Restarting system...", bytes_written, otaTotalSize);
+        esp_ota_end(ota_handle);
+        vTaskDelay(3000 / portTICK_PERIOD_MS);
+        ESP.restart();
+    }
 }
-

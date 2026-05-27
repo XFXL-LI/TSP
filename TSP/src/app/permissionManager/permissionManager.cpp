@@ -426,7 +426,8 @@ void PermissionSystem::onGALRes(void *eventData, Stream *stream, String cmd, Str
     resData->release();
 }
 void PermissionSystem::onUpload(void *eventData, Stream *stream, String cmd, String args){
-
+    config_json uploadJson(args.c_str());
+    int size = uploadJson.isValid() ? uploadJson.getInt("size", 0) : 0;
 }
 
 // ***************************************    »Øµ÷º¯Êý    ***************************************
