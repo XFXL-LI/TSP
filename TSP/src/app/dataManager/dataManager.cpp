@@ -6,6 +6,7 @@ DataManager::DataManager() {
     _last_min_time = 1;
     _last_hour_time = 1;
     _last_day_time = 1;
+    _l_m_s_timestamp = 1;
     _statsMutex = xSemaphoreCreateMutex();
     _lastMinDataMutex = xSemaphoreCreateMutex();
 }
@@ -39,7 +40,8 @@ void DataManager::processAllData(AllDataPacket* pkg) {
     if (pkg == nullptr) return;
     
     if (xSemaphoreTake(_statsMutex, pdMS_TO_TICKS(100)) == pdTRUE) {
-        uint64_t currentMinute = pkg->last_update / 10000;  // Remove seconds, keep YYYYMMDDHHMM
+        uint64_t currentMinute = (pkg->last_update / 100) % 100;  // Remove seconds, keep YYYYMMDDHHMMSS 20260527000000
+        //LOG_DEBUG(" last_update = %llu, currentMinute ==== %llu",pkg->last_update, currentMinute);
         bool isThirdMinute = (currentMinute % 3 == 0);
         for (auto const& [id, dataPtr] : pkg->data_map) {
             if (dataPtr != nullptr && dataPtr->is_valid) {
@@ -63,6 +65,7 @@ void DataManager::processQuery(JSONCmdData* req) {
     AllProcessedDataPacket* pkg = new AllProcessedDataPacket();
     if (xSemaphoreTake(_lastMinDataMutex, pdMS_TO_TICKS(100)) == pdTRUE) {
         pkg->processed_data_map = _last_min_snapshot;
+        pkg->last_update = _l_m_s_timestamp;
         xSemaphoreGive(_lastMinDataMutex);
     }
     int subCount = EventBus::getInstance().getSubscriberCount(EventID::DATA_QUERY_RES);
@@ -72,6 +75,9 @@ void DataManager::processQuery(JSONCmdData* req) {
 }
 
 void DataManager::checkAndDispatch(uint64_t ts) {
+    if (ts < 20260527000000) {
+        return;
+    }
     uint64_t currentMin = ts; 
     uint64_t currentHour = ts / 10000; 
     uint64_t currentDay = ts / 1000000; 
@@ -93,6 +99,7 @@ void DataManager::checkAndDispatch(uint64_t ts) {
                 p.value = item.second.getAvg();
                 _last_min_snapshot[item.first] = p;
             }
+            _l_m_s_timestamp = ts;
             xSemaphoreGive(_lastMinDataMutex);
         }
         for(auto &it : _min_stats) it.second.reset(); 

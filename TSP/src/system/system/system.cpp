@@ -52,10 +52,9 @@ uint64_t getCurrentTime();
 // ********** 其他全局定义 **********
 void setUpInit(void);
 void fileRestore(void);
-void otaUpload(int otaSize);
 //
 
-CSQINFO csqInfo;
+SYSINFO systemInfo;
 struct ResumeData
 {
     std::vector<uint64_t> packets;
@@ -90,6 +89,7 @@ static void updateConfigTask(void *pvParameters);
 static void TempControlTask(void *pvParameters);
 // mqtt 订阅发送
 static void MqttPublicTask(void *pvParameters);
+static void otaUpload(void *pvParameters);
 
 System::System()
 {
@@ -170,7 +170,7 @@ void System::SystemTaskInit(void)
 
     xTaskCreatePinnedToCore(CollectGalTask, "CollectGalTask", 4 * 1024, NULL, 5, NULL, 0);
 
-    xTaskCreatePinnedToCore(OtaUploadTask, "OtaUploadTask", 8 * 10240, NULL, 11, NULL, 1);
+    xTaskCreatePinnedToCore(OtaUploadTask, "OtaUploadTask", 4 * 1024, NULL, 11, NULL, 1);
 }
 
 static void updateConfigTask(void *pvParameters)
@@ -191,15 +191,16 @@ static void updateSetupTask(void *pvParameters)
     fileRestore();
     // ========== 恢复逻辑结束 ==========
 
-    csqInfo.mutex = xSemaphoreCreateMutex();
+    systemInfo.mutex = xSemaphoreCreateMutex();
     volatile bool netWorkError = false;
     int countTime = 0;
     while (true)
     {
-        if (countTime >= 120)
+        if (countTime >= 720)
         {
             uint64_t currentTime = getCurrentTime();
-            if (currentTime < 202605261200) {
+            if (currentTime < 202605270000)
+            {
                 vTaskDelay(pdMS_TO_TICKS(3000));
                 currentTime = getCurrentTime();
             }
@@ -233,13 +234,14 @@ static void updateSetupTask(void *pvParameters)
             SYSTEM_SETUP newSetup = ConfigManager::getInstance().getSetup();
             newSetup.netCsq = csq;
             ConfigManager::getInstance().updateSetup(newSetup);
-            if (csqInfo.mutex == NULL)
+            if (systemInfo.mutex == NULL)
             {
                 LOG_ERROR("Failed to create mutex for CSQ info");
             }
-            else if (xSemaphoreTake(csqInfo.mutex, pdMS_TO_TICKS(3000)) == pdTRUE)
+            else if (xSemaphoreTake(systemInfo.mutex, pdMS_TO_TICKS(3000)) == pdTRUE)
             {
-                csqInfo.csq = csq;
+                systemInfo.csq = csq;
+                xSemaphoreGive(systemInfo.mutex);
             }
 
             if (netWorkError && csq >= 0 && csq <= 31)
@@ -370,113 +372,115 @@ static void OtaUploadTask(void *pvParameters)
 
                         vTaskDelay(3000 / portTICK_PERIOD_MS);
 
-                        volatile uint32_t otaTotalSize = otaSize;
-                        esp_ota_handle_t ota_handle;
-                        const esp_partition_t *update_partition = esp_ota_get_next_update_partition(NULL);
-                        if (esp_ota_begin(update_partition, OTA_SIZE_UNKNOWN, &ota_handle) != ESP_OK)
-                        {
-                            LOG_ERROR("Failed to start OTA");
-                            return;
-                        }
+                        xTaskCreatePinnedToCore(otaUpload, "otaUpload", 8 * 10240, (void*)otaSize, 11, NULL, 1);
+                    }
+                    LOG_DEBUG("****** OtaUploadTask Test Over ******");
+                }
+            }
+            vTaskDelay(pdMS_TO_TICKS(10));
+        }
+        vTaskDelete(NULL);
+    }
+}
+static void otaUpload(void *pvParameters)
+{
+        int otaSize = (int)pvParameters;
+        volatile uint32_t otaTotalSize = otaSize;
+        esp_ota_handle_t ota_handle;
+        const esp_partition_t *update_partition = esp_ota_get_next_update_partition(NULL);
+        if (esp_ota_begin(update_partition, OTA_SIZE_UNKNOWN, &ota_handle) != ESP_OK)
+        {
+            LOG_ERROR("Failed to start OTA");
+            return;
+        }
 
 #define OTA_BUFFER_SIZE 1024
-                        auto &sm = SerialManager::getInstance();
-                        Stream *DTU_port = sm.getStream(SERIAL_DTU);
-                        SemaphoreHandle_t DTUMutex = sm.getMutex(SERIAL_DTU);
-                        LOG_INFO("Attempting to lock serial mutexes...");
-                        while (true)
-                        {
-                            if (xSemaphoreTake(DTUMutex, pdMS_TO_TICKS(3000)) == pdTRUE)
-                            {
-                                break;
-                            }
-                            vTaskDelay(500 / portTICK_PERIOD_MS);
-                        }
-                        while (DTU_port->available())
-                        {
-                            DTU_port->read();
-                            vTaskDelay(1 / portTICK_PERIOD_MS);
-                        }
+        auto &sm = SerialManager::getInstance();
+        Stream *DTU_port = sm.getStream(SERIAL_DTU);
+        SemaphoreHandle_t DTUMutex = sm.getMutex(SERIAL_DTU);
+        LOG_INFO("Attempting to lock serial mutexes...");
+        while (true)
+        {
+            if (xSemaphoreTake(DTUMutex, pdMS_TO_TICKS(3000)) == pdTRUE)
+            {
+                break;
+            }
+            vTaskDelay(500 / portTICK_PERIOD_MS);
+        }
+        while (DTU_port->available())
+        {
+            DTU_port->read();
+            vTaskDelay(1 / portTICK_PERIOD_MS);
+        }
 
-                        DTU_port->printf("Ready to start OTA, size: %d byte, Please send the OTA upgrade package within 300 seconds\n", otaTotalSize);
-                        DTU_port->printf("The single packet sent is 1024 bytes, with a sending interval of 1000ms\n");
-                        LOG_INFO("Ready to start OTA");
+        DTU_port->printf("Ready to start OTA, size: %d byte, Please send the OTA upgrade package within 300 seconds\n", otaTotalSize);
+        DTU_port->printf("The single packet sent is 1024 bytes, with a sending interval of 1000ms\n");
+        LOG_INFO("Ready to start OTA");
 
-                        uint8_t data[OTA_BUFFER_SIZE];
-                        int bytes_written = 0;
-                        unsigned long lastDataTime = millis();
-                        int local_buf_idx = 0;
+        uint8_t data[OTA_BUFFER_SIZE];
+        int bytes_written = 0;
+        unsigned long lastDataTime = millis();
+        int local_buf_idx = 0;
 
-                        while (bytes_written < otaTotalSize)
-                        {
-                            while (DTU_port->available() > 0 && local_buf_idx < 1024)
-                            {
-                                if (bytes_written + local_buf_idx >= otaTotalSize)
-                                {
-                                    break;
-                                }
-                                int c = DTU_port->read();
-                                if (c != -1)
-                                {
-                                    data[local_buf_idx++] = (uint8_t)c;
-                                    lastDataTime = millis();
-                                }
-                            }
-                            if (local_buf_idx <= 1024 && local_buf_idx > 0)
-                            {
-                                if (esp_ota_write(ota_handle, data, local_buf_idx) != ESP_OK)
-                                {
-                                    LOG_ERROR("Failed to write data to flash");
-                                    break;
-                                }
-                                bytes_written += local_buf_idx;
-                                Serial.printf("%d/%d \n", bytes_written, otaTotalSize);
-                                local_buf_idx = 0;
-                                lastDataTime = millis();
-                            }
-                            if (millis() - lastDataTime > 30000)
-                            {
-                                LOG_ERROR("OTA upload timeout!");
-                                break;
-                            }
-                            vTaskDelay(1 / portTICK_PERIOD_MS);
-                        }
-                        if (bytes_written == otaTotalSize)
-                        {
-                            DTU_port->printf("OTA download complete! Finalizing...");
-                            if (esp_ota_end(ota_handle) == ESP_OK)
-                            {
-                                DTU_port->printf("OTA success! System restarting in 3 seconds...");
-                                esp_ota_set_boot_partition(update_partition);
-                                vTaskDelay(3000 / portTICK_PERIOD_MS);
-                                ESP.restart();
-                            }
-                            else
-                            {
-                                DTU_port->printf("Failed to end OTA (checksum error etc.), please restart");
-                                ESP.restart();
-                            }
-                        }
-                        else
-                        {
-                            LOG_ERROR("OTA Failed. Written %d / %d bytes. Restarting system...", bytes_written, otaTotalSize);
-                            esp_ota_end(ota_handle);
-                            vTaskDelay(3000 / portTICK_PERIOD_MS);
-                            ESP.restart();
-                        }
-                    }
-                    else
-                    {
-                        LOG_WARNING("Invalid OTA size received: %s", allData->arguments.c_str());
-                    }
+        while (bytes_written < otaTotalSize)
+        {
+            while (DTU_port->available() > 0 && local_buf_idx < 1024)
+            {
+                if (bytes_written + local_buf_idx >= otaTotalSize)
+                {
+                    break;
                 }
-                LOG_DEBUG("****** OtaUploadTask Test Over ******");
+                int c = DTU_port->read();
+                if (c != -1)
+                {
+                    data[local_buf_idx++] = (uint8_t)c;
+                    lastDataTime = millis();
+                }
+            }
+            if (local_buf_idx <= 1024 && local_buf_idx > 0)
+            {
+                if (esp_ota_write(ota_handle, data, local_buf_idx) != ESP_OK)
+                {
+                    LOG_ERROR("Failed to write data to flash");
+                    break;
+                }
+                bytes_written += local_buf_idx;
+                DTU_port->printf("%d/%d \n", bytes_written, otaTotalSize);
+                local_buf_idx = 0;
+                lastDataTime = millis();
+            }
+            if (millis() - lastDataTime > 30000)
+            {
+                LOG_ERROR("OTA upload timeout!");
+                break;
+            }
+            vTaskDelay(1 / portTICK_PERIOD_MS);
+        }
+        if (bytes_written == otaTotalSize)
+        {
+            DTU_port->printf("OTA download complete! Finalizing...");
+            if (esp_ota_end(ota_handle) == ESP_OK)
+            {
+                DTU_port->printf("OTA success! System restarting in 3 seconds...");
+                esp_ota_set_boot_partition(update_partition);
+                vTaskDelay(3000 / portTICK_PERIOD_MS);
+                ESP.restart();
+            }
+            else
+            {
+                DTU_port->printf("Failed to end OTA (checksum error etc.), please restart");
+                ESP.restart();
             }
         }
-        vTaskDelay(pdMS_TO_TICKS(10));
-    }
-    vTaskDelete(NULL);
+        else
+        {
+            LOG_ERROR("OTA Failed. Written %d / %d bytes. Restarting system...", bytes_written, otaTotalSize);
+            esp_ota_end(ota_handle);
+            vTaskDelay(3000 / portTICK_PERIOD_MS);
+            ESP.restart();
+        }
 }
+
 static void CollectTask(void *pvParameters)
 {
     LOG_INFO("CollectTask Started");
@@ -583,7 +587,8 @@ static void Hj212_2017SendTask(void *pvParameters)
                     }
                     else
                     {
-                        if (allData->last_update > 20260526120000) {
+                        if (allData->last_update > 20260527000000)
+                        {
                             LOG_WARNING("HJ212 Packet construction failed or empty.");
                             filesys.savePendingPacket(allData->last_update);
                             filesys.storeProcessedPacket(allData);
@@ -592,7 +597,8 @@ static void Hj212_2017SendTask(void *pvParameters)
                 }
                 else
                 {
-                    if (allData->last_update > 20260526120000) {
+                    if (allData->last_update > 20260527000000)
+                    {
                         LOG_WARNING("HJ212 Packet construction failed or empty.");
                         filesys.savePendingPacket(allData->last_update);
                         filesys.storeProcessedPacket(allData);
@@ -1036,15 +1042,15 @@ void setUpInit(void)
     if (xSemaphoreTake(DTUMutex, pdMS_TO_TICKS(3000)) == pdTRUE)
     {
         uint64_t realTime = DTUMg.hjSystemTime();
-        if (realTime < 198001010002)
+        if (realTime < 202605270000)
         {
             realTime = DTUMg.dtuSystemTime();
         }
-        if (realTime < 202605260000)
+        if (realTime < 202605270000)
         {
             realTime = DTUMg.dtuSystemTime();
         }
-        if (realTime < 202605260000)
+        if (realTime < 202605270000)
         {
             realTime = DTUMg.dtuSystemTime();
         }
@@ -1093,179 +1099,5 @@ void fileRestore(void)
         ResumeData *resumeData = new ResumeData();
         resumeData->packets = pendingTimestamps;
         xTaskCreatePinnedToCore(netWorkRestoreTask, "netResTask", 8 * 1024, resumeData, 5, NULL, 0);
-    }
-}
-void otaUpload(int otaSize)
-{
-
-    TaskHandle_t CollectTaskHandle = xTaskGetHandle("CollectTask");
-    TaskHandle_t Hj212SendHandle = xTaskGetHandle("Hj2017Task");
-    TaskHandle_t SaveDataFileHandle = xTaskGetHandle("SaveFileTask");
-    TaskHandle_t LedPrintHandle = xTaskGetHandle("LedPrintTask");
-    TaskHandle_t LcdControlHandle = xTaskGetHandle("Controllcd");
-    TaskHandle_t ControldtuHandle = xTaskGetHandle("Controldtu");
-    TaskHandle_t SerialRemoteHandle = xTaskGetHandle("CollectGalTask");
-    TaskHandle_t Hj2122025SendHandle = xTaskGetHandle("Hj2025Task");
-    TaskHandle_t TempConTaskHandle = xTaskGetHandle("TempConTask");
-    TaskHandle_t udSetTaskHandle = xTaskGetHandle("udSetTask");
-    TaskHandle_t netResTaskHandle = xTaskGetHandle("netResTask");
-
-    if (netResTaskHandle != NULL)
-    {
-        vTaskDelete(netResTaskHandle);
-        LOG_INFO("Stopped: netResTaskHandle task");
-    }
-    if (udSetTaskHandle != NULL)
-    {
-        vTaskDelete(udSetTaskHandle);
-        LOG_INFO("Stopped: udSetTask task");
-    }
-    if (ControldtuHandle != NULL)
-    {
-        vTaskDelete(ControldtuHandle);
-        LOG_INFO("Stopped: ControldtuHandle task");
-    }
-    if (TempConTaskHandle != NULL)
-    {
-        vTaskDelete(TempConTaskHandle);
-        LOG_INFO("Stopped: TempConTask task");
-    }
-    if (CollectTaskHandle != NULL)
-    {
-        vTaskDelete(CollectTaskHandle);
-        LOG_INFO("Stopped: collect task");
-    }
-    if (Hj2122025SendHandle != NULL)
-    {
-        vTaskDelete(Hj2122025SendHandle);
-        LOG_INFO("Stopped: Hj2122025SendHandle task");
-    }
-    if (Hj212SendHandle != NULL)
-    {
-        vTaskDelete(Hj212SendHandle);
-        LOG_INFO("Stopped: LED task");
-    }
-    if (SaveDataFileHandle != NULL)
-    {
-        vTaskDelete(SaveDataFileHandle);
-        LOG_INFO("Stopped: serial task");
-    }
-    if (LedPrintHandle != NULL)
-    {
-        vTaskDelete(LedPrintHandle);
-        LOG_INFO("Stopped: calibration data task");
-    }
-    if (LcdControlHandle != NULL)
-    {
-        vTaskDelete(LcdControlHandle);
-        LOG_INFO("Stopped: calibration data task");
-    }
-    if (SerialRemoteHandle != NULL)
-    {
-        vTaskDelete(SerialRemoteHandle);
-        LOG_INFO("Stopped: calibration data task");
-    }
-
-    vTaskDelay(3000 / portTICK_PERIOD_MS);
-
-    volatile uint32_t otaTotalSize = otaSize;
-    esp_ota_handle_t ota_handle;
-    const esp_partition_t *update_partition = esp_ota_get_next_update_partition(NULL);
-    if (esp_ota_begin(update_partition, OTA_SIZE_UNKNOWN, &ota_handle) != ESP_OK)
-    {
-        LOG_ERROR("Failed to start OTA");
-        return;
-    }
-
-#define OTA_BUFFER_SIZE 1024
-    auto &sm = SerialManager::getInstance();
-    Stream *DTU_port = sm.getStream(SERIAL_DTU);
-    SemaphoreHandle_t DTUMutex = sm.getMutex(SERIAL_DTU);
-    LOG_INFO("Attempting to lock serial mutexes...");
-    while (true)
-    {
-        if (xSemaphoreTake(DTUMutex, pdMS_TO_TICKS(3000)) == pdTRUE)
-        {
-            break;
-        }
-        vTaskDelay(500 / portTICK_PERIOD_MS);
-    }
-    while (DTU_port->available())
-    {
-        DTU_port->read();
-        vTaskDelay(1 / portTICK_PERIOD_MS);
-    }
-
-    DTU_port->printf("Ready to start OTA, size: %d byte, Please send the OTA upgrade package within 300 seconds\n", otaTotalSize);
-    DTU_port->printf("The single packet sent is 1024 bytes, with a sending interval of 1000ms\n");
-    LOG_INFO("Ready to start OTA");
-
-    uint8_t data[OTA_BUFFER_SIZE];
-    int bytes_written = 0;
-    unsigned long lastDataTime = millis();
-    int local_buf_idx = 0;
-
-    while (bytes_written < otaTotalSize)
-    {
-        while (DTU_port->available() > 0 && local_buf_idx < 1024)
-        {
-            if (bytes_written + local_buf_idx >= otaTotalSize)
-            {
-                break;
-            }
-            int c = DTU_port->read();
-            if (c != -1)
-            {
-                data[local_buf_idx++] = (uint8_t)c;
-                lastDataTime = millis();
-            }
-        }
-        if (local_buf_idx == 1024 || (local_buf_idx > 0 && (bytes_written + local_buf_idx >= otaTotalSize)))
-        {
-            if (esp_ota_write(ota_handle, data, local_buf_idx) != ESP_OK)
-            {
-                LOG_ERROR("Failed to write data to flash");
-                break;
-            }
-            bytes_written += local_buf_idx;
-            DTU_port->printf("%d/%d \n", bytes_written, otaTotalSize);
-            local_buf_idx = 0;
-            lastDataTime = millis();
-        }
-        if (millis() - lastDataTime > 30000)
-        {
-            LOG_ERROR("OTA upload timeout!");
-            break;
-        }
-        vTaskDelay(1 / portTICK_PERIOD_MS);
-    }
-    if (bytes_written == otaTotalSize)
-    {
-        esp_err_t wdt_status = esp_task_wdt_delete(NULL); // NULL 代表当前任务
-        if (wdt_status == ESP_OK) {
-            LOG_DEBUG("Task WDT successfully disabled for OTA finalization.");
-        } else {
-            LOG_DEBUG("[DEBUG] WDT delete failed or not initialized: 0x%X\n", wdt_status);
-        }
-        DTU_port->printf("OTA download complete! Finalizing...");
-        if (esp_ota_end(ota_handle) == ESP_OK)
-        {
-            DTU_port->printf("OTA success! System restarting in 3 seconds...");
-            esp_ota_set_boot_partition(update_partition);
-            vTaskDelay(3000 / portTICK_PERIOD_MS);
-            ESP.restart();
-        }
-        else
-        {
-            DTU_port->printf("Failed to end OTA (checksum error etc.), please restart");
-            ESP.restart();
-        }
-    }
-    else
-    {
-        LOG_ERROR("OTA Failed. Written %d / %d bytes. Restarting system...", bytes_written, otaTotalSize);
-        esp_ota_end(ota_handle);
-        vTaskDelay(3000 / portTICK_PERIOD_MS);
-        ESP.restart();
     }
 }

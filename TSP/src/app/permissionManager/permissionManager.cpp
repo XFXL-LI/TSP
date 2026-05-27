@@ -437,10 +437,20 @@ void PermissionSystem::getData(AllProcessedDataPacket *allData, Stream *stream, 
 {
     config_json request(args.c_str());
     cJSON *idsArray = request.getArray("ids");
+    int csq = 99;
+    if (systemInfo.mutex == NULL)    {
+        LOG_ERROR("Failed to create mutex for CSQ info");
+    } else if (xSemaphoreTake(systemInfo.mutex, pdMS_TO_TICKS(3000)) == pdTRUE) {
+        csq = systemInfo.csq;
+        xSemaphoreGive(systemInfo.mutex);
+    }
+    uint64_t time = allData->last_update;
     String jsonRes = "{";
     jsonRes += "\"operation\":\"" + cmd + "\",";
     jsonRes += "\"code\":\"OK\",";
     jsonRes += "\"message\":\"get data success\",";
+    jsonRes += "\"timestamp\":" + String(time) + ",";
+    jsonRes += "\"csq\":" + String(csq) + ",";
     jsonRes += "\"params\":[";
     if (idsArray != nullptr)
     {
@@ -467,35 +477,22 @@ void PermissionSystem::getData(AllProcessedDataPacket *allData, Stream *stream, 
             if (cJSON_IsString(idItem))
             {
                 const char *targetId = idItem->valuestring;
-                if (strcmp(targetId, "csq") == 0)
+                float val = 0.00;
+
+                if (allData->processed_data_map.count(targetId))
                 {
-                    int csq = 99;
-                    if (csqInfo.mutex == NULL)    {
-                        LOG_ERROR("Failed to create mutex for CSQ info");
-                    } else if (xSemaphoreTake(csqInfo.mutex, pdMS_TO_TICKS(3000)) == pdTRUE) {
-                        csq = csqInfo.csq;
-                    }
-                    jsonRes += String(csq);
-                    if (i < arraySize - 1)
-                        jsonRes += ",";
-                } else {
-                    float val = 0.00;
-
-                    if (allData->processed_data_map.count(targetId))
-                    {
-                        auto &packet = allData->processed_data_map[targetId];
-                        if (packet.is_valid)
-                            val = packet.value;
-                    }
-
-                    // 使用 char 缓冲区强制格式化
-                    char buf[16];
-                    snprintf(buf, sizeof(buf), "%.2f", val);
-                    jsonRes += String(buf); // 直接拼接数字文本，不带双引号
-
-                    if (i < arraySize - 1)
-                        jsonRes += ",";
+                    auto &packet = allData->processed_data_map[targetId];
+                    if (packet.is_valid)
+                        val = packet.value;
                 }
+
+                // 使用 char 缓冲区强制格式化
+                char buf[16];
+                snprintf(buf, sizeof(buf), "%.2f", val);
+                jsonRes += String(buf); // 直接拼接数字文本，不带双引号
+
+                if (i < arraySize - 1)
+                    jsonRes += ",";
             }
         }
     }

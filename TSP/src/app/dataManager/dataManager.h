@@ -69,6 +69,7 @@ private:
     std::map<String, StatValue> _hour_stats;
     std::map<String, StatValue> _day_stats;
     std::map<String, ProcessedDataPacket> _last_min_snapshot;
+    uint64_t _l_m_s_timestamp;
 
     // 时间记录 (格式：YYYYMMDDHHMMSS)
     uint64_t _last_min_time;

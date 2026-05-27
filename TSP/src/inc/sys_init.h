@@ -12,14 +12,16 @@
 //新版本
 #define VERSION2 "2.0.0"
 
-struct CSQINFO {
+struct SYSINFO {
     int csq;
+    float temp;
+    float wetn;
     SemaphoreHandle_t mutex;
 };
 
 extern Ds1302 rtc;
 extern const char* WeekDays[];
-extern CSQINFO csqInfo;
+extern SYSINFO systemInfo;
 
 struct DataPacket {
     char sensor_id[16]; 
