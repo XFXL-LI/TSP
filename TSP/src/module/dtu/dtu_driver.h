@@ -28,7 +28,7 @@ public:
     void setStream(Stream& stream) { _stream = &stream; };
     
     String sendCommand(const char* cmd, uint32_t timeout = 3000);
-    void sendData(String data);
+    String sendData(String data);
     int readCSQ();
     bool checkOnline();
     

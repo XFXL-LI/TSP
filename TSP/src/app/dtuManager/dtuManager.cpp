@@ -135,7 +135,31 @@ bool DTUManager::updateHJDtuGoalIP(String newIP){
 }
 void DTUManager::sendHJ212Packet(String dataContent) {
     String packet = dataContent;
-    _hj212DTU->sendData(packet);
+    const int MAX_RETRY = 3;
+    for (int retry = 1; retry <= MAX_RETRY; retry++)
+    {
+        LOG_DEBUG("HJ212 Send Attempt: %d", retry);
+        String res = _hj212DTU->sendData(packet);
+        if (res.length() > 0)
+        {
+            //LOG_DEBUG("HJ212 DTU Response: %s", res.c_str());
+            if (res.indexOf("CN=9014") != -1)
+            {
+                LOG_DEBUG("HJ212 ACK Success.");
+                return;
+            }
+            else
+            {
+                LOG_DEBUG("HJ212 ACK Invalid, retry...");
+            }
+        }
+        else
+        {
+            LOG_DEBUG("No response from HJ212 DTU.");
+        }
+        vTaskDelay(pdMS_TO_TICKS(1000));
+    }
+    return;
 }
 
 void DTUManager::poll(){

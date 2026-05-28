@@ -39,11 +39,24 @@ String DTUDriver::sendCommand(const char* cmd, uint32_t timeout) {
     }
     return "";
 }
-void DTUDriver::sendData(String data){
+String DTUDriver::sendData(String data){
     const char *buf = data.c_str();
     size_t len = data.length();
     _stream->write((const uint8_t *)buf, len);
     _stream->flush();
+    String res = "";
+    uint64_t startTime = millis();
+     while (millis() - startTime < 5000)
+    {
+        while (_stream->available() > 0)
+        {
+            char c = _stream->read();
+            res += c;
+            startTime = millis();
+        }
+        vTaskDelay(pdMS_TO_TICKS(10));
+    }
+    return res;
 }
 int DTUDriver::readCSQ() {
     String res = sendCommand(GET_CSQ_COMM);
