@@ -40,8 +40,7 @@ void DataManager::processAllData(AllDataPacket* pkg) {
     if (pkg == nullptr) return;
     
     if (xSemaphoreTake(_statsMutex, pdMS_TO_TICKS(100)) == pdTRUE) {
-        uint64_t currentMinute = (pkg->last_update / 100) % 100;  // Remove seconds, keep YYYYMMDDHHMMSS 20260527000000
-        //LOG_DEBUG(" last_update = %llu, currentMinute ==== %llu",pkg->last_update, currentMinute);
+        uint64_t currentMinute = (pkg->last_update / 100) % 100;
         bool isThirdMinute = (currentMinute % 3 == 0);
         for (auto const& [id, dataPtr] : pkg->data_map) {
             if (dataPtr != nullptr && dataPtr->is_valid) {

@@ -87,7 +87,7 @@
             "alarmLimit": 200,
             "unit": "ng/m3"
         },
-        "a21008": {
+        "w34011": {
             "name": "O3",
             "alarmLimit": 200,
             "unit": "ng/m3"

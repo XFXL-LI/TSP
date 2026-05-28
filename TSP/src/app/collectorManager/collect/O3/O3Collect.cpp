@@ -3,7 +3,7 @@
 #include "../../../../module/log/log_manager.h"
 #include "../../../../module/Serial/SerialManager.h"
 #include "../../collectorManager.h"
-static CollectorRegistrar _registrar_o3("a21008", &O3Collect::getInstance());
+static CollectorRegistrar _registrar_o3("w34011", &O3Collect::getInstance());
 
 O3Collect* O3Collect::_instance = nullptr;
 

@@ -1,6 +1,7 @@
 #include "TempManager.h"
 #include "../../module/log/log_manager.h"
 #include "../../module/Serial/SerialManager.h"
+#include "../../inc/sys_init.h"
 
 TempManager::TempManager() : 
     _targetTempUp(35.0f), 
@@ -64,6 +65,16 @@ void TempManager::poll() {
     if (_sht30.readTemperatureHumidity(t, h)) {
         _currentTemp = t;
         _currentHumi = h;
+        if (systemInfo.mutex == NULL)
+        {
+            LOG_ERROR("Failed to create mutex for CSQ info");
+        }
+        else if (xSemaphoreTake(systemInfo.mutex, pdMS_TO_TICKS(3000)) == pdTRUE)
+        {
+            systemInfo.temp = t;
+            systemInfo.mete = h;
+            xSemaphoreGive(systemInfo.mutex);
+        }
         LOG_DEBUG("TempManager - Current Temp: %.2f C, Humidity: %.2f %%", _currentTemp, _currentHumi);
         executeControl();
     } else {

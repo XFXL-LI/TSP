@@ -109,7 +109,7 @@ void PermissionSystem::sendMsg(Stream *stream, const char *msg)
 }
 void PermissionSystem::poll()
 {
-    if (_isLoggedIn && (millis() - _lastActivity > TIMEOUT_MS))
+    if (_isLoggedIn && ((millis() - _lastActivity) > TIMEOUT_MS))
     {
         handleLogout();
     }
@@ -438,10 +438,14 @@ void PermissionSystem::getData(AllProcessedDataPacket *allData, Stream *stream, 
     config_json request(args.c_str());
     cJSON *idsArray = request.getArray("ids");
     int csq = 99;
+    float temp = 0.0f;
+    float mete = 0.0f;
     if (systemInfo.mutex == NULL)    {
         LOG_ERROR("Failed to create mutex for CSQ info");
     } else if (xSemaphoreTake(systemInfo.mutex, pdMS_TO_TICKS(3000)) == pdTRUE) {
         csq = systemInfo.csq;
+        temp = systemInfo.temp;
+        mete = systemInfo.mete;
         xSemaphoreGive(systemInfo.mutex);
     }
     uint64_t time = allData->last_update;
@@ -451,6 +455,8 @@ void PermissionSystem::getData(AllProcessedDataPacket *allData, Stream *stream, 
     jsonRes += "\"message\":\"get data success\",";
     jsonRes += "\"timestamp\":" + String(time) + ",";
     jsonRes += "\"csq\":" + String(csq) + ",";
+    jsonRes += "\"temp\":" + String(temp, 2) + ",";
+    jsonRes += "\"mete\":" + String(mete, 2) + ",";
     jsonRes += "\"params\":[";
     if (idsArray != nullptr)
     {

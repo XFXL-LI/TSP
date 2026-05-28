@@ -15,7 +15,7 @@
 struct SYSINFO {
     int csq;
     float temp;
-    float wetn;
+    float mete;
     SemaphoreHandle_t mutex;
 };
 

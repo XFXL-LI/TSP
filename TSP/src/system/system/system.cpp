@@ -29,7 +29,7 @@
 #include "../../app/filesysManager/filesysManager.h"
 #include "../../app/tempManager/tempManager.h"
 
-#define PUMP1_PIN 14
+#define PUMP1_PIN 41
 #define PUMP2_PIN 40
 
 // ********** 时间相关定义 **********
@@ -502,7 +502,7 @@ static void CollectTask(void *pvParameters)
     while (true)
     {
         digitalWrite(PUMP1_PIN, HIGH);
-        vTaskDelay(pdMS_TO_TICKS(collectTime * 1000 / 2));
+        vTaskDelay(pdMS_TO_TICKS(collectTime * 1000 / 3));
         collectorManager.poll();
         digitalWrite(PUMP1_PIN, LOW);
         vTaskDelayUntil(&xLastWakeTime, xFrequency);

@@ -8,7 +8,7 @@
 #define TEMP_HEAT_PIN 42 // º”»»
 #define TEMP_I2C_SDA 8
 #define TEMP_I2C_SCL 18
-#define FAN_PIN 41
+#define FAN_PIN 14
 
 class TempManager {
 public:
