@@ -36,10 +36,17 @@ void TempManager::executeControl() {
     if (_currentTemp < _targetTempLow || _currentHumi > _targetHumiUp) {
         if (!_isHeating) {
             digitalWrite(TEMP_HEAT_PIN, HIGH);
+            _lastActivity = millis();
             _isHeating = true;
         }
     } 
     else if (_currentTemp >= _targetTempLow && _currentHumi <= _targetHumiUp) {
+        if (_isHeating) {
+            digitalWrite(TEMP_HEAT_PIN, LOW);
+            _isHeating = false;
+        }
+    }
+    if ((millis() - _lastActivity) > 6* 60 * 60 * 1000) {
         if (_isHeating) {
             digitalWrite(TEMP_HEAT_PIN, LOW);
             _isHeating = false;

@@ -31,6 +31,8 @@ private:
 
     SHT30 _sht30;
     
+
+    unsigned long _lastActivity = 0;
     // ¿ØÖÆ²ÎÊı
     float _targetTempUp;
     float _targetHumiUp;

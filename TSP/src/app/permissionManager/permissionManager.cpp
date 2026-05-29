@@ -491,12 +491,9 @@ void PermissionSystem::getData(AllProcessedDataPacket *allData, Stream *stream, 
                     if (packet.is_valid)
                         val = packet.value;
                 }
-
-                // 使用 char 缓冲区强制格式化
                 char buf[16];
                 snprintf(buf, sizeof(buf), "%.2f", val);
-                jsonRes += String(buf); // 直接拼接数字文本，不带双引号
-
+                jsonRes += String(buf);
                 if (i < arraySize - 1)
                     jsonRes += ",";
             }

@@ -28,6 +28,7 @@
 #include "../../app/dtuManager/dtuManager.h"
 #include "../../app/filesysManager/filesysManager.h"
 #include "../../app/tempManager/tempManager.h"
+#include "../../app/ledManager/ledManager.h"
 
 #define PUMP1_PIN 41
 #define PUMP2_PIN 40
@@ -757,7 +758,10 @@ static void netWorkRestoreTask(void *pvParameters)
 
 static void LedPrintTask(void *pvParameters)
 {
-    LOG_DEBUG("LedPrintTask Started");
+    LOG_INFO("Serial 485 LED task started");
+
+    auto &ledManager = LedManager::getInstance();
+    ledManager.begin();
 
     QueueHandle_t LedPrintTaskQueue = EventBus::getInstance().createReceiverQueue(5);
     EventBus::getInstance().subscribe(EventID::PROCESSED_DATA_COLLECTED, LedPrintTaskQueue);
@@ -769,13 +773,15 @@ static void LedPrintTask(void *pvParameters)
         {
             if (msg.id == EventID::PROCESSED_DATA_COLLECTED)
             {
-                AllProcessedDataPacket *allData = (AllProcessedDataPacket *)msg.data;
-
+                AllProcessedDataPacket *allData = static_cast<AllProcessedDataPacket *>(msg.data);
                 if (allData != nullptr)
                 {
+                    ledManager.updateDisplay(allData);
                 }
-                LOG_DEBUG("****** LedPrintTask Test Over ******");
-                allData->release();
+                if (allData != nullptr)
+                {
+                    allData->release();
+                }
             }
         }
         vTaskDelay(pdMS_TO_TICKS(10));
