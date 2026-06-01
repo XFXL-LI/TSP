@@ -175,10 +175,6 @@ void LedManager::sendPacket(const uint8_t *data, uint16_t len)
     {
         LOG_WARNING("LED 485 write incomplete: wrote %u of %u bytes", written, len);
     }
-    else
-    {
-        LOG_DEBUG("LED 485 packet sent: %u bytes", len);
-    }
 }
 uint16_t LedManager::packTo485(uint8_t index,
                                const char *content,
@@ -194,11 +190,7 @@ uint16_t LedManager::packTo485(uint8_t index,
     if (contentLen > 16)
     {
         contentLen = 16;
-    }
-    if (contentLen > 0)
-    {
         uint8_t last = (uint8_t)content[contentLen - 1];
-
         if (last >= 0x80)
         {
             contentLen--;
@@ -319,6 +311,7 @@ void LedManager::buildTemperatureText(float value, char *buffer, size_t size)
     static const uint8_t celsius[] = {0xA1, 0xE6};
     memset(buffer, 0, size);
     memcpy(buffer, prefix, sizeof(prefix));
+
     char numeric[32] = {0};
     snprintf(numeric, sizeof(numeric), ":%.1f", value);
     strncat(buffer, numeric, size - sizeof(prefix) - 1);
@@ -326,7 +319,6 @@ void LedManager::buildTemperatureText(float value, char *buffer, size_t size)
     if (cursor + sizeof(celsius) < size)
     {
         memcpy(buffer + cursor, celsius, sizeof(celsius));
-        buffer[cursor + sizeof(celsius)] = '\0';
     }
 }
 

@@ -220,16 +220,16 @@ static void updateSetupTask(void *pvParameters)
         SemaphoreHandle_t _StreamMutex = SerialManager::getInstance().getMutex(SERIAL_HJ212);
         if (xSemaphoreTake(_StreamMutex, pdMS_TO_TICKS(3000)) == pdTRUE)
         {
-            int csq = DTUManager::getInstance().hj212DTUCSQ();
-            if (csq == 99)
+            int csq = 99;
+            int i = 0;
+            for (i = 0; i < 3; i++)
             {
                 vTaskDelay(pdMS_TO_TICKS(3000));
                 csq = DTUManager::getInstance().hj212DTUCSQ();
-            }
-            if (csq == 99)
-            {
-                vTaskDelay(pdMS_TO_TICKS(3000));
-                csq = DTUManager::getInstance().hj212DTUCSQ();
+                if (csq != 99)
+                {
+                    break;
+                }
             }
             xSemaphoreGive(_StreamMutex);
             SYSTEM_SETUP newSetup = ConfigManager::getInstance().getSetup();
@@ -748,6 +748,7 @@ static void netWorkRestoreTask(void *pvParameters)
             }
             EventBus::getInstance().publish(EventID::RESUME_DATA, pendingData);
             pendingData->release();
+            filesys.deletePendingPacket(currentTime);
         }
         vTaskDelay(pdMS_TO_TICKS(20000));
     }
@@ -1048,17 +1049,15 @@ void setUpInit(void)
     if (xSemaphoreTake(DTUMutex, pdMS_TO_TICKS(3000)) == pdTRUE)
     {
         uint64_t realTime = DTUMg.hjSystemTime();
-        if (realTime < 202605270000)
+        int i = 0;
+        for (i = 0; i < 3; i++)
         {
-            realTime = DTUMg.dtuSystemTime();
-        }
-        if (realTime < 202605270000)
-        {
-            realTime = DTUMg.dtuSystemTime();
-        }
-        if (realTime < 202605270000)
-        {
-            realTime = DTUMg.dtuSystemTime();
+            if (realTime >= 202605270000)
+            {
+                break;
+            }
+            vTaskDelay(pdMS_TO_TICKS(3000));
+            realTime = DTUMg.hjSystemTime();
         }
         LOG_DEBUG("****** realTime Time: %llu ******", realTime);
         xSemaphoreGive(DTUMutex);
