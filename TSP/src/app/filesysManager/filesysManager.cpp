@@ -104,8 +104,6 @@ void filesysManager::writeToFile(const String& path, const std::vector<fileStora
     }
 }
 
-// ============ 待补传数据管理接口 ============
-
 String filesysManager::getPendingFilePath(uint64_t ts) {
     char dateStr[10], hourStr[5], minStr[5];
     parseTimestamp(ts, dateStr, hourStr, minStr);
