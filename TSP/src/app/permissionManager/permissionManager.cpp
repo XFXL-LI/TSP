@@ -387,6 +387,19 @@ void PermissionSystem::onSetConfigRes(void *eventData, Stream *stream, String cm
 }
 
 void PermissionSystem::onGetRecordsRes(void *eventData, Stream *stream, String cmd, String args){
+    auto *packet = static_cast<AllProcessedDataPacket *>(eventData);
+    if (packet == nullptr) {
+        getInstance().sendResponse(stream, "get_records", "NG", "Read records data is null");
+        return;
+    } else {
+        if (packet->processed_data_map.empty()) {
+            getInstance().sendResponse(stream, "get_records", "NG", "No records data available");
+            packet->release();
+            return;
+        }
+        getInstance().getRecordsData(packet, stream, cmd, args);
+        packet->release();
+    }
     LOG_DEBUG("TEST OK onGetRecordsRes callback");
 }
 
@@ -503,6 +516,75 @@ void PermissionSystem::getData(AllProcessedDataPacket *allData, Stream *stream, 
     sendMsg(stream, jsonRes.c_str());
 }
 
+void PermissionSystem::getRecordsData(AllProcessedDataPacket *allData, Stream *stream, const String &cmd, const String &args)
+{
+    config_json request(args.c_str());
+    cJSON *idsArray = request.getArray("ids");
+    uint64_t time = allData ? allData->last_update : 0;
 
+    String jsonRes;
+    jsonRes.reserve(512);
+    jsonRes += "{";
+    jsonRes += "\"operation\":\"" + cmd + "\",";
+    jsonRes += "\"code\":\"OK\",";
+    jsonRes += "\"message\":\"get records success\",";
+    jsonRes += "\"timestamp\":" + String(time) + ",";
+    jsonRes += "\"data\":{";
+
+    bool firstEntry = true;
+
+    if (allData != nullptr)
+    {
+        // If idsArray provided, use that order; otherwise iterate all keys
+        if (idsArray != nullptr)
+        {
+            int arraySize = cJSON_GetArraySize(idsArray);
+            for (int i = 0; i < arraySize; i++)
+            {
+                cJSON *idItem = cJSON_GetArrayItem(idsArray, i);
+                if (!cJSON_IsString(idItem)) continue;
+                const char *targetId = idItem->valuestring;
+                if (!firstEntry) jsonRes += ",";
+                firstEntry = false;
+                jsonRes += "\"" + String(targetId) + "\":{";
+
+                if (allData->processed_data_map.count(targetId))
+                {
+                    auto &packet = allData->processed_data_map[targetId];
+                    // value
+                    char buf[64];
+                    snprintf(buf, sizeof(buf), "\"value\":%.2f,\"cou\":%.0f,\"max\":%.2f,\"min\":%.2f",
+                             packet.value, packet.cou_val, packet.max_val, packet.min_val);
+                    jsonRes += String(buf);
+                }
+                else
+                {
+                    jsonRes += "\"value\":0,\"cou\":0,\"max\":0,\"min\":0";
+                }
+                jsonRes += "}";
+            }
+        }
+        else
+        {
+            // iterate all entries
+            for (const auto &entry : allData->processed_data_map)
+            {
+                const String &targetId = entry.first;
+                const ProcessedDataPacket &packet = entry.second;
+                if (!firstEntry) jsonRes += ",";
+                firstEntry = false;
+                jsonRes += "\"" + targetId + "\":{";
+                char buf[64];
+                snprintf(buf, sizeof(buf), "\"value\":%.2f,\"cou\":%.0f,\"max\":%.2f,\"min\":%.2f",
+                         packet.value, packet.cou_val, packet.max_val, packet.min_val);
+                jsonRes += String(buf);
+                jsonRes += "}";
+            }
+        }
+    }
+
+    jsonRes += "}}";
+    sendMsg(stream, jsonRes.c_str());
+}
 
 // ***************************************    打包处理    ***************************************

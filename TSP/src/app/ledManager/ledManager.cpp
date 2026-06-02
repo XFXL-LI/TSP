@@ -71,22 +71,22 @@ bool LedManager::buildDisplayTextBySensorId(const String &sensorId, float value,
     memset(buffer, 0, size);
     if (sensorId == "a34001")
     {
-        snprintf(buffer, size, "TSP:%.1fng/m3", value / 1000.0f);
+        snprintf(buffer, size, "TSP:%.1fng/m3", value);
         return true;
     }
     if (sensorId == "a34004")
     {
-        snprintf(buffer, size, "PM2.5:%.1fng/m3", value / 1000.0f);
+        snprintf(buffer, size, "PM2.5:%.1fng/m3", value);
         return true;
     }
     if (sensorId == "a34005")
     {
-        snprintf(buffer, size, "PM1:%.1fng/m3", value / 1000.0f);
+        snprintf(buffer, size, "PM1:%.1fng/m3", value);
         return true;
     }
     if (sensorId == "a34002")
     {
-        snprintf(buffer, size, "PM10:%.1fng/m3", value / 1000.0f);
+        snprintf(buffer, size, "PM10:%.1fng/m3", value);
         return true;
     }
     if (sensorId == "a01007")

@@ -294,15 +294,15 @@ void filesysManager::processQuery(JSONCmdData* req) {
     } else {
         pendingData = readPendingPacket(RAW_DATA, ts);
     }
-    if (pendingData)
-    {
-        int subCount = EventBus::getInstance().getSubscriberCount(EventID::GAL_RES);
-        for (int i = 0; i < subCount; i++) {
-            pendingData->retain();
-        }
-        EventBus::getInstance().publish(EventID::GAL_RES, pendingData);
-        pendingData->release();
+    if (pendingData == nullptr) {
+        pendingData = new AllProcessedDataPacket(); 
     }
+    int subCount = EventBus::getInstance().getSubscriberCount(EventID::RECORD_QUERY_RES);
+    for (int i = 0; i < subCount; i++) {
+        pendingData->retain();
+    }
+    EventBus::getInstance().publish(EventID::RECORD_QUERY_RES, pendingData);
+    pendingData->release();
 }
 
 void filesysManager::poll() {

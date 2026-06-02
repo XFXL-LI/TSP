@@ -75,6 +75,7 @@ private:
     // »Øµ÷
     static void onDataQueryRes(void *eventData, Stream *stream, String cmd, String args);
     void getData(AllProcessedDataPacket *allData, Stream *stream, const String &cmd, const String &args);
+    void getRecordsData(AllProcessedDataPacket *allData, Stream *stream, const String &cmd, const String &args);
     static void onConfigRes(void *eventData, Stream *stream, String cmd, String args);
     static void onSetConfigRes(void *eventData, Stream *stream, String cmd, String args);
     static void onGetRecordsRes(void *eventData, Stream *stream, String cmd, String args);

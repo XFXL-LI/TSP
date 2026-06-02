@@ -129,9 +129,7 @@
         }
     }
 }
-
 // set_config ÇëÇóÊ¾Àý
-
 {
     "operation": "set_config",
     "config": "systemConfig",
@@ -155,4 +153,25 @@
 
 {
     "operation": "restart"
+}
+
+{
+    "operation": "get_data",
+    "code": "OK",
+    "message": "get records success",
+    "timestamp": 20260527162329,
+    "data": {
+        "a34005": {
+            "value": 100,
+            "cou": 90,
+            "max": 110,
+            "min": 80,
+        },
+        "a34001": {
+            "value": 100,
+            "cou": 90,
+            "max": 110,
+            "min": 80,
+        }
+    }
 }

@@ -1090,15 +1090,15 @@ void setUpInit(void)
         }
         xSemaphoreGive(DTUMutex);
     }
-    SemaphoreHandle_t DTUREMutex = sm.getMutex(SERIAL_DTU);
-    if (xSemaphoreTake(DTUREMutex, pdMS_TO_TICKS(3000)) == pdTRUE)
-    {
-        if (!DTUMg.updateReDtuGoalIP(systemCfg.dtu_server))
-        {
-            LOG_ERROR("Failed to update Remote DTU IP");
-        }
-        xSemaphoreGive(DTUREMutex);
-    }
+    // SemaphoreHandle_t DTUREMutex = sm.getMutex(SERIAL_DTU);
+    // if (xSemaphoreTake(DTUREMutex, pdMS_TO_TICKS(3000)) == pdTRUE)
+    // {
+    //     if (!DTUMg.updateReDtuGoalIP(systemCfg.dtu_server))
+    //     {
+    //         LOG_ERROR("Failed to update Remote DTU IP");
+    //     }
+    //     xSemaphoreGive(DTUREMutex);
+    // }
 }
 void fileRestore(void)
 {
