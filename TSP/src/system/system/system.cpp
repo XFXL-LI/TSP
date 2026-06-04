@@ -30,6 +30,10 @@
 #include "../../app/tempManager/tempManager.h"
 #include "../../app/ledManager/ledManager.h"
 
+
+
+// #define DEBUG
+
 #define PUMP1_PIN 41
 #define PUMP2_PIN 40
 
@@ -101,7 +105,11 @@ System::~System()
 void System::SystemInit(void)
 {
 
+#ifdef DEBUG
     LogManager::getInstance().setLevel(LOG_LEVEL_DEBUG);
+#else
+    LogManager::getInstance().setLevel(LOG_LEVEL_INFO);
+#endif
     LOG_DEBUG("System init start");
 
     alarmManager::getInstance().printRestartInfo();

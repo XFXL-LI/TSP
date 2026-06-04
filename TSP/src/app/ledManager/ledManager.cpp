@@ -232,13 +232,13 @@ void LedManager::buildWindDirectionText(float value,
     static const uint8_t prefix[] =
         {
             0xB7, 0xE7, 0xCF, 0xF2};
-    static const uint8_t north[] = {0xD5, 0xFD, 0xB1, 0xB1};     // 正北
+    static const uint8_t north[] = {0xB1, 0xB1, 0x00, 0x00};     // 正北
     static const uint8_t northeast[] = {0xB1, 0xB1, 0xB6, 0xAB}; // 东北
-    static const uint8_t east[] = {0xD5, 0xFD, 0xB6, 0xAB};      // 正东
+    static const uint8_t east[] = {0xB6, 0xAB, 0x00, 0x00};      // 正东
     static const uint8_t southeast[] = {0xB6, 0xAB, 0xC4, 0xCF}; // 东南
-    static const uint8_t south[] = {0xD5, 0xFD, 0xC4, 0xCF};     // 正南
+    static const uint8_t south[] = {0xC4, 0xCF, 0x00, 0x00};     // 正南
     static const uint8_t southwest[] = {0xCE, 0xF7, 0xC4, 0xCF}; // 西南
-    static const uint8_t west[] = {0xD5, 0xFD, 0xCE, 0xF7};      // 正西
+    static const uint8_t west[] = {0xCE, 0xF7, 0x00, 0x00};      // 正西
     static const uint8_t northwest[] = {0xCE, 0xF7, 0xB1, 0xB1}; // 西北
     memset(buffer, 0, size);
     size_t cursor = 0;
@@ -294,6 +294,7 @@ void LedManager::buildWindDirectionText(float value,
     {
         direction = northwest;
     }
+    
     if (cursor + dirLen < size)
     {
         memcpy(buffer + cursor, direction, dirLen);
