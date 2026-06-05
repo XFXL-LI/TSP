@@ -35,7 +35,7 @@
 // #define DEBUG
 
 #define PUMP1_PIN 41
-#define PUMP2_PIN 40
+#define PUMP2_PIN 40    // 12v电控制开关
 
 // ********** 时间相关定义 **********
 Ds1302 rtc(17, 6, 7);

@@ -71,22 +71,22 @@ bool LedManager::buildDisplayTextBySensorId(const String &sensorId, float value,
     memset(buffer, 0, size);
     if (sensorId == "a34001")
     {
-        snprintf(buffer, size, "TSP:%.1fng/m3", value);
+        snprintf(buffer, size, "TSP:%.1fug/m3", value);
         return true;
     }
     if (sensorId == "a34004")
     {
-        snprintf(buffer, size, "PM2.5:%.1fng/m3", value);
+        snprintf(buffer, size, "PM2.5:%.1fug/m3", value);
         return true;
     }
     if (sensorId == "a34005")
     {
-        snprintf(buffer, size, "PM1:%.1fng/m3", value);
+        snprintf(buffer, size, "PM1:%.1fug/m3", value);
         return true;
     }
     if (sensorId == "a34002")
     {
-        snprintf(buffer, size, "PM10:%.1fng/m3", value);
+        snprintf(buffer, size, "PM10:%.1fug/m3", value);
         return true;
     }
     if (sensorId == "a01007")
@@ -121,22 +121,22 @@ bool LedManager::buildDisplayTextBySensorId(const String &sensorId, float value,
     }
     if (sensorId == "a21026")
     {
-        snprintf(buffer, size, "SO2:%.1fmg/m3", value);
+        snprintf(buffer, size, "SO2:%.1fppm", value);
         return true;
     }
     if (sensorId == "a21005")
     {
-        snprintf(buffer, size, "CO:%.1fmg/m3", value);
+        snprintf(buffer, size, "CO:%.1fppm", value);
         return true;
     }
     if (sensorId == "a21004")
     {
-        snprintf(buffer, size, "NO2:%.1fmg/m3", value);
+        snprintf(buffer, size, "NO2:%.1fppm", value);
         return true;
     }
     if (sensorId == "w34011")
     {
-        snprintf(buffer, size, "O3:%.1fmg/m3", value);
+        snprintf(buffer, size, "O3:%.1fppm", value);
         return true;
     }
 

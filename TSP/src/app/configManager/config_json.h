@@ -9,10 +9,10 @@ const char *CONFIG_JSON = R"({
 })";
 
 const char *TEMP_CONTROL_JSON = R"({
-    "tempUpperLimit": 15,
-    "tempLowerLimit": 35,
-    "wetnUpperLimit": 40,
-    "wetnLowerLimit": 80
+    "tempUpperLimit": 35,
+    "tempLowerLimit": 15,
+    "wetnUpperLimit": 80,
+    "wetnLowerLimit": 40
 })";
 
 const char *HJ212_JSON = R"({
