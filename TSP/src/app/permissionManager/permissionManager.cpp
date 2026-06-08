@@ -13,7 +13,8 @@ const PermissionSystem::CommandRoute PermissionSystem::ROUTE_TABLE[] = {
     {"set_config", EventID::CONFIG_SET_REQ, EventID::CONFIG_SET_RES, PermissionSystem::onSetConfigRes, 2000},
     {"get_records", EventID::RECORD_QUERY_REQ, EventID::RECORD_QUERY_RES, PermissionSystem::onGetRecordsRes, 15000},
     {"gal_data", EventID::GAL_REQ, EventID::GAL_RES, PermissionSystem::onGALRes, 60000},
-    {"upload", EventID::UPLOAD_REQ, EventID::UPLOAD_RES, PermissionSystem::onUpload, 60000}
+    {"upload", EventID::UPLOAD_REQ, EventID::UPLOAD_RES, PermissionSystem::onUpload, 60000},
+    {"dtu_command", EventID::DTU_COMMAND_REQ, EventID::DTU_COMMAND_RES, PermissionSystem::onDTUCommand, 60000}
 };
 const size_t PermissionSystem::ROUTE_COUNT = sizeof(PermissionSystem::ROUTE_TABLE) / sizeof(PermissionSystem::CommandRoute);
 
@@ -441,6 +442,19 @@ void PermissionSystem::onGALRes(void *eventData, Stream *stream, String cmd, Str
 void PermissionSystem::onUpload(void *eventData, Stream *stream, String cmd, String args){
     config_json uploadJson(args.c_str());
     int size = uploadJson.isValid() ? uploadJson.getInt("size", 0) : 0;
+}
+void PermissionSystem::onDTUCommand(void *eventData, Stream *stream, String cmd, String args){
+    LOG_DEBUG("Handling Config Response");
+    auto *resData = static_cast<configData *>(eventData);
+    if (resData)    {
+        String jsonRes = "{";
+        jsonRes += "\"operation\":\"" + resData->cmd + "\",";
+        jsonRes += "\"code\":\"OK\",";
+        jsonRes += "\"content\":" + resData->content;
+        jsonRes += "}";
+        getInstance().sendMsg(stream, jsonRes.c_str());
+        resData->release();
+    }
 }
 
 // ***************************************    »Øµ÷º¯Êý    ***************************************

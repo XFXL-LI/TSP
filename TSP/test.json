@@ -175,3 +175,9 @@
         }
     }
 }
+
+{
+"operation":"dtu_command",
+"param":"remote",
+"message":"admin"
+}

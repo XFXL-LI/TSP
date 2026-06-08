@@ -81,6 +81,7 @@ private:
     static void onGetRecordsRes(void *eventData, Stream *stream, String cmd, String args);
     static void onGALRes(void *eventData, Stream *stream, String cmd, String args);
     static void onUpload(void *eventData, Stream *stream, String cmd, String args);
+    static void onDTUCommand(void *eventData, Stream *stream, String cmd, String args);
     struct User
     {
         String password;

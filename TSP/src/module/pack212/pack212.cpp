@@ -21,7 +21,7 @@ String HJ212_DataCenter::build2017Hj212Packet(const AllProcessedDataPacket* allD
     String cn = getCnCode(allData->dataTime);
     cp += "DataTime=" + timeStr + ";";
     for (auto const& [code, packet] : allData->processed_data_map) {
-        if (!packet.is_valid) continue;
+        // if (!packet.is_valid) continue; // 212协议要求即使无效数据也要上报，所以这里不跳过
         if (cn == "2011") {
             if (code == "LA" || code == "L90") {
                 cp += code + "-Rtd=" + String(packet.value, 1) + ";";
@@ -83,7 +83,7 @@ String HJ212_DataCenter::build2025Hj212Packet(const AllProcessedDataPacket* allD
     String cn = getCnCode(allData->dataTime);
     cp += "DataTime=" + timeStr + ";";
     for (auto const& [code, packet] : allData->processed_data_map) {
-        if (!packet.is_valid) continue;
+        // if (!packet.is_valid) continue; // hj212 2025协议不丢弃无效数据
         if (cn == "2011") {
             if (code == "LA" || code == "L90") {
                 cp += code + "-Rtd=" + String(packet.value, 1) + ";";

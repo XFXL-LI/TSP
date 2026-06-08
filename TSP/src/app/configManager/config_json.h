@@ -9,7 +9,7 @@ const char *CONFIG_JSON = R"({
 })";
 
 const char *TEMP_CONTROL_JSON = R"({
-    "tempUpperLimit": 35,
+    "tempUpperLimit": 55,
     "tempLowerLimit": 15,
     "wetnUpperLimit": 80,
     "wetnLowerLimit": 40
@@ -36,6 +36,13 @@ const char *SWITCH_JSON = R"({
     "enable_hj212": true,
     "enable_remote_dtu": true,
     "mqtt_public": true
+})";
+
+const char *ALARM_JSON = R"({
+    "alarm_sensor": "a34001",
+    "alarm_upper_limit": 50.0,
+    "alarm_lower_limit": 10.0,
+    "alarm_switch": true
 })";
 
 #endif

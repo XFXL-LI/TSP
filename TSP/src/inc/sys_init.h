@@ -224,6 +224,13 @@ struct SYSTEMSWITCH {
     bool mqtt_public = false;
 };
 
+struct ALARMCONFIG {
+    String alarm_sensor;
+    float alarm_upper_limit;
+    float alarm_lower_limit;
+    bool alarm_switch;
+};
+
 // 系统主配置
 struct SYSTEMCONFIG {
     int collect_time = 60;
@@ -262,6 +269,7 @@ struct GLOBALCONFIG {
     HJ212CONFIG hj212;
     TEMPCONTROLCONFIG tempControl;
     SYSTEMSWITCH systemSwitch;
+    ALARMCONFIG alarmConfig;
 };
 
 #endif // INIT_H

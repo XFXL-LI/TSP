@@ -35,7 +35,7 @@
 // #define DEBUG
 
 #define PUMP1_PIN 41
-#define PUMP2_PIN 40    // 12v电控制开关
+#define ALARM_PIN 40    // 12v电控制开关
 
 // ********** 时间相关定义 **********
 Ds1302 rtc(17, 6, 7);
@@ -94,6 +94,8 @@ static void updateConfigTask(void *pvParameters);
 static void TempControlTask(void *pvParameters);
 // mqtt 订阅发送
 static void MqttPublicTask(void *pvParameters);
+
+static void AlarmTask(void *pvParameters);
 static void otaUpload(void *pvParameters);
 
 System::System()
@@ -157,6 +159,12 @@ void System::SystemConfigInit(void)
                    {
         LOG_INFO("mqtt control enabled, starting mqtt tasks...");
         xTaskCreatePinnedToCore(MqttPublicTask, "MqttPublicTask", 8 * 1024, NULL, 5, NULL, 1); });
+
+    cfg.runAlarmCon([]()
+                    {
+        LOG_INFO("Alarm control enabled, starting alarm tasks...");
+        xTaskCreatePinnedToCore(AlarmTask, "AlarmTask", 4 * 1024, NULL, 5, NULL, 1); });
+
     xTaskCreatePinnedToCore(updateConfigTask, "updateConfigTask", 8 * 1024, NULL, 5, NULL, 0);
 }
 
@@ -613,7 +621,10 @@ static void Hj212_2017SendTask(void *pvParameters)
                         filesys.storeProcessedPacket(allData);
                     }
                 }
-                allData->release();
+                if (allData != nullptr)
+                {   
+                    allData->release();
+                }
             }
             else if (msg.id == EventID::RESUME_DATA)
             {
@@ -634,7 +645,10 @@ static void Hj212_2017SendTask(void *pvParameters)
                         DTUManager::getInstance().sendHJ212Packet(HJ212_str);
                     }
                 }
-                allData->release();
+                if (allData != nullptr)
+                {
+                    allData->release();
+                }
             }
         }
         vTaskDelay(pdMS_TO_TICKS(10000));
@@ -703,7 +717,10 @@ static void Hj212_2025SendTask(void *pvParameters)
                         filesys.storeProcessedPacket(allData);
                     }
                 }
-                allData->release();
+                if (allData != nullptr)
+                {
+                    allData->release();
+                }
             }
             else if (msg.id == EventID::RESUME_DATA)
             {
@@ -724,7 +741,10 @@ static void Hj212_2025SendTask(void *pvParameters)
                         DTUManager::getInstance().sendHJ212Packet(HJ212_str);
                     }
                 }
-                allData->release();
+                if (allData != nullptr)
+                {   
+                    allData->release();
+                }
             }
         }
         vTaskDelay(pdMS_TO_TICKS(10000));
@@ -969,6 +989,50 @@ static void MqttPublicTask(void *pvParameters)
     while (true)
     {
         vTaskDelay(pdMS_TO_TICKS(1000));
+    }
+    vTaskDelete(NULL);
+}
+static void AlarmTask(void *pvParameters){
+    LOG_INFO("Serial 485 LED task started");
+
+    QueueHandle_t AlarmTaskQueue = EventBus::getInstance().createReceiverQueue(5);
+    EventBus::getInstance().subscribe(EventID::PROCESSED_DATA_COLLECTED, AlarmTaskQueue);
+
+    EventMsg msg;
+    const auto &alarmConfig = ConfigManager::getInstance().getAlarmConfig();
+    float tempUpperLimit = alarmConfig.alarm_upper_limit;
+    float tempLowerLimit = alarmConfig.alarm_lower_limit;
+    String alarm_sensor = alarmConfig.alarm_sensor;
+    pinMode(ALARM_PIN, OUTPUT);
+    while (true)
+    {
+        if (EventBus::waitEvent(AlarmTaskQueue, msg))
+        {
+            if (msg.id == EventID::PROCESSED_DATA_COLLECTED)
+            {
+                AllProcessedDataPacket *allData = static_cast<AllProcessedDataPacket *>(msg.data);
+                
+                if (allData != nullptr)
+                {
+                    for (const auto& data : allData->processed_data_map)
+                    {
+                        if (data.first == alarm_sensor)
+                        {
+                            float tempValue = data.second.value;
+                            if (tempValue > tempUpperLimit || tempValue < tempLowerLimit)
+                            {
+                                LOG_DEBUG("Temperature alarm! Value: %.2f", tempValue);
+                                digitalWrite(ALARM_PIN, HIGH);
+                            } else {
+                                digitalWrite(ALARM_PIN, LOW);
+                            }
+                        }
+                    }
+                    allData->release();
+                }
+            }
+        }
+        vTaskDelay(pdMS_TO_TICKS(10));
     }
     vTaskDelete(NULL);
 }

@@ -1,5 +1,7 @@
 #include "dtuManager.h"
 #include "../../module/pack212/pack212.h"
+#include "../../system/event/eventBus.h"
+#include "../../module/json/config_json.h"
 
 DTUManager::DTUManager() {
     _remoteDTU = new DTUDriver("Remote", 1);
@@ -16,6 +18,8 @@ DTUManager& DTUManager::getInstance() {
 void DTUManager::init(Stream& remoteStr, Stream& hj212Str) {
     _remoteDTU->setStream(remoteStr);
     _hj212DTU->setStream(hj212Str);
+    _queryQueue = EventBus::getInstance().createReceiverQueue(5);
+    EventBus::getInstance().subscribe(EventID::DTU_COMMAND_REQ, _queryQueue);
 }
 
 uint64_t DTUManager::dtuSystemTime() {
@@ -161,7 +165,46 @@ void DTUManager::sendHJ212Packet(String dataContent) {
     }
     return;
 }
-
-void DTUManager::poll(){
+void DTUManager::processQuery(JSONCmdData* req){
     
+    configData* resData = new configData();
+    resData->cmd = req->command;
+    config_json parser;
+    String com;
+    String dtuName;
+    if (parser.parse(req->arguments.c_str())) {
+        com = parser.getString("command", req->arguments);
+        dtuName = parser.getString("dtuName", req->arguments);
+    } else {
+        com = req->arguments;
+        dtuName = req->arguments;
+    }
+    LOG_DEBUG("command : %s", req->command);
+    if (dtuName == "Remote") {
+        String res = _remoteDTU->sendCommand(com.c_str());
+        resData->content = res;
+    } else if (dtuName == "HJ212") {
+        String res = _hj212DTU->sendCommand(com.c_str());
+        resData->content = res;
+    } else {
+        LOG_ERROR("Unknown DTU name: %s", dtuName.c_str());
+        resData->content = "Unknown DTU";
+    }
+
+    int subCount = EventBus::getInstance().getSubscriberCount(EventID::CONFIG_QUERY_RES);
+    for (int i = 0; i < subCount; i++) resData->retain(); 
+    EventBus::getInstance().publish(EventID::CONFIG_QUERY_RES, resData);
+    resData->release();
+}
+void DTUManager::poll(){
+    EventMsg msg;
+    if (EventBus::waitEvent(_queryQueue, msg)) {
+        if (msg.id == EventID::DTU_COMMAND_REQ) {
+            JSONCmdData* req = (JSONCmdData*)msg.data;
+            processQuery(req);
+            req->release();
+        } else {
+            LOG_ERROR("DataManager not subseribe this, send message error!");
+        }
+    }
 }

@@ -42,6 +42,9 @@ void ConfigManager::begin(){
     if (!loadFromFile(SWITCH_PATH)){
         LOG_ERROR("Load SWITCH_PATH error");
     }
+    if (!loadFromFile(ALARM_PATH)){
+        LOG_ERROR("Load ALARM_PATH error");
+    }
     LOG_INFO("======== Global Configuration Dump ========");
 
     // 1. ´òÓ¡ System ÅäÖÃ
@@ -71,6 +74,14 @@ void ConfigManager::begin(){
         LOG_INFO("  - ID: %s | Name: %s | Unit: %s",
                  id.c_str(), cfg.name.c_str(), cfg.unit.c_str());
     }
+
+    // 5. ´òÓ¡ ±¨¾¯ ÅäÖÃ
+    LOG_INFO("[Alarm Config]");
+    LOG_INFO("  Sensor: %s | Upper Limit: %.2f | Lower Limit: %.2f | Switch: %s",
+             globalCfg.alarmConfig.alarm_sensor.c_str(),
+             globalCfg.alarmConfig.alarm_upper_limit,
+             globalCfg.alarmConfig.alarm_lower_limit,
+             globalCfg.alarmConfig.alarm_switch ? "ON" : "OFF");
     
     _queryQueue = EventBus::getInstance().createReceiverQueue(10);
     EventBus::getInstance().subscribe(EventID::CONFIG_QUERY_REQ, _queryQueue);
@@ -177,6 +188,18 @@ void ConfigManager::_parseSwitch(cJSON *node, SYSTEMSWITCH &target) {
 void ConfigManager::_parseSystemInfo(cJSON *node, SYSTEMCONFIG &target) {
     
 }
+void ConfigManager::_parseAlarm(cJSON *node, ALARMCONFIG &target) {
+    if (!node) return;
+    cJSON *item;
+    if ((item = cJSON_GetObjectItem(node, "alarm_sensor")) && cJSON_IsString(item))
+        target.alarm_sensor = String(item->valuestring);
+    if ((item = cJSON_GetObjectItem(node, "alarm_upper_limit")) && cJSON_IsNumber(item))
+        target.alarm_upper_limit = item->valuedouble;
+    if ((item = cJSON_GetObjectItem(node, "alarm_lower_limit")) && cJSON_IsNumber(item))
+        target.alarm_lower_limit = item->valuedouble;
+    if ((item = cJSON_GetObjectItem(node, "alarm_switch")) && cJSON_IsBool(item))
+        target.alarm_switch = cJSON_IsTrue(item);
+}
 
 bool ConfigManager::loadFromFile(const char *path)
 {
@@ -196,6 +219,7 @@ bool ConfigManager::loadFromFile(const char *path)
         else if (strcmp(path, TEMP_CONTROL_PATH) == 0) defaultTemplate = TEMP_CONTROL_JSON;
         else if (strcmp(path, HJ212_PATH) == 0) defaultTemplate = HJ212_JSON;
         else if (strcmp(path, SWITCH_PATH) == 0) defaultTemplate = SWITCH_JSON;
+        else if (strcmp(path, ALARM_PATH) == 0) defaultTemplate = ALARM_JSON;
 
         if (defaultTemplate && fs.writeFFAT(path, defaultTemplate) == 3) {
             content = String(defaultTemplate);
@@ -233,6 +257,8 @@ bool ConfigManager::loadFromFile(const char *path)
                 _parseHJ212(root, globalCfg.hj212);
             } else if (strcmp(path, SWITCH_PATH) == 0) {
                 _parseSwitch(root, globalCfg.systemSwitch);
+            } else if (strcmp(path, ALARM_PATH) == 0) {
+                _parseAlarm(root, globalCfg.alarmConfig);
             }
         } else {
             LOG_ERROR("Root JSON node is null in %s! Parsing aborted.", path);

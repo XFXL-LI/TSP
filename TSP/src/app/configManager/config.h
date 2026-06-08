@@ -13,6 +13,7 @@
 #define SWITCH_PATH "/switch.json"
 #define TEMP_CONTROL_PATH "/tempControl.json"
 #define HJ212_PATH "/hj212.json"
+#define ALARM_PATH "/alarm.json"
 
 enum class FeatureType
 {
@@ -36,6 +37,7 @@ private:
     void _parseTempControl(cJSON *node, TEMPCONTROLCONFIG &target);
     void _parseSwitch(cJSON *node, SYSTEMSWITCH &target);
     void _parseSystemInfo(cJSON *node, SYSTEMCONFIG &target);
+    void _parseAlarm(cJSON *node, ALARMCONFIG &target);
 
     void setConfigRes(JSONCmdData *req);
     void getConfigRes(JSONCmdData *req);
@@ -104,6 +106,10 @@ public:
     {
         runIf(globalCfg.systemSwitch.mqtt_public, "MqttCon", func);
     }
+    void runAlarmCon(std::function<void()> func)
+    {
+        runIf(globalCfg.alarmConfig.alarm_switch, "AlarmCon", func);
+    }
     bool updateSystem(const char *json_str);
     bool updateHJ212(const char *json_str);
     bool updateSensors(const char *json_str);
@@ -122,6 +128,7 @@ public:
     {
         return globalCfg.collectConfig;
     }
+    ALARMCONFIG &getAlarmConfig() { return globalCfg.alarmConfig; }
 };
 
 #endif

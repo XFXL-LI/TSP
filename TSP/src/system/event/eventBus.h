@@ -29,6 +29,9 @@ enum class EventID {
     GAL_RES,
     UPLOAD_REQ,
     UPLOAD_RES,
+
+    DTU_COMMAND_REQ,
+    DTU_COMMAND_RES,
 };
 
 struct EventMsg {

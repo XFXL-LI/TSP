@@ -141,7 +141,30 @@ DataPacket *TspCollect::collect()
 
         if (valid_count > 0) {
             float average = total_f_value / (float)valid_count;
-            packet->value = (float)((int)(average * 100 + 0.5)) / 100.0f * unitFactor;
+            float c = 1.0f;
+            // -------------------------------------------------------
+            if (average > 900.0f && average < 1500.0f) {
+                c = 0.5f;
+            } else if (average >= 1500.0f && average < 2000.0f) {
+                c = 0.4f;
+            } else if (average >= 2000.0f && average < 3000.0f) {
+                c = 0.3f;
+            } else if (average >= 3000.0f && average < 4000.0f) {
+                c = 0.2f;
+            } else if (average >= 4000.0f && average < 5000.0f) {
+                c = 0.1f;
+            } else if (average >= 6000.0f && average < 8000.0f) {
+                c = 0.09f;
+            } else if (average >= 8000.0f && average < 10000.0f) {
+                c = 0.08f;
+            } else if (average >= 10000.0f && average < 12000.0f) {
+                c = 0.07f;
+            } else if (average >= 12000.0f && average < 15000.0f) {
+                c = 0.06f;
+            }
+            // -------------------------------------------------------
+
+            packet->value = (float)((int)(average * 100 + 0.5)) / 100.0f * c * unitFactor;
             packet->is_valid = true;
             // LOG_DEBUG("%s average value: %.2f (based on %d samples)", _id.c_str(), packet->value, valid_count);
         }

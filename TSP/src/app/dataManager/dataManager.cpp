@@ -28,8 +28,8 @@ void DataManager::poll() {
             if (allData != nullptr)
             {
                 processAllData(allData);
+                allData->release();
             }
-            allData->release();
         } else {
             LOG_ERROR("DataManager not subseribe this, send message error!");
         }

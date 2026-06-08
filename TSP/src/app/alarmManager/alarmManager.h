@@ -6,7 +6,7 @@
 class alarmManager{
 private:
     SystemRuntimeStatus* sys_status = nullptr;
-    QueueHandle_t alarmQueue = nullptr;;
+    QueueHandle_t alarmQueue = nullptr;
 
     CHECK_RESULT checkHardware(void);       // 检测各个传感器
     CHECK_RESULT checkDTU_HJ212(void);      // 检测212DTU
