@@ -31,7 +31,6 @@
 #include "../../app/ledManager/ledManager.h"
 
 
-
 // #define DEBUG
 
 #define PUMP1_PIN 41
@@ -993,7 +992,7 @@ static void MqttPublicTask(void *pvParameters)
     vTaskDelete(NULL);
 }
 static void AlarmTask(void *pvParameters){
-    LOG_INFO("Serial 485 LED task started");
+    LOG_INFO("AlarmTask started");
 
     QueueHandle_t AlarmTaskQueue = EventBus::getInstance().createReceiverQueue(5);
     EventBus::getInstance().subscribe(EventID::PROCESSED_DATA_COLLECTED, AlarmTaskQueue);

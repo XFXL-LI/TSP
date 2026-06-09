@@ -440,6 +440,8 @@ void ConfigManager::getConfigRes(JSONCmdData* req){
         resData->content = getConfigJson(HJ212_PATH);
     } else if (fileName == "switchConfig") {
         resData->content = getConfigJson(SWITCH_PATH);
+    } else if (fileName == "alarmConfig"){
+        resData->content = getConfigJson(ALARM_PATH);
     }
     LOG_DEBUG("command : %s", req->command);
     LOG_DEBUG("arguments : %s", req->arguments.c_str());
@@ -476,6 +478,7 @@ void ConfigManager::setConfigRes(JSONCmdData* req){
                           (fileName == "tempControlConfig") ? TEMP_CONTROL_PATH : 
                           (fileName == "hj212Config") ? HJ212_PATH : 
                           (fileName == "switchConfig") ? SWITCH_PATH : "";
+                          (fileName == "alarmConfig") ? ALARM_PATH : "";
             if (path != "") {
                 saveConfig(path.c_str(), newConetent);
                 resData->content = getConfigJson(path.c_str());
