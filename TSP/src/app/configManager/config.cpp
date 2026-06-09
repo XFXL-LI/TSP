@@ -384,6 +384,11 @@ bool ConfigManager::removeConfig(const char *path)
         globalCfg.systemSwitch = {};
         LOG_INFO("Active Switch memory cleared.");
     }
+    else if (strcmp(path, ALARM_PATH) == 0)
+    {
+        globalCfg.systemSwitch = {};
+        LOG_INFO("Active Switch memory cleared.");
+    }
 
     LOG_INFO("Config %s removal process finished.", path);
     return true;
@@ -477,7 +482,7 @@ void ConfigManager::setConfigRes(JSONCmdData* req){
                           (fileName == "systemInfo") ? SYSTEM_PATH : 
                           (fileName == "tempControlConfig") ? TEMP_CONTROL_PATH : 
                           (fileName == "hj212Config") ? HJ212_PATH : 
-                          (fileName == "switchConfig") ? SWITCH_PATH : "";
+                          (fileName == "switchConfig") ? SWITCH_PATH:
                           (fileName == "alarmConfig") ? ALARM_PATH : "";
             if (path != "") {
                 saveConfig(path.c_str(), newConetent);
