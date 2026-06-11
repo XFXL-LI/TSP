@@ -23,7 +23,7 @@ void LedManager::begin()
     LOG_INFO("LED manager initialized on 485 transport");
 }
 
-void LedManager::updateDisplay(const AllProcessedDataPacket *packet)
+void LedManager::updateDisplay(const AllProcessedDataPacket *packet, int updateTime)
 {
     if (packet == nullptr)
     {
@@ -36,6 +36,8 @@ void LedManager::updateDisplay(const AllProcessedDataPacket *packet)
         return;
     }
     int step = 1;
+    int size = packet->processed_data_map.size();
+    uint32_t delay = updateTime / size * 1000;
     for (const auto &entry : packet->processed_data_map)
     {
         const String &sensorId = entry.first;
@@ -58,7 +60,7 @@ void LedManager::updateDisplay(const AllProcessedDataPacket *packet)
             sendLine(42, content);
             step = 1;
         }
-        vTaskDelay(pdMS_TO_TICKS(2000));
+        vTaskDelay(pdMS_TO_TICKS(delay));
     }
 }
 
@@ -121,22 +123,22 @@ bool LedManager::buildDisplayTextBySensorId(const String &sensorId, float value,
     }
     if (sensorId == "a21026")
     {
-        snprintf(buffer, size, "SO2:%.1fppm", value);
+        snprintf(buffer, size, "SO2:%.1fmg/m3", value);
         return true;
     }
     if (sensorId == "a21005")
     {
-        snprintf(buffer, size, "CO:%.1fppm", value);
+        snprintf(buffer, size, "CO:%.1fmg/m3", value);
         return true;
     }
     if (sensorId == "a21004")
     {
-        snprintf(buffer, size, "NO2:%.1fppm", value);
+        snprintf(buffer, size, "NO2:%.1fmg/m3", value);
         return true;
     }
     if (sensorId == "w34011")
     {
-        snprintf(buffer, size, "O3:%.1fppm", value);
+        snprintf(buffer, size, "O3:%.1fmg/m3", value);
         return true;
     }
 

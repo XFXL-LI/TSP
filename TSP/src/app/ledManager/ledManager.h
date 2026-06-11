@@ -10,7 +10,7 @@ public:
     static LedManager &getInstance();
 
     void begin();
-    void updateDisplay(const AllProcessedDataPacket *packet);
+    void updateDisplay(const AllProcessedDataPacket *packet, int updateTime);
 
 private:
     LedManager();

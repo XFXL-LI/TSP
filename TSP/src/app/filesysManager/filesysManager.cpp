@@ -278,31 +278,52 @@ void filesysManager::processQuery(JSONCmdData* req) {
     config_json jsonParser(req->arguments.c_str());
     String operation = jsonParser.getString("operation", "");
     String param     = jsonParser.getString("param", "");
-    String time_str  = jsonParser.getString("time", "");
+    String time_str  = jsonParser.getString("time", ""); // 202505271428 or 202505271400-202505271500
     if (operation != "get_records" || time_str == "" || param == "") {
         LOG_ERROR("Invalid query parameters or empty arguments.");
         return;
     }
     uint64_t ts = strtoull(time_str.c_str(), nullptr, 10);
     AllProcessedDataPacket *pendingData = nullptr;
-    if (param == "min") {
-        pendingData = readPendingPacket(MIN_DATA, ts);
-    } else if (param == "hour") {
-        pendingData = readPendingPacket(HOUR_DATA, ts);
-    } else if (param == "day") {
-        pendingData = readPendingPacket(DAY_DATA, ts);
+    uint64_t start_ts = 0, end_ts = 0;
+    int dashIndex = time_str.indexOf('-');
+    if (dashIndex != -1) {
+        String start_str = time_str.substring(0, dashIndex);
+        String end_str   = time_str.substring(dashIndex + 1);
+        start_ts = strtoull(start_str.c_str(), nullptr, 12);
+        end_ts   = strtoull(end_str.c_str(), nullptr, 12);
+        LOG_INFO("Range query detected. Start: %llu, End: %llu", start_ts, end_ts);
     } else {
-        pendingData = readPendingPacket(RAW_DATA, ts);
+        start_ts = ts;
+        end_ts = ts;
     }
-    if (pendingData == nullptr) {
-        pendingData = new AllProcessedDataPacket(); 
+
+    int step = 1;
+    int dataType = RAW_DATA;
+    if (param == "min") {
+        step = 1;
+        dataType = MIN_DATA;
+    } else if (param == "hour") {
+        step = 100;
+        dataType = HOUR_DATA;
+    } else if (param == "day") {
+        step = 10000;
+        dataType = DAY_DATA;
     }
-    int subCount = EventBus::getInstance().getSubscriberCount(EventID::RECORD_QUERY_RES);
-    for (int i = 0; i < subCount; i++) {
-        pendingData->retain();
+
+    for (uint64_t current_ts = start_ts; current_ts <= end_ts; current_ts += step) {
+        pendingData = readPendingPacket(dataType, current_ts);
+        if (pendingData == nullptr) {
+            pendingData = new AllProcessedDataPacket(); 
+        }
+        int subCount = EventBus::getInstance().getSubscriberCount(EventID::RECORD_QUERY_RES);
+        for (int i = 0; i < subCount; i++) {
+            pendingData->retain();
+        }
+        EventBus::getInstance().publish(EventID::RECORD_QUERY_RES, pendingData);
+        pendingData->release();
+        vTaskDelay(pdMS_TO_TICKS(10000));
     }
-    EventBus::getInstance().publish(EventID::RECORD_QUERY_RES, pendingData);
-    pendingData->release();
 }
 
 void filesysManager::poll() {

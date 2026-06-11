@@ -3,10 +3,10 @@
 #define MODELJSON_H
 
 const char *MODEL_JSON = R"({
-  "a34001": {"name": "TSP","alarmLimit": 200,"unit": "ng/m3"},
-  "a34005": {"name": "PM1","alarmLimit": 200,"unit": "ng/m3"},
-  "a34004": {"name": "PM2.5","alarmLimit": 200,"unit": "ng/m3"},
-  "a34002": {"name": "PM10","alarmLimit": 200,"unit": "ng/m3"},
+  "a34001": {"name": "TSP","alarmLimit": 200,"unit": "ug/m3"},
+  "a34005": {"name": "PM1","alarmLimit": 200,"unit": "ug/m3"},
+  "a34004": {"name": "PM2.5","alarmLimit": 200,"unit": "ug/m3"},
+  "a34002": {"name": "PM10","alarmLimit": 200,"unit": "ug/m3"},
   "a01007": {"name": "WINDSPEED","alarmLimit": 200,"unit": "m/s"},
   "a01008": {"name": "WINDDIRECTION","alarmLimit": 200,"unit": "degree"},
   "w34011": {"name": "O3","alarmLimit": 200,"unit": "mg/m3"},

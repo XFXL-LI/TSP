@@ -31,7 +31,7 @@
 #include "../../app/ledManager/ledManager.h"
 
 
-// #define DEBUG
+#define DEBUG
 
 #define PUMP1_PIN 41
 #define ALARM_PIN 40    // 12v电控制开关
@@ -799,7 +799,8 @@ static void LedPrintTask(void *pvParameters)
 
     QueueHandle_t LedPrintTaskQueue = EventBus::getInstance().createReceiverQueue(5);
     EventBus::getInstance().subscribe(EventID::PROCESSED_DATA_COLLECTED, LedPrintTaskQueue);
-
+    SYSTEMCONFIG sysCfg = ConfigManager::getInstance().getSystem();
+    int collectTime = sysCfg.collect_time > 0 ? sysCfg.collect_time : 60; // 默认 60s 采集时间
     EventMsg msg;
     while (true)
     {
@@ -810,7 +811,7 @@ static void LedPrintTask(void *pvParameters)
                 AllProcessedDataPacket *allData = static_cast<AllProcessedDataPacket *>(msg.data);
                 if (allData != nullptr)
                 {
-                    ledManager.updateDisplay(allData);
+                    ledManager.updateDisplay(allData, collectTime);
                 }
                 if (allData != nullptr)
                 {
