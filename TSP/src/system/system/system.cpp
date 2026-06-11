@@ -322,8 +322,6 @@ static void OtaUploadTask(void *pvParameters)
                         TaskHandle_t Hj212SendHandle = xTaskGetHandle("Hj2017Task");
                         TaskHandle_t SaveDataFileHandle = xTaskGetHandle("SaveFileTask");
                         TaskHandle_t LedPrintHandle = xTaskGetHandle("LedPrintTask");
-                        TaskHandle_t LcdControlHandle = xTaskGetHandle("Controllcd");
-                        TaskHandle_t ControldtuHandle = xTaskGetHandle("Controldtu");
                         TaskHandle_t SerialRemoteHandle = xTaskGetHandle("CollectGalTask");
                         TaskHandle_t Hj2122025SendHandle = xTaskGetHandle("Hj2025Task");
                         TaskHandle_t TempConTaskHandle = xTaskGetHandle("TempConTask");
@@ -339,11 +337,6 @@ static void OtaUploadTask(void *pvParameters)
                         {
                             vTaskDelete(udSetTaskHandle);
                             LOG_INFO("Stopped: udSetTask task");
-                        }
-                        if (ControldtuHandle != NULL)
-                        {
-                            vTaskDelete(ControldtuHandle);
-                            LOG_INFO("Stopped: ControldtuHandle task");
                         }
                         if (TempConTaskHandle != NULL)
                         {
@@ -373,11 +366,6 @@ static void OtaUploadTask(void *pvParameters)
                         if (LedPrintHandle != NULL)
                         {
                             vTaskDelete(LedPrintHandle);
-                            LOG_INFO("Stopped: calibration data task");
-                        }
-                        if (LcdControlHandle != NULL)
-                        {
-                            vTaskDelete(LcdControlHandle);
                             LOG_INFO("Stopped: calibration data task");
                         }
                         if (SerialRemoteHandle != NULL)
@@ -1003,7 +991,11 @@ static void AlarmTask(void *pvParameters){
     float tempUpperLimit = alarmConfig.alarm_upper_limit;
     float tempLowerLimit = alarmConfig.alarm_lower_limit;
     String alarm_sensor = alarmConfig.alarm_sensor;
-    pinMode(ALARM_PIN, OUTPUT);
+    pinMode(ALARM_PIN, OUTPUT);\
+
+    volatile int alarmCount = 0;
+    volatile int noAlarmCount = 0;
+
     while (true)
     {
         if (EventBus::waitEvent(AlarmTaskQueue, msg))
@@ -1021,10 +1013,20 @@ static void AlarmTask(void *pvParameters){
                             float tempValue = data.second.value;
                             if (tempValue > tempUpperLimit || tempValue < tempLowerLimit)
                             {
+                                alarmCount++;
+                                noAlarmCount = 0;
                                 LOG_DEBUG("Temperature alarm! Value: %.2f", tempValue);
-                                digitalWrite(ALARM_PIN, HIGH);
+                                if (alarmCount >= 3){
+                                    digitalWrite(ALARM_PIN, HIGH);
+                                    alarmCount = 3;
+                                }
                             } else {
-                                digitalWrite(ALARM_PIN, LOW);
+                                noAlarmCount++;
+                                alarmCount = 0;
+                                if (noAlarmCount >= 3){
+                                    digitalWrite(ALARM_PIN, LOW);
+                                    noAlarmCount = 3;
+                                }
                             }
                         }
                     }
@@ -1154,23 +1156,14 @@ void setUpInit(void)
     HJ212CONFIG hj212Cfg = ConfigManager::getInstance().getHJ212();
     SYSTEMCONFIG systemCfg = ConfigManager::getInstance().getSystem();
     SemaphoreHandle_t DTUHj212Mutex = sm.getMutex(SERIAL_HJ212);
-    if (xSemaphoreTake(DTUMutex, pdMS_TO_TICKS(3000)) == pdTRUE)
+    if (xSemaphoreTake(DTUHj212Mutex, pdMS_TO_TICKS(3000)) == pdTRUE)
     {
         if (!DTUMg.updateHJDtuGoalIP(hj212Cfg.ip))
         {
             LOG_ERROR("Failed to update HJ212 DTU IP");
         }
-        xSemaphoreGive(DTUMutex);
+        xSemaphoreGive(DTUHj212Mutex);
     }
-    // SemaphoreHandle_t DTUREMutex = sm.getMutex(SERIAL_DTU);
-    // if (xSemaphoreTake(DTUREMutex, pdMS_TO_TICKS(3000)) == pdTRUE)
-    // {
-    //     if (!DTUMg.updateReDtuGoalIP(systemCfg.dtu_server))
-    //     {
-    //         LOG_ERROR("Failed to update Remote DTU IP");
-    //     }
-    //     xSemaphoreGive(DTUREMutex);
-    // }
 }
 void fileRestore(void)
 {

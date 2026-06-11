@@ -123,22 +123,22 @@ bool LedManager::buildDisplayTextBySensorId(const String &sensorId, float value,
     }
     if (sensorId == "a21026")
     {
-        snprintf(buffer, size, "SO2:%.1fmg/m3", value);
+        snprintf(buffer, size, "SO2:%.1fppm", value);
         return true;
     }
     if (sensorId == "a21005")
     {
-        snprintf(buffer, size, "CO:%.1fmg/m3", value);
+        snprintf(buffer, size, "CO:%.1fppm", value);
         return true;
     }
     if (sensorId == "a21004")
     {
-        snprintf(buffer, size, "NO2:%.1fmg/m3", value);
+        snprintf(buffer, size, "NO2:%.1fppm", value);
         return true;
     }
     if (sensorId == "w34011")
     {
-        snprintf(buffer, size, "O3:%.1fmg/m3", value);
+        snprintf(buffer, size, "O3:%.1fppm", value);
         return true;
     }
 
@@ -336,7 +336,7 @@ void LedManager::buildHumidityText(float value, char *buffer, size_t size)
 
 void LedManager::buildPressureText(float value, char *buffer, size_t size)
 {
-    static const uint8_t prefix[] = {0xD1, 0xB9, 0xC7, 0xBF};
+    static const uint8_t prefix[] = {0xC6, 0xFE, 0xD1, 0xB9};
 
     memset(buffer, 0, size);
     memcpy(buffer, prefix, sizeof(prefix));
