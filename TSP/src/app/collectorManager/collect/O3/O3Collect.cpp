@@ -23,7 +23,7 @@ O3Collect::O3Collect()
     _factor = 1.0f;
     _regCount = 1;
     unitFactor = 1.0f;
-    rawUnit = "ug/m3";
+    rawUnit = "ppb";
     // _mb_manager = new modbus_manager();
 }
 
@@ -144,7 +144,7 @@ DataPacket* O3Collect::collect() {
             float average = total_f_value / (float)valid_count;
             packet->value = (float)((int)(average * 100 + 0.5)) / 100.0f;
             packet->is_valid = true;
-            // LOG_DEBUG("%s average value: %.2f (based on %d samples)", _id.c_str(), packet->value, valid_count);
+            LOG_DEBUG("%s average value: %.2f (based on %d samples)", _id.c_str(), packet->value, valid_count);
         }
     }
     else

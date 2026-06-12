@@ -327,7 +327,13 @@ static void OtaUploadTask(void *pvParameters)
                         TaskHandle_t TempConTaskHandle = xTaskGetHandle("TempConTask");
                         TaskHandle_t udSetTaskHandle = xTaskGetHandle("udSetTask");
                         TaskHandle_t netResTaskHandle = xTaskGetHandle("netResTask");
-
+                        TaskHandle_t ControllcdHandle = xTaskGetHandle("Controllcd");
+                        
+                        if (ControllcdHandle != NULL)
+                        {
+                            vTaskDelete(ControllcdHandle);
+                            LOG_INFO("Stopped: Controllcd task");
+                        }
                         if (netResTaskHandle != NULL)
                         {
                             vTaskDelete(netResTaskHandle);
@@ -453,7 +459,7 @@ static void otaUpload(void *pvParameters)
             local_buf_idx = 0;
             lastDataTime = millis();
         }
-        if (millis() - lastDataTime > 30000)
+        if (millis() - lastDataTime > 90000)
         {
             LOG_ERROR("OTA upload timeout!");
             break;

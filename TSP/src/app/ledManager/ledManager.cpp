@@ -123,22 +123,22 @@ bool LedManager::buildDisplayTextBySensorId(const String &sensorId, float value,
     }
     if (sensorId == "a21026")
     {
-        snprintf(buffer, size, "SO2:%.1fppm", value);
+        snprintf(buffer, size, "SO2:%.1fppb", value);
         return true;
     }
     if (sensorId == "a21005")
     {
-        snprintf(buffer, size, "CO:%.1fppm", value);
+        snprintf(buffer, size, "CO:%.1fppb", value);
         return true;
     }
     if (sensorId == "a21004")
     {
-        snprintf(buffer, size, "NO2:%.1fppm", value);
+        snprintf(buffer, size, "NO2:%.1fppb", value);
         return true;
     }
     if (sensorId == "w34011")
     {
-        snprintf(buffer, size, "O3:%.1fppm", value);
+        snprintf(buffer, size, "O3:%.1fppb", value);
         return true;
     }
 
