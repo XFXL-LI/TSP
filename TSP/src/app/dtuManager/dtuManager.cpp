@@ -137,7 +137,7 @@ bool DTUManager::updateHJDtuGoalIP(String newIP){
         return false;
     }
 }
-void DTUManager::sendHJ212Packet(String dataContent) {
+bool DTUManager::sendHJ212Packet(String dataContent) {
     String packet = dataContent;
     const int MAX_RETRY = 3;
     for (int retry = 1; retry <= MAX_RETRY; retry++)
@@ -150,7 +150,7 @@ void DTUManager::sendHJ212Packet(String dataContent) {
             if (res.indexOf("CN=9014") != -1)
             {
                 LOG_DEBUG("HJ212 ACK Success.");
-                return;
+                return true;
             }
             else
             {
@@ -163,7 +163,7 @@ void DTUManager::sendHJ212Packet(String dataContent) {
         }
         vTaskDelay(pdMS_TO_TICKS(1000));
     }
-    return;
+    return false;
 }
 void DTUManager::processQuery(JSONCmdData* req){
     

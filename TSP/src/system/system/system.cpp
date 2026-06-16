@@ -484,7 +484,7 @@ static void otaUpload(void *pvParameters)
     }
     else
     {
-        LOG_ERROR("OTA Failed. Written %d / %d bytes. Restarting system...", bytes_written, otaTotalSize);
+        DTU_port->printf("OTA Failed. Written %d / %d bytes. Restarting system...", bytes_written, otaTotalSize);
         esp_ota_end(ota_handle);
         vTaskDelay(3000 / portTICK_PERIOD_MS);
         ESP.restart();
@@ -591,8 +591,14 @@ static void Hj212_2017SendTask(void *pvParameters)
                         SemaphoreHandle_t _StreamMutex = SerialManager::getInstance().getMutex(SERIAL_HJ212);
                         if (xSemaphoreTake(_StreamMutex, pdMS_TO_TICKS(3000)) == pdTRUE)
                         {
-                            DTUManager::getInstance().sendHJ212Packet(HJ212_str);
+                            bool result = DTUManager::getInstance().sendHJ212Packet(HJ212_str);
                             xSemaphoreGive(_StreamMutex);
+                            if (!result)
+                            {
+                                LOG_WARNING("Failed to send HJ212 packet, saving for retry...");
+                                filesys.savePendingPacket(allData->last_update);
+                                filesys.storeProcessedPacket(allData);
+                            }
                         }
                     }
                     else
@@ -634,8 +640,14 @@ static void Hj212_2017SendTask(void *pvParameters)
                     SemaphoreHandle_t _StreamMutex = SerialManager::getInstance().getMutex(SERIAL_HJ212);
                     if (xSemaphoreTake(_StreamMutex, pdMS_TO_TICKS(3000)) == pdTRUE)
                     {
+                        bool result = DTUManager::getInstance().sendHJ212Packet(HJ212_str);
                         xSemaphoreGive(_StreamMutex);
-                        DTUManager::getInstance().sendHJ212Packet(HJ212_str);
+                        if (!result)
+                        {
+                            LOG_WARNING("Failed to send HJ212 packet, saving for retry...");
+                            filesys.savePendingPacket(allData->last_update);
+                            filesys.storeProcessedPacket(allData);
+                        }
                     }
                 }
                 if (allData != nullptr)
@@ -688,8 +700,14 @@ static void Hj212_2025SendTask(void *pvParameters)
                         SemaphoreHandle_t _StreamMutex = SerialManager::getInstance().getMutex(SERIAL_HJ212);
                         if (xSemaphoreTake(_StreamMutex, pdMS_TO_TICKS(3000)) == pdTRUE)
                         {
+                            bool result = DTUManager::getInstance().sendHJ212Packet(HJ212_str);
                             xSemaphoreGive(_StreamMutex);
-                            DTUManager::getInstance().sendHJ212Packet(HJ212_str);
+                            if (!result)
+                            {
+                                LOG_WARNING("Failed to send HJ212 packet, saving for retry...");
+                                filesys.savePendingPacket(allData->last_update);
+                                filesys.storeProcessedPacket(allData);
+                            }
                         }
                     }
                     else
@@ -730,8 +748,14 @@ static void Hj212_2025SendTask(void *pvParameters)
                     SemaphoreHandle_t _StreamMutex = SerialManager::getInstance().getMutex(SERIAL_HJ212);
                     if (xSemaphoreTake(_StreamMutex, pdMS_TO_TICKS(3000)) == pdTRUE)
                     {
+                        bool result = DTUManager::getInstance().sendHJ212Packet(HJ212_str);
                         xSemaphoreGive(_StreamMutex);
-                        DTUManager::getInstance().sendHJ212Packet(HJ212_str);
+                        if (!result)
+                        {
+                            LOG_WARNING("Failed to send HJ212 packet, saving for retry...");
+                            filesys.savePendingPacket(allData->last_update);
+                            filesys.storeProcessedPacket(allData);
+                        }
                     }
                 }
                 if (allData != nullptr)

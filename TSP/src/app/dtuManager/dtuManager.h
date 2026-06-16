@@ -17,7 +17,7 @@ private:
 public:
     static DTUManager& getInstance();
     void init(Stream& remoteStream, Stream& hj212Stream);
-    void sendHJ212Packet(String dataContent);
+    bool sendHJ212Packet(String dataContent);
 
     uint64_t dtuSystemTime(); 
     uint64_t hjSystemTime(); 
