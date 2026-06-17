@@ -328,7 +328,14 @@ static void OtaUploadTask(void *pvParameters)
                         TaskHandle_t udSetTaskHandle = xTaskGetHandle("udSetTask");
                         TaskHandle_t netResTaskHandle = xTaskGetHandle("netResTask");
                         TaskHandle_t ControllcdHandle = xTaskGetHandle("Controllcd");
+                        TaskHandle_t ControldtuHandle = xTaskGetHandle("Controldtu");
+
                         
+                        if (ControldtuHandle != NULL)
+                        {
+                            vTaskDelete(ControldtuHandle);
+                            LOG_INFO("Stopped: Controldtu task");
+                        }
                         if (ControllcdHandle != NULL)
                         {
                             vTaskDelete(ControllcdHandle);
@@ -424,7 +431,7 @@ static void otaUpload(void *pvParameters)
     }
 
     DTU_port->printf("Ready to start OTA, size: %d byte, Please send the OTA upgrade package within 300 seconds\n", otaTotalSize);
-    DTU_port->printf("The single packet sent is 1024 bytes, with a sending interval of 1000ms\n");
+    DTU_port->printf("The single packet sent is 800 bytes, with a sending interval of 1000ms\n");
     LOG_INFO("Ready to start OTA");
 
     uint8_t data[OTA_BUFFER_SIZE];
@@ -456,6 +463,7 @@ static void otaUpload(void *pvParameters)
             }
             bytes_written += local_buf_idx;
             DTU_port->printf("%d/%d \n", bytes_written, otaTotalSize);
+            Serial.printf("Received OTA data: %d/%d bytes\n", bytes_written, otaTotalSize);
             local_buf_idx = 0;
             lastDataTime = millis();
         }
