@@ -430,7 +430,7 @@ static void otaUpload(void *pvParameters)
         vTaskDelay(1 / portTICK_PERIOD_MS);
     }
 
-    DTU_port->printf("Ready to start OTA, size: %d byte, Please send the OTA upgrade package within 300 seconds\n", otaTotalSize);
+    DTU_port->printf("Ready to start OTA, size: %d byte, Please send the OTA upgrade package within 600 seconds\n", otaTotalSize);
     DTU_port->printf("The single packet sent is 800 bytes, with a sending interval of 1000ms\n");
     LOG_INFO("Ready to start OTA");
 
