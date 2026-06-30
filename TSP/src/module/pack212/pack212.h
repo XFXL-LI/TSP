@@ -15,6 +15,7 @@ public:
 private:
     unsigned int calculateCRC(const char* data, int len);
     String getCnCode(DataTime type);
+    String getCurrentQn();
 };
 
 #endif

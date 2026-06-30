@@ -104,35 +104,41 @@ void filesysManager::writeToFile(const String& path, const std::vector<fileStora
     }
 }
 
-String filesysManager::getPendingFilePath(uint64_t ts) {
-    char dateStr[10], hourStr[5], minStr[5];
-    parseTimestamp(ts, dateStr, hourStr, minStr);
-
-    String path = "/sdcard/pending/" + String(dateStr) + "/" + hourStr + "/" + minStr + ".flag";
-    return path;
+String filesysManager::getPendingFilePath(DataTime type, uint64_t ts) {
+    return "/sdcard/pending/" + String((int)type) + "/" + String(ts) + ".pkt";
 }
 
-// 保存待补传的时间戳 (创建标记文件)
-void filesysManager::savePendingPacket(uint64_t timestamp) {
-    if (!file_storage::getInstance().isSDcardReady()) return;
-    
-    String path = getPendingFilePath(timestamp);
+bool filesysManager::savePendingPacket(const AllProcessedDataPacket* data, const String& packet) {
+    if (data == nullptr || packet.length() == 0 ||
+        !file_storage::getInstance().isSDcardReady()) {
+        return false;
+    }
+
+    String path = getPendingFilePath(data->dataTime, data->last_update);
     int lastSlash = path.lastIndexOf('/');
     if (lastSlash != -1) {
         String dirPath = path.substring(0, lastSlash);
-        file_storage::getInstance().makeDirs(dirPath.c_str());
-        
-        // 创建标记文件 (内容为时间戳)
-        FILE* f = fopen(path.c_str(), "w");
+        if (file_storage::getInstance().makeDirs(dirPath.c_str()) != 0) {
+            LOG_ERROR("Failed to create pending directory: %s", dirPath.c_str());
+            return false;
+        }
+
+        FILE* f = fopen(path.c_str(), "wb");
         if (f) {
-            fprintf(f, "%llu", timestamp);
+            size_t written = fwrite(packet.c_str(), 1, packet.length(), f);
             fclose(f);
-            LOG_DEBUG("Saved pending packet marker: %s", path.c_str());
+            if (written == packet.length()) {
+                LOG_INFO("Saved pending HJ212 packet: %s", path.c_str());
+                return true;
+            }
+            LOG_ERROR("Pending packet write size mismatch: %s", path.c_str());
         } else {
-            LOG_ERROR("Failed to create pending marker file: %s", path.c_str());
+            LOG_ERROR("Failed to create pending packet: %s", path.c_str());
         }
     }
+    return false;
 }
+
 AllProcessedDataPacket* filesysManager::readPendingPacket(int type, uint64_t timestamp) {
     if (!file_storage::getInstance().isSDcardReady()) {
         LOG_ERROR("SD card not ready");
@@ -158,12 +164,13 @@ AllProcessedDataPacket* filesysManager::readPendingPacket(int type, uint64_t tim
     fileStorage rec;
     int recordCount = 0;
     
-    uint64_t lasttime = 0;
+    uint64_t matchedTime = 0;
     while (fread(&rec, sizeof(fileStorage), 1, f) == 1) {
-        uint64_t fileTs10 = rec.timestamp / 100;
-        uint64_t targetTs10 = timestamp / 100;
-        lasttime = rec.timestamp;
-        if (fileTs10 == targetTs10) {
+        bool exactTimestamp = timestamp > 999999999999ULL;
+        bool timestampMatches = exactTimestamp
+            ? (rec.timestamp == timestamp)
+            : (rec.timestamp / 100 == timestamp);
+        if (timestampMatches) {
             ProcessedDataPacket processedData;
             processedData.value = rec.value;
             processedData.min_val = rec.min_val;
@@ -173,15 +180,16 @@ AllProcessedDataPacket* filesysManager::readPendingPacket(int type, uint64_t tim
             
             String sensorId(rec.sensor_id);
             pkg->processed_data_map[sensorId] = processedData;
+            matchedTime = rec.timestamp;
             recordCount++;
         }
     }
-    pkg->last_update = lasttime;
+    pkg->last_update = matchedTime;
     fclose(f);
     
     if (recordCount > 0) {
         LOG_INFO("Successfully loaded pending packet: timestamp=%llu, type=%d, records=%d", 
-                lasttime, type, recordCount);
+                matchedTime, type, recordCount);
         return pkg;
     } else {
         LOG_WARNING("No matching records found for timestamp %llu in type %d", timestamp, type);
@@ -191,7 +199,9 @@ AllProcessedDataPacket* filesysManager::readPendingPacket(int type, uint64_t tim
     LOG_ERROR("Failed to load pending packet for timestamp: %llu", timestamp);
     return nullptr;
 }
-void filesysManager::traverseDirectory(const char* dirPath, std::vector<uint64_t>& result) {
+void filesysManager::traversePendingDirectory(
+    const char* dirPath,
+    std::vector<PendingPacketInfo>& result) {
     DIR* dir = opendir(dirPath);
     if (!dir) return;
     struct dirent* entry;
@@ -203,56 +213,84 @@ void filesysManager::traverseDirectory(const char* dirPath, std::vector<uint64_t
         String fullPath = String(dirPath) + "/" + name;
 
         if (entry->d_type == DT_DIR) {
-            traverseDirectory(fullPath.c_str(), result);
+            traversePendingDirectory(fullPath.c_str(), result);
         } 
-        else if (entry->d_type == DT_REG && name.endsWith(".flag")) {
-            int dotIndex = name.lastIndexOf('.');
-            String ssStr = name.substring(0, dotIndex);
-            uint64_t min = strtoull(ssStr.c_str(), NULL, 10);
-            int lastSlash = fullPath.lastIndexOf('/');
-            int secondLastSlash = fullPath.lastIndexOf('/', lastSlash - 1);
-            int thirdLastSlash = fullPath.lastIndexOf('/', secondLastSlash - 1);
-            if (thirdLastSlash != -1) {
-                String dateStr = fullPath.substring(thirdLastSlash + 1, secondLastSlash);
-                String hourStr = fullPath.substring(secondLastSlash + 1, lastSlash);
+        else if (entry->d_type == DT_REG &&
+                 (name.endsWith(".pkt") || name.endsWith(".flag"))) {
+            PendingPacketInfo pending;
+            pending.filePath = fullPath;
 
-                uint64_t datePart = strtoull(dateStr.c_str(), NULL, 10);
-                uint64_t hourPart = strtoull(hourStr.c_str(), NULL, 10);
-                uint64_t finalTs = (datePart * 10000) + (hourPart * 100) + min;
-                result.push_back(finalTs);
+            FILE* f = fopen(fullPath.c_str(), "rb");
+            if (!f) {
+                LOG_WARNING("Unable to open pending file: %s", fullPath.c_str());
+                continue;
+            }
+
+            if (name.endsWith(".pkt")) {
+                int dotIndex = name.lastIndexOf('.');
+                pending.timestamp = strtoull(name.substring(0, dotIndex).c_str(), nullptr, 10);
+
+                int lastSlash = fullPath.lastIndexOf('/');
+                int parentSlash = fullPath.lastIndexOf('/', lastSlash - 1);
+                if (parentSlash >= 0) {
+                    int type = fullPath.substring(parentSlash + 1, lastSlash).toInt();
+                    if (type >= (int)DataTime::REAL_DATA && type <= (int)DataTime::DAY_DATA) {
+                        pending.dataTime = (DataTime)type;
+                    }
+                }
+
+                char buffer[129];
+                size_t readSize = 0;
+                while ((readSize = fread(buffer, 1, sizeof(buffer) - 1, f)) > 0) {
+                    buffer[readSize] = '\0';
+                    pending.packet += buffer;
+                }
+            } else {
+                // 兼容旧版本：旧 .flag 文件内容只有完整时间戳，类型默认为分钟。
+                char timestampBuffer[32] = {0};
+                if (fgets(timestampBuffer, sizeof(timestampBuffer), f) != nullptr) {
+                    pending.timestamp = strtoull(timestampBuffer, nullptr, 10);
+                    pending.dataTime = DataTime::MIN_DATA;
+                }
+            }
+            fclose(f);
+
+            if (pending.timestamp > 0) {
+                result.push_back(pending);
+            } else {
+                LOG_WARNING("Invalid pending file: %s", fullPath.c_str());
             }
         }
     }
     closedir(dir);
 }
 
-std::vector<uint64_t> filesysManager::scanPendingTimestamps() {
-    std::vector<uint64_t> result;
+std::vector<PendingPacketInfo> filesysManager::scanPendingPackets() {
+    std::vector<PendingPacketInfo> result;
     if (!file_storage::getInstance().isSDcardReady()) {
         LOG_ERROR("SD card not ready for scanning");
         return result;
     }
-    traverseDirectory("/sdcard/pending", result);
-    for(uint64_t ts : result) {
-        LOG_DEBUG("Found pending timestamp: %llu", ts);
+    traversePendingDirectory("/sdcard/pending", result);
+    for (const auto& pending : result) {
+        LOG_DEBUG("Found pending packet: type=%d, timestamp=%llu, path=%s",
+                  (int)pending.dataTime, pending.timestamp, pending.filePath.c_str());
     }
-    LOG_INFO("Total scanned %d pending data files", result.size());
+    LOG_INFO("Total scanned %d pending packets", result.size());
     return result;
 }
 
-// 删除已补传的数据标记文件
-bool filesysManager::deletePendingPacket(uint64_t timestamp) {
+bool filesysManager::deletePendingPacket(const PendingPacketInfo& pending) {
     if (!file_storage::getInstance().isSDcardReady()) return false;
-    
-    String path = getPendingFilePath(timestamp);
-    int ret = remove(path.c_str());
+
+    int ret = remove(pending.filePath.c_str());
     
     if (ret == 0) {
-        LOG_DEBUG("Deleted pending marker: %s", path.c_str());
-        cleanEmptyDirectories(path);
+        LOG_INFO("Deleted delivered pending packet: %s", pending.filePath.c_str());
+        cleanEmptyDirectories(pending.filePath);
         return true;
     } else {
-        LOG_ERROR("Failed to delete pending marker: %s", path.c_str());
+        LOG_ERROR("Failed to delete pending packet: %s", pending.filePath.c_str());
         return false;
     }
 }
@@ -299,16 +337,16 @@ void filesysManager::processQuery(JSONCmdData* req) {
     }
 
     int step = 1;
-    int dataType = RAW_DATA;
+    int dataType = (int)DataTime::REAL_DATA;
     if (param == "min") {
         step = 1;
-        dataType = MIN_DATA;
+        dataType = (int)DataTime::MIN_DATA;
     } else if (param == "hour") {
         step = 100;
-        dataType = HOUR_DATA;
+        dataType = (int)DataTime::HOUR_DATA;
     } else if (param == "day") {
         step = 10000;
-        dataType = DAY_DATA;
+        dataType = (int)DataTime::DAY_DATA;
     }
 
     for (uint64_t current_ts = start_ts; current_ts <= end_ts; current_ts += step) {

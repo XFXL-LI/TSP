@@ -17,10 +17,12 @@ struct fileStorage {
 }; // 合计 32 字节
 #pragma pack(pop)
 
-#define RAW_DATA 0
-#define MIN_DATA 1
-#define HOUR_DATA 2
-#define DAY_DATA 3
+struct PendingPacketInfo {
+    uint64_t timestamp = 0;
+    DataTime dataTime = DataTime::MIN_DATA;
+    String filePath;
+    String packet;
+};
 
 class filesysManager {
 public:
@@ -30,9 +32,9 @@ public:
     
     // 待补传数据管理接口
     AllProcessedDataPacket* readPendingPacket(int type, uint64_t timestamp);
-    void savePendingPacket(uint64_t timestamp);                     // 保存待补传的时间戳到文件
-    std::vector<uint64_t> scanPendingTimestamps();                 // 启动时扫描未补传的时间戳
-    bool deletePendingPacket(uint64_t timestamp);                   // 补传成功后删除待补传数据
+    bool savePendingPacket(const AllProcessedDataPacket* data, const String& packet);
+    std::vector<PendingPacketInfo> scanPendingPackets();
+    bool deletePendingPacket(const PendingPacketInfo& pending);
     void cleanEmptyDirectories(String filePath);                 // 清理空目录
     void poll(); // 轮询处理待补传数据的发送
     
@@ -45,9 +47,9 @@ private:
 
     QueueHandle_t SaveDataFileTaskQueue;
     filesysManager();
-    void traverseDirectory(const char* dirPath, std::vector<uint64_t>& result);
+    void traversePendingDirectory(const char* dirPath, std::vector<PendingPacketInfo>& result);
     String getFilePath(int type, uint64_t ts);
-    String getPendingFilePath(uint64_t ts);                         // 生成待补传文件路径
+    String getPendingFilePath(DataTime type, uint64_t ts);
     void parseTimestamp(uint64_t ts, char* date, char* hour, char* min);
     void writeToFile(const String& path, const std::vector<fileStorage>& rec);
 

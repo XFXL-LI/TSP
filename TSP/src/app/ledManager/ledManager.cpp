@@ -336,7 +336,7 @@ void LedManager::buildHumidityText(float value, char *buffer, size_t size)
 
 void LedManager::buildPressureText(float value, char *buffer, size_t size)
 {
-    static const uint8_t prefix[] = {0xC6, 0xFE, 0xD1, 0xB9};
+    static const uint8_t prefix[] = { 0xD1, 0xB9, 0xC7, 0xBF};
 
     memset(buffer, 0, size);
     memcpy(buffer, prefix, sizeof(prefix));

@@ -140,6 +140,10 @@ int file_storage::readSDCard(const char *path, String &content) {
 }
 
 int file_storage::makeDirs(const char *path) {
+    if (path == nullptr || path[0] == '\0') {
+        return 1;
+    }
+
     char tmp[256];
     char *p = NULL;
     struct stat st;
@@ -150,18 +154,17 @@ int file_storage::makeDirs(const char *path) {
             if (stat(tmp, &st) != 0) {
                 if (mkdir(tmp, S_IRWXU) != 0) {
                     return 1;
-                } else {
-                    return 0;
                 }
             }
-            
             *p = '/';
         }
     }
     if (stat(tmp, &st) != 0) {
-        mkdir(tmp, S_IRWXU);
-        return 0;
+        if (mkdir(tmp, S_IRWXU) != 0) {
+            return 1;
+        }
     }
+    return 0;
 }
 
 bool file_storage::FFATremoveFile(const char *path){

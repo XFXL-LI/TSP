@@ -1,11 +1,26 @@
 #include "pack212.h"
 #include "../../inc/sys_init.h"
+#include <time.h>
 
 HJ212_DataCenter::HJ212_DataCenter() {}
 
+String HJ212_DataCenter::getCurrentQn() {
+    time_t now;
+    struct tm timeInfo;
+    time(&now);
+    if (localtime_r(&now, &timeInfo) == nullptr) return "";
+
+    char qn[20];
+    snprintf(qn, sizeof(qn), "%04d%02d%02d%02d%02d%02d001",
+             timeInfo.tm_year + 1900, timeInfo.tm_mon + 1,
+             timeInfo.tm_mday, timeInfo.tm_hour,
+             timeInfo.tm_min, timeInfo.tm_sec);
+    return String(qn);
+}
+
 String HJ212_DataCenter::getCnCode(DataTime type) {
     switch (type) {
-        case DataTime::MIN_DATA:  return "2011";
+        case DataTime::MIN_DATA:  return "2051";
         case DataTime::HOUR_DATA: return "2061";
         case DataTime::DAY_DATA:  return "2031";
         case DataTime::REAL_DATA: return "2011";
@@ -18,33 +33,39 @@ String HJ212_DataCenter::build2017Hj212Packet(const AllProcessedDataPacket* allD
     String cp;
     cp.reserve(allData->processed_data_map.size() * 80 + 64);
     String timeStr = String(allData->last_update);
+    String qn = getCurrentQn();
+    if (qn.length() == 0) return "";
     String cn = getCnCode(allData->dataTime);
     cp += "DataTime=" + timeStr + ";";
     for (auto const& [code, packet] : allData->processed_data_map) {
         // if (!packet.is_valid) continue; // 212协议要求即使无效数据也要上报，所以这里不跳过
         if (cn == "2011") {
+            String flag = packet.is_valid ? "N" : "D";
             if (code == "LA" || code == "L90") {
                 cp += code + "-Rtd=" + String(packet.value, 1) + ";";
             } else {
-                cp += code + "-Rtd=" + String(packet.value, 2) + "," + code + "-Flag=N;";
+                cp += code + "-Rtd=" + String(packet.value, 2) + "," +
+                      code + "-Flag=" + flag + ";";
             }
         } else {
-            if (code == "LA" || code == "L90") {
+            String flag = packet.is_valid ? "N" : "D";
+            if (code == "L90") {
                 cp += code + "-Data=" + String(packet.value, 1) + ";";
-                cp += code + "-LMx-Data=" + String(packet.max_val, 1) + ";";
-                cp += code + "-LMn-Data=" + String(packet.min_val, 1) + ";";
+                cp += "LMx-Data=" + String(packet.max_val, 1) + ";";
+                cp += "LMn-Data=" + String(packet.min_val, 1) + ";";
+            } else if (code == "LA") {
+                cp += code + "-Data=" + String(packet.value, 1) + ";";
             } else {
-                cp += code + "-Cou=" + String(packet.cou_val, 2) + ",";
                 cp += code + "-Min=" + String(packet.min_val, 2) + ",";
                 cp += code + "-Avg=" + String(packet.value, 2) + ","; 
-                cp += code + "-Max=" + String(packet.max_val, 2) + "," + code + "-Flag=N;";
+                cp += code + "-Max=" + String(packet.max_val, 2) + "," +
+                      code + "-Flag=" + flag + ";";
             }
         }
     }
-    String qnSuffix = (cn == "2011") ? "000" : "001";
     String hj212_content;
     hj212_content.reserve(cp.length() + 200);
-    hj212_content = "QN=" + timeStr + qnSuffix + 
+    hj212_content = "QN=" + qn +
                     ";ST=" + sysCfg.st + 
                     ";CN=" + cn + 
                     ";PW=" + sysCfg.pw + 
@@ -80,6 +101,8 @@ String HJ212_DataCenter::build2025Hj212Packet(const AllProcessedDataPacket* allD
     String cp;
     cp.reserve(allData->processed_data_map.size() * 80 + 64);
     String timeStr = String(allData->last_update);
+    String qn = getCurrentQn();
+    if (qn.length() == 0) return "";
     String cn = getCnCode(allData->dataTime);
     cp += "DataTime=" + timeStr + ";";
     for (auto const& [code, packet] : allData->processed_data_map) {
@@ -103,10 +126,9 @@ String HJ212_DataCenter::build2025Hj212Packet(const AllProcessedDataPacket* allD
             }
         }
     }
-    String qnSuffix = (cn == "2011") ? "000" : "001";
     String hj212_content;
     hj212_content.reserve(cp.length() + 200);
-    hj212_content = "QN=" + timeStr + qnSuffix + 
+    hj212_content = "QN=" + qn +
                     ";ST=" + sysCfg.st + 
                     ";CN=" + cn + 
                     ";PW=" + sysCfg.pw + 

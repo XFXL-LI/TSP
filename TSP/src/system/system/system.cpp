@@ -34,7 +34,7 @@
 #define DEBUG
 
 #define PUMP1_PIN 41
-#define ALARM_PIN 40    // 12v电控制开关
+#define ALARM_PIN 40    // 12v电控制开�?
 
 // ********** 时间相关定义 **********
 Ds1302 rtc(17, 6, 7);
@@ -51,6 +51,7 @@ const char *WeekDays[] =
 void timeInit(uint64_t timestamp);
 bool updateMillisTime(uint64_t newTime);
 uint64_t getCurrentTime();
+static bool isValidClockTime(uint64_t timestamp);
 // ********** 时间相关定义 **********
 
 // ********** 其他全局定义 **********
@@ -61,11 +62,12 @@ void fileRestore(void);
 SYSINFO systemInfo;
 struct ResumeData
 {
-    std::vector<uint64_t> packets;
+    std::vector<PendingPacketInfo> packets;
 };
+static std::atomic<bool> networkRestoreRunning(false);
 
 // 采集
-static void CollectTask(void *pvParameters); // 采集后第一轮判断是否报警?
+static void CollectTask(void *pvParameters); // 采集后第一轮判断是否报�?
 // HJ212 打包
 static void Hj212_2017SendTask(void *pvParameters);
 static void Hj212_2025SendTask(void *pvParameters);
@@ -77,7 +79,7 @@ static void SaveDataFileTask(void *pvParameters);
 static void OtaUploadTask(void *pvParameters);
 // LED
 static void LedPrintTask(void *pvParameters);
-// 串口解析及管理权限
+// 串口解析及管理权�?
 static void SerialControlTask_lcd(void *pvParameters);
 static void SerialControlTask_dtu(void *pvParameters);
 static void PermissionTask(void *pvParameters);
@@ -91,11 +93,12 @@ static void updateSetupTask(void *pvParameters);
 static void updateConfigTask(void *pvParameters);
 // 温度控制
 static void TempControlTask(void *pvParameters);
-// mqtt 订阅发送
+// mqtt 订阅发�?
 static void MqttPublicTask(void *pvParameters);
 
 static void AlarmTask(void *pvParameters);
 static void otaUpload(void *pvParameters);
+static bool sendHJ212PacketLocked(const String &packet);
 
 System::System()
 {
@@ -202,10 +205,7 @@ static void updateConfigTask(void *pvParameters)
 static void updateSetupTask(void *pvParameters)
 {
     setUpInit();
-    // ========== 启动时恢复待补传数据 ==========
-    LOG_INFO("Scanning for pending packets from previous session...");
-    fileRestore();
-    // ========== 恢复逻辑结束 ==========
+    // Restore starts after the first valid CSQ update.
 
     systemInfo.mutex = xSemaphoreCreateMutex();
     volatile bool netWorkError = false;
@@ -270,6 +270,9 @@ static void updateSetupTask(void *pvParameters)
             {
                 netWorkError = false;
                 LOG_DEBUG("Updated network CSQ: %d", csq);
+                // Also retry packets when radio signal is healthy but the
+                // application server previously failed to acknowledge data.
+                fileRestore();
             }
             else
             {
@@ -559,7 +562,7 @@ static void TempControlTask(void *pvParameters)
     vTaskDelete(NULL);
 }
 
-// 发送实时数据 / 小时数据 / 天数据
+// 发送实时数�?/ 小时数据 / 天数�?
 static void Hj212_2017SendTask(void *pvParameters)
 {
     LOG_INFO("Hj212_2017SendTask Started");
@@ -604,9 +607,13 @@ static void Hj212_2017SendTask(void *pvParameters)
                             if (!result)
                             {
                                 LOG_WARNING("Failed to send HJ212 packet, saving for retry...");
-                                filesys.savePendingPacket(allData->last_update);
-                                filesys.storeProcessedPacket(allData);
+                                filesys.savePendingPacket(allData, HJ212_str);
                             }
+                        }
+                        else
+                        {
+                            LOG_WARNING("HJ212 serial busy, saving packet for retry...");
+                            filesys.savePendingPacket(allData, HJ212_str);
                         }
                     }
                     else
@@ -614,8 +621,6 @@ static void Hj212_2017SendTask(void *pvParameters)
                         if (allData->last_update > 20260527000000)
                         {
                             LOG_WARNING("HJ212 Packet construction failed or empty.");
-                            filesys.savePendingPacket(allData->last_update);
-                            filesys.storeProcessedPacket(allData);
                         }
                     }
                 }
@@ -623,9 +628,9 @@ static void Hj212_2017SendTask(void *pvParameters)
                 {
                     if (allData->last_update > 20260527000000)
                     {
-                        LOG_WARNING("HJ212 Packet construction failed or empty.");
-                        filesys.savePendingPacket(allData->last_update);
-                        filesys.storeProcessedPacket(allData);
+                        String HJ212_str = HJ212.build2017Hj212Packet(allData, config);
+                        LOG_WARNING("Network unavailable, saving HJ212 packet for retry.");
+                        filesys.savePendingPacket(allData, HJ212_str);
                     }
                 }
                 if (allData != nullptr)
@@ -653,8 +658,7 @@ static void Hj212_2017SendTask(void *pvParameters)
                         if (!result)
                         {
                             LOG_WARNING("Failed to send HJ212 packet, saving for retry...");
-                            filesys.savePendingPacket(allData->last_update);
-                            filesys.storeProcessedPacket(allData);
+                            filesys.savePendingPacket(allData, HJ212_str);
                         }
                     }
                 }
@@ -664,7 +668,7 @@ static void Hj212_2017SendTask(void *pvParameters)
                 }
             }
         }
-        vTaskDelay(pdMS_TO_TICKS(10000));
+        vTaskDelay(pdMS_TO_TICKS(100));
     }
     vTaskDelete(NULL);
 }
@@ -713,9 +717,13 @@ static void Hj212_2025SendTask(void *pvParameters)
                             if (!result)
                             {
                                 LOG_WARNING("Failed to send HJ212 packet, saving for retry...");
-                                filesys.savePendingPacket(allData->last_update);
-                                filesys.storeProcessedPacket(allData);
+                                filesys.savePendingPacket(allData, HJ212_str);
                             }
+                        }
+                        else
+                        {
+                            LOG_WARNING("HJ212 serial busy, saving packet for retry...");
+                            filesys.savePendingPacket(allData, HJ212_str);
                         }
                     }
                     else
@@ -723,8 +731,6 @@ static void Hj212_2025SendTask(void *pvParameters)
                         if (allData->last_update > 20260527000000)
                         {
                             LOG_WARNING("HJ212 Packet construction failed or empty.");
-                            filesys.savePendingPacket(allData->last_update);
-                            filesys.storeProcessedPacket(allData);
                         }
                     }
                 }
@@ -732,8 +738,9 @@ static void Hj212_2025SendTask(void *pvParameters)
                 {
                     if (allData->last_update > 20260527000000)
                     {
-                        filesys.savePendingPacket(allData->last_update);
-                        filesys.storeProcessedPacket(allData);
+                        String HJ212_str = HJ212.build2025Hj212Packet(allData, config);
+                        LOG_WARNING("Network unavailable, saving HJ212 packet for retry.");
+                        filesys.savePendingPacket(allData, HJ212_str);
                     }
                 }
                 if (allData != nullptr)
@@ -749,7 +756,7 @@ static void Hj212_2025SendTask(void *pvParameters)
                     LOG_ERROR("Received null AllProcessedDataPacket pointer!");
                     continue;
                 }
-                String HJ212_str = HJ212.build2017Hj212Packet(allData, config);
+                String HJ212_str = HJ212.build2025Hj212Packet(allData, config);
                 if (HJ212_str.length() > 0)
                 {
                     LOG_DEBUG("Generated HJ212 Packet %d bytes", HJ212_str.length());
@@ -761,8 +768,7 @@ static void Hj212_2025SendTask(void *pvParameters)
                         if (!result)
                         {
                             LOG_WARNING("Failed to send HJ212 packet, saving for retry...");
-                            filesys.savePendingPacket(allData->last_update);
-                            filesys.storeProcessedPacket(allData);
+                            filesys.savePendingPacket(allData, HJ212_str);
                         }
                     }
                 }
@@ -772,16 +778,38 @@ static void Hj212_2025SendTask(void *pvParameters)
                 }
             }
         }
-        vTaskDelay(pdMS_TO_TICKS(10000));
+        vTaskDelay(pdMS_TO_TICKS(100));
     }
     vTaskDelete(NULL);
 }
+
+static bool sendHJ212PacketLocked(const String &packet)
+{
+    if (packet.length() == 0)
+    {
+        return false;
+    }
+
+    SemaphoreHandle_t streamMutex = SerialManager::getInstance().getMutex(SERIAL_HJ212);
+    if (streamMutex == nullptr ||
+        xSemaphoreTake(streamMutex, pdMS_TO_TICKS(3000)) != pdTRUE)
+    {
+        LOG_WARNING("Failed to acquire HJ212 serial mutex");
+        return false;
+    }
+
+    bool result = DTUManager::getInstance().sendHJ212Packet(packet);
+    xSemaphoreGive(streamMutex);
+    return result;
+}
+
 static void netWorkRestoreTask(void *pvParameters)
 {
     ResumeData *resumeData = (ResumeData *)pvParameters;
     if (resumeData == nullptr)
     {
         LOG_ERROR("netWorkRestoreTask received null data");
+        networkRestoreRunning.store(false);
         vTaskDelete(NULL);
         return;
     }
@@ -789,29 +817,62 @@ static void netWorkRestoreTask(void *pvParameters)
     LOG_INFO("netWorkRestoreTask started with %d pending packets", resumeData->packets.size());
 
     HJ212_DataCenter HJ212;
-    const auto &config = ConfigManager::getInstance().getHJ212();
+    const HJ212CONFIG config = ConfigManager::getInstance().getHJ212();
     auto &filesys = filesysManager::getInstance();
 
-    for (uint64_t timestamp : resumeData->packets)
+    for (const PendingPacketInfo &pending : resumeData->packets)
     {
-        LOG_DEBUG("Resending packet for timestamp: %llu", timestamp);
-        uint64_t currentTime = timestamp * 100 + 1;
-        AllProcessedDataPacket *pendingData = filesys.readPendingPacket(MIN_DATA, currentTime);
+        LOG_INFO("Resending pending packet: type=%d, timestamp=%llu",
+                 (int)pending.dataTime, pending.timestamp);
 
-        if (pendingData)
+        String packet = pending.packet;
+        if (packet.length() == 0)
         {
-            int subCount = EventBus::getInstance().getSubscriberCount(EventID::RESUME_DATA);
-            for (int i = 0; i < subCount; i++)
+            // Rebuild legacy .flag entries from the historical minute record.
+            AllProcessedDataPacket *legacyData =
+                filesys.readPendingPacket((int)pending.dataTime, pending.timestamp);
+            if (legacyData != nullptr)
             {
-                pendingData->retain();
+                packet = config.protocol_version == "2025"
+                    ? HJ212.build2025Hj212Packet(legacyData, config)
+                    : HJ212.build2017Hj212Packet(legacyData, config);
+                legacyData->release();
             }
-            EventBus::getInstance().publish(EventID::RESUME_DATA, pendingData);
-            pendingData->release();
-            filesys.deletePendingPacket(currentTime);
         }
-        vTaskDelay(pdMS_TO_TICKS(20000));
+
+        if (packet.length() == 0)
+        {
+            LOG_ERROR("Unable to rebuild pending packet, marker retained: %s",
+                      pending.filePath.c_str());
+            continue;
+        }
+
+        bool delivered = false;
+        for (int attempt = 1; attempt <= 5; attempt++)
+        {
+            if (sendHJ212PacketLocked(packet))
+            {
+                delivered = true;
+                break;
+            }
+            LOG_WARNING("Pending delivery attempt %d/5 failed: %s",
+                        attempt, pending.filePath.c_str());
+            vTaskDelay(pdMS_TO_TICKS(3000));
+        }
+
+        if (delivered)
+        {
+            filesys.deletePendingPacket(pending);
+        }
+        else
+        {
+            LOG_WARNING("Pending delivery failed, marker retained: %s",
+                        pending.filePath.c_str());
+        }
+        vTaskDelay(pdMS_TO_TICKS(1000));
     }
     delete resumeData;
+    networkRestoreRunning.store(false);
     LOG_INFO("netWorkRestoreTask completed");
     vTaskDelete(NULL);
 }
@@ -1083,7 +1144,7 @@ static void AlarmTask(void *pvParameters){
 void timeInit(uint64_t timestamp)
 {
     rtc.init();
-    if (timestamp >= 0)
+    if (isValidClockTime(timestamp))
     {
         Ds1302::DateTime dt;
         uint64_t temp = timestamp;
@@ -1116,17 +1177,23 @@ uint64_t getCurrentTime()
 // 202605220939
 bool updateMillisTime(uint64_t newTime)
 {
+    if (!isValidClockTime(newTime))
+    {
+        LOG_ERROR("Rejected invalid clock time: %llu", newTime);
+        return false;
+    }
+
     int year, month, day, hour, minute;
     if (sscanf(String(newTime).c_str(), "%4d%2d%2d%2d%2d", &year, &month, &day, &hour, &minute) == 5)
     {
         struct tm timeinfo = {};
-        timeinfo.tm_year = year - 1900; // 自1900年起的年数
-        timeinfo.tm_mon = month - 1;    // 0-11月
+        timeinfo.tm_year = year - 1900; // �?900年起的年�?
+        timeinfo.tm_mon = month - 1;    // 0-11�?
         timeinfo.tm_mday = day;
         timeinfo.tm_hour = hour;
         timeinfo.tm_min = minute;
-        timeinfo.tm_sec = 0;    // 格式中无秒，默认为0
-        timeinfo.tm_isdst = -1; // 自动判断夏令时
+        timeinfo.tm_sec = 0;    // 格式中无秒，默认�?
+        timeinfo.tm_isdst = -1; // 自动判断夏令�?
 
         time_t t = mktime(&timeinfo);
         if (t != -1)
@@ -1151,6 +1218,7 @@ bool updateMillisTime(uint64_t newTime)
             return false;
         }
     }
+    return false;
 }
 
 // ******************* 函数实现 *******************
@@ -1179,14 +1247,25 @@ void setUpInit(void)
         }
         LOG_DEBUG("****** realTime Time: %llu ******", realTime);
         xSemaphoreGive(DTUMutex);
-        timeInit(realTime);
-
-        uint64_t currentTime1 = getCurrentTime();
-        LOG_DEBUG("****** currentTime1 Time: %llu ******", currentTime1);
-
-        if (!updateMillisTime(realTime))
+        if (isValidClockTime(realTime))
         {
-            LOG_ERROR("Failed to update milliseconds time");
+            timeInit(realTime);
+            uint64_t currentTime1 = getCurrentTime();
+            LOG_DEBUG("****** currentTime1 Time: %llu ******", currentTime1);
+            if (!updateMillisTime(realTime))
+            {
+                LOG_ERROR("Failed to update system time from DTU");
+            }
+        }
+        else
+        {
+            LOG_WARNING("DTU time unavailable, trying RTC fallback");
+            rtc.init();
+            uint64_t rtcTime = getCurrentTime();
+            if (!updateMillisTime(rtcTime))
+            {
+                LOG_ERROR("RTC fallback invalid; waiting for a valid clock");
+            }
         }
         vTaskDelay(pdMS_TO_TICKS(50));
     }
@@ -1205,13 +1284,48 @@ void setUpInit(void)
 }
 void fileRestore(void)
 {
-    auto &filesys = filesysManager::getInstance();
-    std::vector<uint64_t> pendingTimestamps = filesys.scanPendingTimestamps();
-    if (!pendingTimestamps.empty())
+    bool expected = false;
+    if (!networkRestoreRunning.compare_exchange_strong(expected, true))
     {
-        LOG_INFO("Found %d pending packets, creating recovery task", pendingTimestamps.size());
-        ResumeData *resumeData = new ResumeData();
-        resumeData->packets = pendingTimestamps;
-        xTaskCreatePinnedToCore(netWorkRestoreTask, "netResTask", 8 * 1024, resumeData, 5, NULL, 0);
+        LOG_DEBUG("Pending packet recovery task is already running");
+        return;
     }
+
+    auto &filesys = filesysManager::getInstance();
+    std::vector<PendingPacketInfo> pendingPackets = filesys.scanPendingPackets();
+    if (pendingPackets.empty())
+    {
+        networkRestoreRunning.store(false);
+        return;
+    }
+
+    LOG_INFO("Found %d pending packets, creating recovery task", pendingPackets.size());
+    ResumeData *resumeData = new ResumeData();
+    resumeData->packets = pendingPackets;
+    BaseType_t result = xTaskCreatePinnedToCore(
+        netWorkRestoreTask, "netResTask", 8 * 1024, resumeData, 5, NULL, 0);
+    if (result != pdPASS)
+    {
+        LOG_ERROR("Failed to create pending packet recovery task");
+        delete resumeData;
+        networkRestoreRunning.store(false);
+    }
+}
+
+static bool isValidClockTime(uint64_t timestamp)
+{
+    int year, month, day, hour, minute;
+    char value[16];
+    snprintf(value, sizeof(value), "%llu", timestamp);
+    if (strlen(value) != 12 ||
+        sscanf(value, "%4d%2d%2d%2d%2d",
+               &year, &month, &day, &hour, &minute) != 5)
+    {
+        return false;
+    }
+    return year >= 2020 && year <= 2099 &&
+           month >= 1 && month <= 12 &&
+           day >= 1 && day <= 31 &&
+           hour >= 0 && hour <= 23 &&
+           minute >= 0 && minute <= 59;
 }

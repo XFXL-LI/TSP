@@ -3,6 +3,7 @@
 #include "../../../../module/log/log_manager.h"
 #include "../../../../module/Serial/SerialManager.h"
 #include "../../collectorManager.h"
+#include <math.h>
 static CollectorRegistrar _registrar_temp("a01001", &TempCollect::getInstance());
 
 TempCollect* TempCollect::_instance = nullptr;
@@ -77,28 +78,38 @@ DataPacket* TempCollect::collect() {
 
     if (xSemaphoreTake(_StreamMutex, pdMS_TO_TICKS(3000)) == pdTRUE)
     {
-        uint16_t raw[2] = {0};
         uint32_t valid_count = 0;
         float total_f_value = 0.0f;
-        for (int i = 0; i < 2; i++)
+        for (int i = 0; i < 3; i++)
         {
-            uint16_t current_val = _mb_manager->readModbusReg(_slaveId, _regAddr);
-            if (current_val != 0 && current_val != 0xFFFF)
+            uint16_t rawValue = _mb_manager->readModbusReg(_slaveId, _regAddr);
+            if (rawValue != 0xFFFF)
             {
-                float current_f = (float)current_val;
-                total_f_value += current_f;
-                valid_count++;
+                int16_t signedValue = static_cast<int16_t>(rawValue);
+                if (signedValue >= -400 && signedValue <= 1200)
+                {
+                    total_f_value += static_cast<float>(signedValue);
+                    valid_count++;
+                    LOG_DEBUG("Temperature raw: 0x%04X, signed=%d, value=%.1f C",
+                              rawValue, signedValue, signedValue / 10.0f);
+                }
+                else
+                {
+                    LOG_WARNING("Temperature raw value out of range: 0x%04X (%d)",
+                                rawValue, signedValue);
+                }
             }
-            vTaskDelay(pdMS_TO_TICKS(10));
+            vTaskDelay(pdMS_TO_TICKS(30));
         }
         xSemaphoreGive(_StreamMutex);
 
         if (valid_count > 0)
         {
             float average = total_f_value / (float)valid_count / 10.0f;
-            packet->value = (float)((int)(average * 100 + 0.5)) / 100.0f;
+            packet->value = roundf(average * 100.0f) / 100.0f;
             packet->is_valid = true;
-            // LOG_DEBUG("%s average value: %.2f (based on %d samples)", _id.c_str(), packet->value, valid_count);
+            LOG_DEBUG("Temperature average: %.2f C (based on %u samples)",
+                      packet->value, valid_count);
         }
     }
     else

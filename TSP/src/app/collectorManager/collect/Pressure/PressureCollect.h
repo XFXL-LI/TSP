@@ -27,6 +27,10 @@ String _port_name;
     modbus_manager* _mb_manager;
     float unitFactor;
     String rawUnit;
+    float _lastValidValue;
+    float _pendingJumpValue;
+    uint8_t _pendingJumpCount;
+    bool _hasLastValidValue;
 
 public:
     static PressureCollect& getInstance();

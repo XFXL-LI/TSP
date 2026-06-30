@@ -31,7 +31,10 @@ modbus_manager::modbus_manager()
     : _mb_instances(nullptr),
       _serial_ports(nullptr)
 {
-    _busMutex = xSemaphoreCreateMutex();
+    if (_busMutex == NULL)
+    {
+        _busMutex = xSemaphoreCreateMutex();
+    }
 }
 modbus_manager::~modbus_manager()
 {
@@ -60,27 +63,46 @@ uint16_t modbus_manager::readModbusReg(uint8_t slaveId, uint16_t startAddr)
     uint16_t single_val = 0;
     uint32_t res_sum = 0;
     int success_count = 0;
-    int failed_count = 0;
-    xSemaphoreTake(modbusResSem, 0);
-    while (true)
+    for (int attempt = 0; attempt < 3; attempt++)
     {
-        if (success_count >= 3 || failed_count >= 3)
+        while (xSemaphoreTake(modbusResSem, 0) == pdTRUE)
         {
-            break;
         }
+
+        single_val = 0;
         if (!mb->slave())
         {
-            mb->readHreg(slaveId, startAddr, &single_val, 1, cbRes);
-            if (xSemaphoreTake(modbusResSem, pdMS_TO_TICKS(200)) == pdTRUE)
+            if (!mb->readHreg(slaveId, startAddr, &single_val, 1, cbRes))
             {
-                res_sum += single_val;
-                success_count++;
-            } else {
-                failed_count++;
+                vTaskDelay(pdMS_TO_TICKS(20));
+                continue;
             }
         }
-        mb->task();
-        yield();
+
+        uint32_t startedAt = millis();
+        bool completed = false;
+        while (millis() - startedAt < 500)
+        {
+            mb->task();
+            if (xSemaphoreTake(modbusResSem, 0) == pdTRUE)
+            {
+                completed = true;
+                break;
+            }
+            vTaskDelay(pdMS_TO_TICKS(1));
+        }
+
+        if (completed)
+        {
+            res_sum += single_val;
+            success_count++;
+        }
+        else
+        {
+            LOG_WARNING("Modbus read timeout: slave=%u, register=%u, attempt=%d",
+                        slaveId, startAddr, attempt + 1);
+        }
+        vTaskDelay(pdMS_TO_TICKS(10));
     }
     xSemaphoreGive(_busMutex);
     if (success_count == 0)

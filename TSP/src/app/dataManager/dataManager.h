@@ -77,7 +77,8 @@ private:
     uint64_t _last_day_time;
 
     // 内部辅助方法
-    void checkAndDispatch(uint64_t ts);
+    void checkAndDispatch(AllDataPacket* rawData);
+    void dispatchRealPacket(const AllDataPacket* rawData);
     void dispatchPacket(DataTime type, uint64_t ts, std::map<String, StatValue>& source);
 };
 

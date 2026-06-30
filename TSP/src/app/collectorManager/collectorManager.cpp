@@ -205,9 +205,15 @@ void collectorManager::poll()
         return;
     }
     time_t now;
-    struct tm timeinfo;
+    struct tm timeinfo = {};
     time(&now);
-    localtime_r(&now, &timeinfo);
+    if (localtime_r(&now, &timeinfo) == nullptr ||
+        timeinfo.tm_year + 1900 < 2020 ||
+        timeinfo.tm_year + 1900 > 2099)
+    {
+        LOG_ERROR("System clock is invalid; skipping this collection cycle");
+        return;
+    }
     uint64_t time = ((uint64_t)(timeinfo.tm_year + 1900) * 10000000000) +
                     ((uint64_t)(timeinfo.tm_mon + 1) * 100000000) +
                     ((uint64_t)timeinfo.tm_mday * 1000000) +
