@@ -10,6 +10,8 @@
 #include <time.h>
 #include <stdio.h>
 #include <vector>
+#include <new>
+#include <utility>
 #include "system.h"
 #include "src/module/log/log_manager.h"
 #include "../../inc/sys_init.h"
@@ -34,7 +36,7 @@
 #define DEBUG
 
 #define PUMP1_PIN 41
-#define ALARM_PIN 40    // 12v电控制开�?
+#define ALARM_PIN 40    // 12v电控制开�?
 
 // ********** 时间相关定义 **********
 Ds1302 rtc(17, 6, 7);
@@ -67,7 +69,7 @@ struct ResumeData
 static std::atomic<bool> networkRestoreRunning(false);
 
 // 采集
-static void CollectTask(void *pvParameters); // 采集后第一轮判断是否报�?
+static void CollectTask(void *pvParameters); // 采集后第一轮判断是否报�?
 // HJ212 打包
 static void Hj212_2017SendTask(void *pvParameters);
 static void Hj212_2025SendTask(void *pvParameters);
@@ -79,7 +81,7 @@ static void SaveDataFileTask(void *pvParameters);
 static void OtaUploadTask(void *pvParameters);
 // LED
 static void LedPrintTask(void *pvParameters);
-// 串口解析及管理权�?
+// 串口解析及管理权�?
 static void SerialControlTask_lcd(void *pvParameters);
 static void SerialControlTask_dtu(void *pvParameters);
 static void PermissionTask(void *pvParameters);
@@ -93,12 +95,12 @@ static void updateSetupTask(void *pvParameters);
 static void updateConfigTask(void *pvParameters);
 // 温度控制
 static void TempControlTask(void *pvParameters);
-// mqtt 订阅发�?
+// mqtt 订阅发�?
 static void MqttPublicTask(void *pvParameters);
 
 static void AlarmTask(void *pvParameters);
 static void otaUpload(void *pvParameters);
-static bool sendHJ212PacketLocked(const String &packet);
+static bool sendHJ212PacketLocked(const String &packet, int maxRetry);
 
 System::System()
 {
@@ -562,7 +564,7 @@ static void TempControlTask(void *pvParameters)
     vTaskDelete(NULL);
 }
 
-// 发送实时数�?/ 小时数据 / 天数�?
+// 发送实时数�?/ 小时数据 / 天数�?
 static void Hj212_2017SendTask(void *pvParameters)
 {
     LOG_INFO("Hj212_2017SendTask Started");
@@ -783,7 +785,7 @@ static void Hj212_2025SendTask(void *pvParameters)
     vTaskDelete(NULL);
 }
 
-static bool sendHJ212PacketLocked(const String &packet)
+static bool sendHJ212PacketLocked(const String &packet, int maxRetry)
 {
     if (packet.length() == 0)
     {
@@ -798,7 +800,7 @@ static bool sendHJ212PacketLocked(const String &packet)
         return false;
     }
 
-    bool result = DTUManager::getInstance().sendHJ212Packet(packet);
+    bool result = DTUManager::getInstance().sendHJ212Packet(packet, maxRetry);
     xSemaphoreGive(streamMutex);
     return result;
 }
@@ -816,6 +818,10 @@ static void netWorkRestoreTask(void *pvParameters)
 
     LOG_INFO("netWorkRestoreTask started with %d pending packets", resumeData->packets.size());
 
+    // The CSQ task and live collection normally wake up together. Let the
+    // current real-time report use the HJ212 serial port before recovery.
+    vTaskDelay(pdMS_TO_TICKS(20000));
+
     HJ212_DataCenter HJ212;
     const HJ212CONFIG config = ConfigManager::getInstance().getHJ212();
     auto &filesys = filesysManager::getInstance();
@@ -825,7 +831,7 @@ static void netWorkRestoreTask(void *pvParameters)
         LOG_INFO("Resending pending packet: type=%d, timestamp=%llu",
                  (int)pending.dataTime, pending.timestamp);
 
-        String packet = pending.packet;
+        String packet = filesys.loadPendingPacketContent(pending);
         if (packet.length() == 0)
         {
             // Rebuild legacy .flag entries from the historical minute record.
@@ -842,23 +848,15 @@ static void netWorkRestoreTask(void *pvParameters)
 
         if (packet.length() == 0)
         {
-            LOG_ERROR("Unable to rebuild pending packet, marker retained: %s",
+            LOG_ERROR("Unable to rebuild pending packet, quarantining: %s",
                       pending.filePath.c_str());
+            filesys.quarantinePendingPacket(pending);
             continue;
         }
 
-        bool delivered = false;
-        for (int attempt = 1; attempt <= 5; attempt++)
-        {
-            if (sendHJ212PacketLocked(packet))
-            {
-                delivered = true;
-                break;
-            }
-            LOG_WARNING("Pending delivery attempt %d/5 failed: %s",
-                        attempt, pending.filePath.c_str());
-            vTaskDelay(pdMS_TO_TICKS(3000));
-        }
+        // One recovery attempt is enough for this cycle. Repeating the DTU's
+        // own retries here used to hold the serial port for about 90 seconds.
+        bool delivered = sendHJ212PacketLocked(packet, 1);
 
         if (delivered)
         {
@@ -868,12 +866,14 @@ static void netWorkRestoreTask(void *pvParameters)
         {
             LOG_WARNING("Pending delivery failed, marker retained: %s",
                         pending.filePath.c_str());
+            break;
         }
         vTaskDelay(pdMS_TO_TICKS(1000));
     }
     delete resumeData;
     networkRestoreRunning.store(false);
-    LOG_INFO("netWorkRestoreTask completed");
+    LOG_INFO("netWorkRestoreTask completed, free heap=%u, largest block=%u",
+             ESP.getFreeHeap(), ESP.getMaxAllocHeap());
     vTaskDelete(NULL);
 }
 
@@ -1187,13 +1187,13 @@ bool updateMillisTime(uint64_t newTime)
     if (sscanf(String(newTime).c_str(), "%4d%2d%2d%2d%2d", &year, &month, &day, &hour, &minute) == 5)
     {
         struct tm timeinfo = {};
-        timeinfo.tm_year = year - 1900; // �?900年起的年�?
-        timeinfo.tm_mon = month - 1;    // 0-11�?
+        timeinfo.tm_year = year - 1900; // �?900年起的年�?
+        timeinfo.tm_mon = month - 1;    // 0-11�?
         timeinfo.tm_mday = day;
         timeinfo.tm_hour = hour;
         timeinfo.tm_min = minute;
-        timeinfo.tm_sec = 0;    // 格式中无秒，默认�?
-        timeinfo.tm_isdst = -1; // 自动判断夏令�?
+        timeinfo.tm_sec = 0;    // 格式中无秒，默认�?
+        timeinfo.tm_isdst = -1; // 自动判断夏令�?
 
         time_t t = mktime(&timeinfo);
         if (t != -1)
@@ -1292,7 +1292,11 @@ void fileRestore(void)
     }
 
     auto &filesys = filesysManager::getInstance();
-    std::vector<PendingPacketInfo> pendingPackets = filesys.scanPendingPackets();
+    LOG_DEBUG("Scanning pending packets, free heap=%u, largest block=%u",
+              ESP.getFreeHeap(), ESP.getMaxAllocHeap());
+    constexpr size_t RECOVERY_BATCH_SIZE = 3;
+    std::vector<PendingPacketInfo> pendingPackets =
+        filesys.scanPendingPackets(RECOVERY_BATCH_SIZE);
     if (pendingPackets.empty())
     {
         networkRestoreRunning.store(false);
@@ -1300,8 +1304,14 @@ void fileRestore(void)
     }
 
     LOG_INFO("Found %d pending packets, creating recovery task", pendingPackets.size());
-    ResumeData *resumeData = new ResumeData();
-    resumeData->packets = pendingPackets;
+    ResumeData *resumeData = new (std::nothrow) ResumeData();
+    if (resumeData == nullptr)
+    {
+        LOG_ERROR("Insufficient heap to create pending recovery data");
+        networkRestoreRunning.store(false);
+        return;
+    }
+    resumeData->packets = std::move(pendingPackets);
     BaseType_t result = xTaskCreatePinnedToCore(
         netWorkRestoreTask, "netResTask", 8 * 1024, resumeData, 5, NULL, 0);
     if (result != pdPASS)

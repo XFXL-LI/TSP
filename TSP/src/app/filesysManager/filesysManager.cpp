@@ -4,6 +4,7 @@
 #include "../../module/json/config_json.h"
 #include <sys/dirent.h>
 #include <sys/types.h>
+#include <utility>
 
 
 filesysManager& filesysManager::getInstance() {
@@ -40,13 +41,13 @@ String filesysManager::getFilePath(int type, uint64_t ts) {
         case 0: // ÊµÊ±: /sdcard/20260427/raw/14/01.dat
             finalPath = basePath + "/raw/" + hourStr + "/" + minStr + ".dat";
             break;
-        case 1: // ·ÖÖÓ: /sdcard/20260427/min/14/01.dat
+        case 1: // ï¿½ï¿½ï¿½ï¿½: /sdcard/20260427/min/14/01.dat
             finalPath = basePath + "/min/" + hourStr + "/" + minStr + ".dat";
             break;
         case 2: // Ð¡Ê±: /sdcard/20260427/hour/14.dat
             finalPath = basePath + "/hour/" + hourStr + ".dat";
             break;
-        case 3: // Ìì:   /sdcard/20260427/day/day.dat
+        case 3: // ï¿½ï¿½:   /sdcard/20260427/day/day.dat
             finalPath = basePath + "/day/day.dat";
             break;
         default:
@@ -201,11 +202,14 @@ AllProcessedDataPacket* filesysManager::readPendingPacket(int type, uint64_t tim
 }
 void filesysManager::traversePendingDirectory(
     const char* dirPath,
-    std::vector<PendingPacketInfo>& result) {
+    std::vector<PendingPacketInfo>& result,
+    size_t maxPackets) {
+    if (result.size() >= maxPackets) return;
+
     DIR* dir = opendir(dirPath);
     if (!dir) return;
     struct dirent* entry;
-    while ((entry = readdir(dir)) != NULL) {
+    while (result.size() < maxPackets && (entry = readdir(dir)) != NULL) {
         if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0) {
             continue;
         }
@@ -213,18 +217,12 @@ void filesysManager::traversePendingDirectory(
         String fullPath = String(dirPath) + "/" + name;
 
         if (entry->d_type == DT_DIR) {
-            traversePendingDirectory(fullPath.c_str(), result);
+            traversePendingDirectory(fullPath.c_str(), result, maxPackets);
         } 
         else if (entry->d_type == DT_REG &&
                  (name.endsWith(".pkt") || name.endsWith(".flag"))) {
             PendingPacketInfo pending;
             pending.filePath = fullPath;
-
-            FILE* f = fopen(fullPath.c_str(), "rb");
-            if (!f) {
-                LOG_WARNING("Unable to open pending file: %s", fullPath.c_str());
-                continue;
-            }
 
             if (name.endsWith(".pkt")) {
                 int dotIndex = name.lastIndexOf('.');
@@ -239,24 +237,23 @@ void filesysManager::traversePendingDirectory(
                     }
                 }
 
-                char buffer[129];
-                size_t readSize = 0;
-                while ((readSize = fread(buffer, 1, sizeof(buffer) - 1, f)) > 0) {
-                    buffer[readSize] = '\0';
-                    pending.packet += buffer;
-                }
             } else {
-                // ¼æÈÝ¾É°æ±¾£º¾É .flag ÎÄ¼þÄÚÈÝÖ»ÓÐÍêÕûÊ±¼ä´Á£¬ÀàÐÍÄ¬ÈÏÎª·ÖÖÓ¡£
+                // ï¿½ï¿½ï¿½Ý¾É°æ±¾ï¿½ï¿½ï¿½ï¿½ .flag ï¿½Ä¼ï¿½ï¿½ï¿½ï¿½ï¿½Ö»ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ê±ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ä¬ï¿½ï¿½Îªï¿½ï¿½ï¿½Ó¡ï¿½
+                FILE* f = fopen(fullPath.c_str(), "rb");
+                if (!f) {
+                    LOG_WARNING("Unable to open pending file: %s", fullPath.c_str());
+                    continue;
+                }
                 char timestampBuffer[32] = {0};
                 if (fgets(timestampBuffer, sizeof(timestampBuffer), f) != nullptr) {
                     pending.timestamp = strtoull(timestampBuffer, nullptr, 10);
                     pending.dataTime = DataTime::MIN_DATA;
                 }
+                fclose(f);
             }
-            fclose(f);
 
             if (pending.timestamp > 0) {
-                result.push_back(pending);
+                result.push_back(std::move(pending));
             } else {
                 LOG_WARNING("Invalid pending file: %s", fullPath.c_str());
             }
@@ -265,19 +262,74 @@ void filesysManager::traversePendingDirectory(
     closedir(dir);
 }
 
-std::vector<PendingPacketInfo> filesysManager::scanPendingPackets() {
+std::vector<PendingPacketInfo> filesysManager::scanPendingPackets(size_t maxPackets) {
     std::vector<PendingPacketInfo> result;
+    if (maxPackets == 0) return result;
+
     if (!file_storage::getInstance().isSDcardReady()) {
         LOG_ERROR("SD card not ready for scanning");
         return result;
     }
-    traversePendingDirectory("/sdcard/pending", result);
+    result.reserve(maxPackets);
+    traversePendingDirectory("/sdcard/pending", result, maxPackets);
     for (const auto& pending : result) {
         LOG_DEBUG("Found pending packet: type=%d, timestamp=%llu, path=%s",
                   (int)pending.dataTime, pending.timestamp, pending.filePath.c_str());
     }
-    LOG_INFO("Total scanned %d pending packets", result.size());
+    LOG_INFO("Scanned %d pending packets (batch limit %d)",
+             result.size(), maxPackets);
     return result;
+}
+
+String filesysManager::loadPendingPacketContent(const PendingPacketInfo& pending) {
+    if (!pending.filePath.endsWith(".pkt")) return String();
+
+    FILE* f = fopen(pending.filePath.c_str(), "rb");
+    if (!f) {
+        LOG_WARNING("Unable to open pending packet: %s", pending.filePath.c_str());
+        return String();
+    }
+
+    if (fseek(f, 0, SEEK_END) != 0) {
+        fclose(f);
+        return String();
+    }
+    long fileSize = ftell(f);
+    if (fileSize <= 0 || fileSize > 4096 || fseek(f, 0, SEEK_SET) != 0) {
+        LOG_WARNING("Invalid pending packet size %ld: %s",
+                    fileSize, pending.filePath.c_str());
+        fclose(f);
+        return String();
+    }
+
+    String packet;
+    if (!packet.reserve((unsigned int)fileSize + 1)) {
+        LOG_ERROR("Insufficient heap to load pending packet: %s",
+                  pending.filePath.c_str());
+        fclose(f);
+        return String();
+    }
+
+    char buffer[129];
+    size_t readSize;
+    while ((readSize = fread(buffer, 1, sizeof(buffer) - 1, f)) > 0) {
+        buffer[readSize] = '\0';
+        packet.concat(buffer, readSize);
+    }
+    fclose(f);
+    return packet;
+}
+
+bool filesysManager::quarantinePendingPacket(const PendingPacketInfo& pending) {
+    String invalidPath = pending.filePath + ".invalid";
+    if (rename(pending.filePath.c_str(), invalidPath.c_str()) == 0) {
+        LOG_WARNING("Quarantined unrecoverable pending packet: %s",
+                    invalidPath.c_str());
+        return true;
+    }
+    LOG_ERROR("Failed to quarantine pending packet: %s",
+              pending.filePath.c_str());
+    return false;
 }
 
 bool filesysManager::deletePendingPacket(const PendingPacketInfo& pending) {

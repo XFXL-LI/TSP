@@ -111,8 +111,8 @@ bool DTUManager::updateReDtuGoalIP(String newIP){
     LOG_DEBUG("DTU Response: %s", res.c_str());
     if (res.indexOf("ok") != -1) { 
         LOG_DEBUG("Server set success!");
-        _remoteDTU->sendCommand(CONFIG_SAVE_COM); // ±£´æÅäÖÃ
-        return true; // ·µ»Ø³É¹¦£¬Íâ²¿µ÷ÓÃÕßÓ¦Í£Ö¹Ñ­»·µ÷ÓÃ
+        _remoteDTU->sendCommand(CONFIG_SAVE_COM); // ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½
+        return true; // ï¿½ï¿½ï¿½Ø³É¹ï¿½ï¿½ï¿½ï¿½â²¿ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ó¦Í£Ö¹Ñ­ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½
     } else {
         LOG_ERROR("Server set failed! DTU Response error.");
         return false;
@@ -137,10 +137,10 @@ bool DTUManager::updateHJDtuGoalIP(String newIP){
         return false;
     }
 }
-bool DTUManager::sendHJ212Packet(String dataContent) {
+bool DTUManager::sendHJ212Packet(String dataContent, int maxRetry) {
     String packet = dataContent;
-    const int MAX_RETRY = 3;
-    for (int retry = 1; retry <= MAX_RETRY; retry++)
+    if (maxRetry < 1) maxRetry = 1;
+    for (int retry = 1; retry <= maxRetry; retry++)
     {
         LOG_DEBUG("HJ212 Send Attempt: %d", retry);
         String res = _hj212DTU->sendData(packet);

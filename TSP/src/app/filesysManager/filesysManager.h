@@ -8,13 +8,13 @@
 
 #pragma pack(push, 1)
 struct fileStorage {
-    uint64_t timestamp;   // 4×Ö½Ú
-    char sensor_id[15];   // 15×Ö½Ú
-    float value;          // 4×Ö½Ú
-    float min_val;        // 4×Ö½Ú
-    float max_val;        // 4×Ö½Ú
-    uint8_t is_valid;     // 1×Ö½Ú
-}; // ºÏ¼Æ 32 ×Ö½Ú
+    uint64_t timestamp;   // 4ï¿½Ö½ï¿½
+    char sensor_id[15];   // 15ï¿½Ö½ï¿½
+    float value;          // 4ï¿½Ö½ï¿½
+    float min_val;        // 4ï¿½Ö½ï¿½
+    float max_val;        // 4ï¿½Ö½ï¿½
+    uint8_t is_valid;     // 1ï¿½Ö½ï¿½
+}; // ï¿½Ï¼ï¿½ 32 ï¿½Ö½ï¿½
 #pragma pack(pop)
 
 struct PendingPacketInfo {
@@ -30,24 +30,29 @@ public:
 
     void storeProcessedPacket(AllProcessedDataPacket* pkg);
     
-    // ´ý²¹´«Êý¾Ý¹ÜÀí½Ó¿Ú
+    // ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ý¹ï¿½ï¿½ï¿½Ó¿ï¿½
     AllProcessedDataPacket* readPendingPacket(int type, uint64_t timestamp);
     bool savePendingPacket(const AllProcessedDataPacket* data, const String& packet);
-    std::vector<PendingPacketInfo> scanPendingPackets();
+    std::vector<PendingPacketInfo> scanPendingPackets(size_t maxPackets = 3);
+    String loadPendingPacketContent(const PendingPacketInfo& pending);
     bool deletePendingPacket(const PendingPacketInfo& pending);
-    void cleanEmptyDirectories(String filePath);                 // ÇåÀí¿ÕÄ¿Â¼
-    void poll(); // ÂÖÑ¯´¦Àí´ý²¹´«Êý¾ÝµÄ·¢ËÍ
+    bool quarantinePendingPacket(const PendingPacketInfo& pending);
+    void cleanEmptyDirectories(String filePath);                 // ï¿½ï¿½ï¿½ï¿½ï¿½Ä¿Â¼
+    void poll(); // ï¿½ï¿½Ñ¯ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ÝµÄ·ï¿½ï¿½ï¿½
     
 private:
     String min_path;
     String hour_path;
     String day_path;
-    String pending_path;                                            // ´ý²¹´«Êý¾ÝÄ¿Â¼
+    String pending_path;                                            // ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ä¿Â¼
     std::vector<fileStorage> historyData;
 
     QueueHandle_t SaveDataFileTaskQueue;
     filesysManager();
-    void traversePendingDirectory(const char* dirPath, std::vector<PendingPacketInfo>& result);
+    void traversePendingDirectory(
+        const char* dirPath,
+        std::vector<PendingPacketInfo>& result,
+        size_t maxPackets);
     String getFilePath(int type, uint64_t ts);
     String getPendingFilePath(DataTime type, uint64_t ts);
     void parseTimestamp(uint64_t ts, char* date, char* hour, char* min);

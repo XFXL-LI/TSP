@@ -17,7 +17,7 @@ private:
 public:
     static DTUManager& getInstance();
     void init(Stream& remoteStream, Stream& hj212Stream);
-    bool sendHJ212Packet(String dataContent);
+    bool sendHJ212Packet(String dataContent, int maxRetry = 3);
 
     uint64_t dtuSystemTime(); 
     uint64_t hjSystemTime(); 
