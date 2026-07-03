@@ -7,8 +7,10 @@ DataManager::DataManager() {
     _last_hour_time = 0;
     _last_day_time = 0;
     _l_m_s_timestamp = 0;
+    _last_real_timestamp = 0;
     _statsMutex = xSemaphoreCreateMutex();
     _lastMinDataMutex = xSemaphoreCreateMutex();
+    _lastRealDataMutex = xSemaphoreCreateMutex();
 }
 void DataManager::begin() {
     _queryQueue = EventBus::getInstance().createReceiverQueue(10);
@@ -43,11 +45,11 @@ void DataManager::processAllData(AllDataPacket* pkg) {
 
 void DataManager::processQuery(JSONCmdData* req) {
     AllProcessedDataPacket* pkg = new AllProcessedDataPacket();
-    if (xSemaphoreTake(_lastMinDataMutex, pdMS_TO_TICKS(100)) == pdTRUE) {
-        pkg->processed_data_map = _last_min_snapshot;
-        pkg->last_update = _l_m_s_timestamp;
-        pkg->dataTime = DataTime::MIN_DATA;
-        xSemaphoreGive(_lastMinDataMutex);
+    if (xSemaphoreTake(_lastRealDataMutex, pdMS_TO_TICKS(100)) == pdTRUE) {
+        pkg->processed_data_map = _last_real_snapshot;
+        pkg->last_update = _last_real_timestamp;
+        pkg->dataTime = DataTime::REAL_DATA;
+        xSemaphoreGive(_lastRealDataMutex);
     }
     int subCount = EventBus::getInstance().getSubscriberCount(EventID::DATA_QUERY_RES);
     for (int i = 0; i < subCount; i++) pkg->retain(); 
@@ -161,6 +163,16 @@ void DataManager::dispatchRealPacket(const AllDataPacket* rawData) {
             data.is_valid = dataPtr->is_valid;
         }
         pkg->processed_data_map[id] = data;
+    }
+
+    if (xSemaphoreTake(_lastRealDataMutex, pdMS_TO_TICKS(100)) == pdTRUE) {
+        _last_real_snapshot = pkg->processed_data_map;
+        _last_real_timestamp = pkg->last_update;
+        xSemaphoreGive(_lastRealDataMutex);
+        LOG_DEBUG("Updated serial real-time snapshot: %llu, sensors=%d",
+                  _last_real_timestamp, _last_real_snapshot.size());
+    } else {
+        LOG_WARNING("DataManager: Failed to update serial real-time snapshot");
     }
 
     int subCount = EventBus::getInstance().getSubscriberCount(

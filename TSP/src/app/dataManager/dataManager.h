@@ -11,7 +11,7 @@
 #include "../../module/pack212/pack212.h"
 #include "../../inc/sys_init.h" 
 
-// Í³¼ÆÂß¼­½á¹¹Ìå
+// Í³ï¿½ï¿½ï¿½ß¼ï¿½ï¿½á¹¹ï¿½ï¿½
 struct StatValue {
     float sum = 0;
     float min_v = 1e9;
@@ -40,7 +40,7 @@ struct StatValue {
 
 class DataManager {
 public:
-    // µ¥ÀýÄ£Ê½·ÃÎÊ½Ó¿Ú
+    // ï¿½ï¿½ï¿½ï¿½Ä£Ê½ï¿½ï¿½ï¿½Ê½Ó¿ï¿½
     static DataManager& getInstance() {
         static DataManager instance;
         return instance;
@@ -54,29 +54,32 @@ private:
     DataManager();
     ~DataManager() = default;
 
-    // ½ûÖ¹¿½±´
+    // ï¿½ï¿½Ö¹ï¿½ï¿½ï¿½ï¿½
     DataManager(const DataManager&) = delete;
     DataManager& operator=(const DataManager&) = delete;
 
     QueueHandle_t _queryQueue;
     SemaphoreHandle_t _statsMutex;  // Protect access to _min_stats, _hour_stats, _day_stats
     SemaphoreHandle_t _lastMinDataMutex; // Protect access to _last_min_snapshot
+    SemaphoreHandle_t _lastRealDataMutex; // Protect the latest real-time snapshot
     
     void processQuery(JSONCmdData* req);
 
-    // ÄÚ²¿Í³¼Æ Map (ÊÜ _statsMutex ±£»¤)
+    // ï¿½Ú²ï¿½Í³ï¿½ï¿½ Map (ï¿½ï¿½ _statsMutex ï¿½ï¿½ï¿½ï¿½)
     std::map<String, StatValue> _min_stats;
     std::map<String, StatValue> _hour_stats;
     std::map<String, StatValue> _day_stats;
     std::map<String, ProcessedDataPacket> _last_min_snapshot;
+    std::map<String, ProcessedDataPacket> _last_real_snapshot;
     uint64_t _l_m_s_timestamp;
+    uint64_t _last_real_timestamp;
 
-    // Ê±¼ä¼ÇÂ¼ (¸ñÊ½£ºYYYYMMDDHHMMSS)
+    // Ê±ï¿½ï¿½ï¿½Â¼ (ï¿½ï¿½Ê½ï¿½ï¿½YYYYMMDDHHMMSS)
     uint64_t _last_min_time;
     uint64_t _last_hour_time;
     uint64_t _last_day_time;
 
-    // ÄÚ²¿¸¨Öú·½·¨
+    // ï¿½Ú²ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½
     void checkAndDispatch(AllDataPacket* rawData);
     void dispatchRealPacket(const AllDataPacket* rawData);
     void dispatchPacket(DataTime type, uint64_t ts, std::map<String, StatValue>& source);
