@@ -888,6 +888,9 @@ static void LedPrintTask(void *pvParameters)
     EventBus::getInstance().subscribe(EventID::PROCESSED_DATA_COLLECTED, LedPrintTaskQueue);
     SYSTEMCONFIG sysCfg = ConfigManager::getInstance().getSystem();
     int collectTime = sysCfg.collect_time > 0 ? sysCfg.collect_time : 60; // 默认 60s 采集时间
+
+    COLLECTMAP collectMap = ConfigManager::getInstance().getCollectConfigs();
+
     EventMsg msg;
     while (true)
     {
@@ -898,7 +901,7 @@ static void LedPrintTask(void *pvParameters)
                 AllProcessedDataPacket *allData = static_cast<AllProcessedDataPacket *>(msg.data);
                 if (allData != nullptr)
                 {
-                    ledManager.updateDisplay(allData, collectTime);
+                    ledManager.updateDisplay(allData, collectTime, collectMap);
                 }
                 if (allData != nullptr)
                 {

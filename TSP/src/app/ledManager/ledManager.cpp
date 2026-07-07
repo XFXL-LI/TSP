@@ -23,7 +23,7 @@ void LedManager::begin()
     LOG_INFO("LED manager initialized on 485 transport");
 }
 
-void LedManager::updateDisplay(const AllProcessedDataPacket *packet, int updateTime)
+void LedManager::updateDisplay(const AllProcessedDataPacket *packet, int updateTime, COLLECTMAP &collectMap)
 {
     if (packet == nullptr)
     {
@@ -47,17 +47,31 @@ void LedManager::updateDisplay(const AllProcessedDataPacket *packet, int updateT
             continue;
         }
         char content[64] = {0};
+        float alarmLimit = 0.0f;
+        auto it = collectMap.find(sensorId);
+        if (it != collectMap.end())
+        {
+            alarmLimit = (float)it->second.alarmLimit;
+        }
         if (!buildDisplayTextBySensorId(sensorId, processedData.value, content, sizeof(content)))
         {
             continue;
         }
         if (step == 1)
         {
-            sendLine(41, content);
+            if (processedData.value > alarmLimit){
+                sendLineLimit(41, content);
+            } else {
+                sendLine(41, content);
+            }
             step = 0;
         } else if (step == 0)
         {
-            sendLine(42, content);
+            if (processedData.value > alarmLimit){
+                sendLineLimit(42, content);
+            } else {
+                sendLine(42, content);
+            }
             step = 1;
         }
         vTaskDelay(pdMS_TO_TICKS(delay));
@@ -160,6 +174,22 @@ void LedManager::sendLine(uint8_t index, const char *content)
         LOG_WARNING("Failed to build 485 LED packet for %s", content);
         return;
     }
+    sendPacket(packet, packetLen);
+}
+void LedManager::sendLineLimit(uint8_t index, const char *content)
+{
+    if (content == nullptr)
+    {
+        return;
+    }
+
+    uint8_t packet[512] = {0};
+    uint16_t packetLen = packTo485Limit(index, content, packet, sizeof(packet));
+    if (packetLen == 0)
+    {
+        LOG_WARNING("Failed to build 485 LED packet for %s", content);
+        return;
+    }
 
     sendPacket(packet, packetLen);
 }
@@ -201,6 +231,42 @@ uint16_t LedManager::packTo485(uint8_t index,
     uint8_t *ptr = payload;
     *ptr++ = index;
     *ptr++ = 0x00;
+    *ptr++ = 0x21;
+    *ptr++ = 0xFF;
+    *ptr++ = (uint8_t)contentLen;
+    memcpy(ptr, content, contentLen);
+    ptr += contentLen;
+    uint16_t payloadLen = ptr - payload;
+    uint8_t mac[8] = {0};
+    return pack485Buffer(buffer,
+                         RS485_UPDATE_DATA,
+                         mac,
+                         payload,
+                         payloadLen);
+}
+uint16_t LedManager::packTo485Limit(uint8_t index,
+                               const char *content,
+                               uint8_t *buffer,
+                               uint16_t bufferLen)
+{
+    if (content == nullptr || buffer == nullptr || bufferLen == 0)
+    {
+        return 0;
+    }
+    uint8_t payload[64] = {0};
+    size_t contentLen = strlen(content);
+    if (contentLen > 16)
+    {
+        contentLen = 16;
+        uint8_t last = (uint8_t)content[contentLen - 1];
+        if (last >= 0x80)
+        {
+            contentLen--;
+        }
+    }
+    uint8_t *ptr = payload;
+    *ptr++ = index;
+    *ptr++ = 0x00;
     *ptr++ = 0xFF;
     *ptr++ = 0xFF;
     *ptr++ = (uint8_t)contentLen;
@@ -214,7 +280,6 @@ uint16_t LedManager::packTo485(uint8_t index,
                          payload,
                          payloadLen);
 }
-
 void LedManager::buildWindSpeedText(float value, char *buffer, size_t size)
 {
     static const uint8_t prefix[] = {0xB7, 0xE7, 0xCB, 0xD9};
