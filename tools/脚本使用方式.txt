@@ -1,0 +1,11 @@
+1. 安装python环境
+2. 使用cmd运行py文件
+
+# 导出全部
+python tools\export_sd_history_to_excel.py D:\sdcard_backup -o output\history_all.xlsx --mode all
+
+# 导出某一天
+python tools\export_sd_history_to_excel.py D:\sdcard_backup -o output\history_20260709.xlsx --mode day --day 20260709
+
+# 导出日期范围，包含起止日期
+python tools\export_sd_history_to_excel.py D:\sdcard_backup -o output\history_20260701_20260709.xlsx --mode range --date-from 20260701 --date-to 20260709
