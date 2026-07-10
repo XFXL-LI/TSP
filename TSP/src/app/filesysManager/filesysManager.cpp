@@ -4,6 +4,7 @@
 #include "../../module/json/config_json.h"
 #include <sys/dirent.h>
 #include <sys/types.h>
+#include <time.h>
 #include <utility>
 
 
@@ -362,49 +363,202 @@ void filesysManager::cleanEmptyDirectories(String filePath) {
     }
 }
 
+static String getJsonStringOrNumber(cJSON *root, const char *key)
+{
+    if (root == nullptr || key == nullptr)
+    {
+        return "";
+    }
+    cJSON *item = cJSON_GetObjectItemCaseSensitive(root, key);
+    if (cJSON_IsString(item) && item->valuestring != nullptr)
+    {
+        return String(item->valuestring);
+    }
+    if (cJSON_IsNumber(item))
+    {
+        char buf[32];
+        snprintf(buf, sizeof(buf), "%.0f", item->valuedouble);
+        return String(buf);
+    }
+    return "";
+}
+
+static bool parseTimestamp10(const String &text, uint64_t &out)
+{
+    if (text.length() == 0)
+    {
+        return false;
+    }
+    for (size_t i = 0; i < text.length(); ++i)
+    {
+        if (!isDigit(text.charAt(i)))
+        {
+            return false;
+        }
+    }
+    out = strtoull(text.c_str(), nullptr, 10);
+    return out > 0;
+}
+
+static bool timestampToTm(uint64_t timestamp, struct tm &timeInfo)
+{
+    String text = String(timestamp);
+    while (text.length() < 14)
+    {
+        text += "0";
+    }
+    if (text.length() != 14)
+    {
+        return false;
+    }
+
+    memset(&timeInfo, 0, sizeof(timeInfo));
+    timeInfo.tm_year = text.substring(0, 4).toInt() - 1900;
+    timeInfo.tm_mon = text.substring(4, 6).toInt() - 1;
+    timeInfo.tm_mday = text.substring(6, 8).toInt();
+    timeInfo.tm_hour = text.substring(8, 10).toInt();
+    timeInfo.tm_min = text.substring(10, 12).toInt();
+    timeInfo.tm_sec = text.substring(12, 14).toInt();
+    timeInfo.tm_isdst = -1;
+
+    return timeInfo.tm_year >= (2020 - 1900) &&
+           timeInfo.tm_mon >= 0 && timeInfo.tm_mon <= 11 &&
+           timeInfo.tm_mday >= 1 && timeInfo.tm_mday <= 31 &&
+           timeInfo.tm_hour >= 0 && timeInfo.tm_hour <= 23 &&
+           timeInfo.tm_min >= 0 && timeInfo.tm_min <= 59 &&
+           timeInfo.tm_sec >= 0 && timeInfo.tm_sec <= 59;
+}
+
+static uint64_t tmToTimestamp(const struct tm &timeInfo)
+{
+    char buf[16];
+    snprintf(buf, sizeof(buf), "%04d%02d%02d%02d%02d%02d",
+             timeInfo.tm_year + 1900,
+             timeInfo.tm_mon + 1,
+             timeInfo.tm_mday,
+             timeInfo.tm_hour,
+             timeInfo.tm_min,
+             timeInfo.tm_sec);
+    return strtoull(buf, nullptr, 10);
+}
+
+static uint64_t nextQueryTimestamp(uint64_t current, int dataType)
+{
+    struct tm timeInfo;
+    if (!timestampToTm(current, timeInfo))
+    {
+        switch (dataType)
+        {
+        case (int)DataTime::MIN_DATA:
+            return current + 1000; // 10 minutes in YYYYMMDDHHMMSS form inside same hour only.
+        case (int)DataTime::HOUR_DATA:
+            return current + 10000;
+        case (int)DataTime::DAY_DATA:
+            return current + 1000000;
+        default:
+            return current + 1;
+        }
+    }
+
+    time_t t = mktime(&timeInfo);
+    if (t <= 0)
+    {
+        return current + 1;
+    }
+
+    switch (dataType)
+    {
+    case (int)DataTime::MIN_DATA:
+        t += 10 * 60;
+        break;
+    case (int)DataTime::HOUR_DATA:
+        t += 60 * 60;
+        break;
+    case (int)DataTime::DAY_DATA:
+        t += 24 * 60 * 60;
+        break;
+    default:
+        t += 1;
+        break;
+    }
+
+    struct tm nextInfo;
+    if (localtime_r(&t, &nextInfo) == nullptr)
+    {
+        return current + 1;
+    }
+    return tmToTimestamp(nextInfo);
+}
+
 void filesysManager::processQuery(JSONCmdData* req) {
     if (req == nullptr) return;
     LOG_INFO("Processing record query request arguments: %s", req->arguments.c_str());
     config_json jsonParser(req->arguments.c_str());
-    String operation = jsonParser.getString("operation", "");
-    String param     = jsonParser.getString("param", "");
-    String time_str  = jsonParser.getString("time", ""); // 202505271428 or 202505271400-202505271500
+    if (!jsonParser.isValid()) {
+        LOG_ERROR("Invalid record query JSON.");
+        return;
+    }
+
+    cJSON *root = jsonParser.getJsonObject();
+    String operation = getJsonStringOrNumber(root, "operation");
+    String param     = getJsonStringOrNumber(root, "param");
+    String time_str  = getJsonStringOrNumber(root, "time"); // 20250527142800 or 20250527140000-20250527150000
     if (operation != "get_records" || time_str == "" || param == "") {
         LOG_ERROR("Invalid query parameters or empty arguments.");
         return;
     }
-    uint64_t ts = strtoull(time_str.c_str(), nullptr, 10);
+
     AllProcessedDataPacket *pendingData = nullptr;
     uint64_t start_ts = 0, end_ts = 0;
     int dashIndex = time_str.indexOf('-');
     if (dashIndex != -1) {
         String start_str = time_str.substring(0, dashIndex);
         String end_str   = time_str.substring(dashIndex + 1);
-        start_ts = strtoull(start_str.c_str(), nullptr, 12);
-        end_ts   = strtoull(end_str.c_str(), nullptr, 12);
+        if (!parseTimestamp10(start_str, start_ts) ||
+            !parseTimestamp10(end_str, end_ts) ||
+            start_ts > end_ts)
+        {
+            LOG_ERROR("Invalid record range time: %s", time_str.c_str());
+            return;
+        }
         LOG_INFO("Range query detected. Start: %llu, End: %llu", start_ts, end_ts);
     } else {
+        uint64_t ts = 0;
+        if (!parseTimestamp10(time_str, ts))
+        {
+            LOG_ERROR("Invalid record query time: %s", time_str.c_str());
+            return;
+        }
         start_ts = ts;
         end_ts = ts;
+        LOG_INFO("Single timestamp query detected: %llu", ts);
     }
 
-    int step = 1;
     int dataType = (int)DataTime::REAL_DATA;
-    if (param == "min") {
-        step = 1;
+    if (param == "real" || param == "raw") {
+        dataType = (int)DataTime::REAL_DATA;
+    } else if (param == "min") {
         dataType = (int)DataTime::MIN_DATA;
     } else if (param == "hour") {
-        step = 100;
         dataType = (int)DataTime::HOUR_DATA;
     } else if (param == "day") {
-        step = 10000;
         dataType = (int)DataTime::DAY_DATA;
+    } else {
+        LOG_ERROR("Invalid record param: %s", param.c_str());
+        return;
     }
 
-    for (uint64_t current_ts = start_ts; current_ts <= end_ts; current_ts += step) {
+    if (!file_storage::getInstance().isSDcardReady())
+    {
+        LOG_ERROR("SD card not ready for record query");
+    }
+
+    for (uint64_t current_ts = start_ts; current_ts <= end_ts;) {
         pendingData = readPendingPacket(dataType, current_ts);
         if (pendingData == nullptr) {
             pendingData = new AllProcessedDataPacket(); 
+            pendingData->last_update = current_ts;
+            pendingData->dataTime = (DataTime)dataType;
         }
         int subCount = EventBus::getInstance().getSubscriberCount(EventID::RECORD_QUERY_RES);
         for (int i = 0; i < subCount; i++) {
@@ -412,6 +566,17 @@ void filesysManager::processQuery(JSONCmdData* req) {
         }
         EventBus::getInstance().publish(EventID::RECORD_QUERY_RES, pendingData);
         pendingData->release();
+        if (current_ts == end_ts)
+        {
+            break;
+        }
+        uint64_t next_ts = nextQueryTimestamp(current_ts, dataType);
+        if (next_ts <= current_ts)
+        {
+            LOG_ERROR("Record query timestamp did not advance: %llu -> %llu", current_ts, next_ts);
+            break;
+        }
+        current_ts = next_ts;
         vTaskDelay(pdMS_TO_TICKS(10000));
     }
 }

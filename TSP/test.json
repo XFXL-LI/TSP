@@ -181,3 +181,48 @@
 "param":"remote",
 "message":"admin"
 }
+
+{
+  "deviceId": "AIR-ESP32S3-000001",
+  "stationId": "ST-000001",
+  "msgId": "AIR-000001-20260527162329001",
+  "timestamp": 20260527162329,
+  "interval": 1,
+  "sequence": 123456,
+  "isResend": false,
+  "quality": "normal",
+  "data": {
+    "a34005": {
+      "value": 100.0,
+      "unit": "ug/m3"
+    },
+    "a34001": {
+      "value": 100.0,
+      "unit": "ug/m3"
+    },
+    "a01001": {
+      "value": 100.0,
+      "unit": "?"
+    },
+    "a01006": {
+      "value": 100.0,
+      "unit": "kPa"
+    },
+    "a01007": {
+      "value": 100.0,
+      "unit": "m/s"
+    },
+    "a01008": {
+      "value": 100.0,
+      "unit": "°"
+    },
+    "w34011": {
+      "value": 100.0,
+      "unit": "ug/m3"
+    },
+    "L90": {
+      "value": 100.0,
+      "unit": "dB"
+    }
+  }
+}
