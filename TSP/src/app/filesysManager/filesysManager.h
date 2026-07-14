@@ -13,6 +13,7 @@ struct fileStorage {
     float value;          // 4�ֽ�
     float min_val;        // 4�ֽ�
     float max_val;        // 4�ֽ�
+    float cou_val;        // 4�ֽ�
     uint8_t is_valid;     // 1�ֽ�
 }; // �ϼ� 32 �ֽ�
 #pragma pack(pop)

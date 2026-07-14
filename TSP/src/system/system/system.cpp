@@ -670,7 +670,7 @@ static void Hj212_2017SendTask(void *pvParameters)
                 }
             }
         }
-        vTaskDelay(pdMS_TO_TICKS(100));
+        vTaskDelay(pdMS_TO_TICKS(15000));
     }
     vTaskDelete(NULL);
 }
@@ -780,7 +780,7 @@ static void Hj212_2025SendTask(void *pvParameters)
                 }
             }
         }
-        vTaskDelay(pdMS_TO_TICKS(100));
+        vTaskDelay(pdMS_TO_TICKS(15000));
     }
     vTaskDelete(NULL);
 }

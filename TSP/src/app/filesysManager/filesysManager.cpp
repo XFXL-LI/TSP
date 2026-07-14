@@ -71,6 +71,7 @@ void filesysManager::storeProcessedPacket(AllProcessedDataPacket* pkg) {
         rec.value = data.value;
         rec.min_val = data.min_val;
         rec.max_val = data.max_val;
+        rec.cou_val = data.cou_val;
         rec.is_valid = data.is_valid ? 1 : 0;
         historyData.push_back(rec);
     }
@@ -178,7 +179,7 @@ AllProcessedDataPacket* filesysManager::readPendingPacket(int type, uint64_t tim
             processedData.min_val = rec.min_val;
             processedData.max_val = rec.max_val;
             processedData.is_valid = (rec.is_valid != 0);
-            processedData.cou_val = 0;
+            processedData.cou_val = rec.cou_val;
             
             String sensorId(rec.sensor_id);
             pkg->processed_data_map[sensorId] = processedData;

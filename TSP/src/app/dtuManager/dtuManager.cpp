@@ -161,7 +161,7 @@ bool DTUManager::sendHJ212Packet(String dataContent, int maxRetry) {
         {
             LOG_DEBUG("No response from HJ212 DTU.");
         }
-        vTaskDelay(pdMS_TO_TICKS(1000));
+        vTaskDelay(pdMS_TO_TICKS(5000));
     }
     return false;
 }

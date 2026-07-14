@@ -196,6 +196,12 @@ void PermissionSystem::processLine(String line, Stream *stream)
             data->arguments = line;
             dispatchBusiness(data, stream);
         }
+        else if (op == "get_records"){
+            JSONCmdData *data = new JSONCmdData();
+            data->command = "get_records";
+            data->arguments = line;
+            dispatchBusiness(data, stream);
+        }
         else if (op == "restart")
         {
             sendResponse(stream, "restart", "OK", "Device restarting...");
