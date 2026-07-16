@@ -2,10 +2,13 @@
 2. 使用cmd运行py文件
 
 # 导出全部
-python tools\export_sd_history_to_excel.py D:\sdcard_backup -o output\history_all.xlsx --mode all
+python tools\export_sd_history_to_excel.py D:\sdcard_backup -o output --mode all
 
 # 导出某一天
-python tools\export_sd_history_to_excel.py D:\sdcard_backup -o output\history_20260709.xlsx --mode day --day 20260709
+python tools\export_sd_history_to_excel.py D:\sdcard_backup -o output --mode day --day 20260716
 
 # 导出日期范围，包含起止日期
-python tools\export_sd_history_to_excel.py D:\sdcard_backup -o output\history_20260701_20260709.xlsx --mode range --date-from 20260701 --date-to 20260709
+python tools\export_sd_history_to_excel.py D:\sdcard_backup -o output --mode range --date-from 20260701 --date-to 20260716
+
+# SD 卡当前是 F: 盘，也可以直接使用：
+python tools\export_sd_history_to_excel.py F:\ -o output --mode day --day 20260716

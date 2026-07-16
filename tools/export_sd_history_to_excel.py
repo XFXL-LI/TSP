@@ -53,8 +53,11 @@ from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Tuple
 
 
-RECORD_STRUCT = struct.Struct("<Q15sfffB")
-RECORD_SIZE = RECORD_STRUCT.size  # 36 bytes
+# 当前固件 fileStorage（加入 cou_val 后）：40 字节。
+# 同时兼容旧固件生成的 36 字节记录，便于导出历史 SD 卡备份。
+RECORD_STRUCT = struct.Struct("<Q15sffffB")
+LEGACY_RECORD_STRUCT = struct.Struct("<Q15sfffB")
+RECORD_SIZE = RECORD_STRUCT.size
 
 DATA_TYPE_BY_DIR = {
     "raw": 0,
@@ -116,6 +119,7 @@ class HistoryRecord:
     value: float
     min_val: float
     max_val: float
+    cou_val: Optional[float]
     is_valid: int
 
 
@@ -304,21 +308,34 @@ def read_dat_file(
     root: Path,
 ) -> List[HistoryRecord]:
     data = path.read_bytes()
-    if len(data) % RECORD_SIZE != 0:
+    if len(data) % RECORD_SIZE == 0:
+        record_struct = RECORD_STRUCT
+    elif len(data) % LEGACY_RECORD_STRUCT.size == 0:
+        record_struct = LEGACY_RECORD_STRUCT
+        print(f"[WARN] {path} 使用旧版 36 字节记录格式，cou_val 将为空", file=sys.stderr)
+    else:
+        record_struct = RECORD_STRUCT
+    record_size = record_struct.size
+    if len(data) % record_size != 0:
         msg = (
-            f"{path} 文件长度 {len(data)} 不是记录长度 {RECORD_SIZE} 的整数倍，"
-            f"尾部残缺 {len(data) % RECORD_SIZE} 字节。"
+            f"{path} 文件长度 {len(data)} 不是记录长度 {record_size} 的整数倍，"
+            f"尾部残缺 {len(data) % record_size} 字节。"
         )
         if strict:
             raise ValueError(msg)
         print("[WARN]", msg, file=sys.stderr)
 
     records: List[HistoryRecord] = []
-    count = len(data) // RECORD_SIZE
+    count = len(data) // record_size
     rel = str(path.relative_to(root)) if path.is_relative_to(root) else str(path)
     for idx in range(count):
-        chunk = data[idx * RECORD_SIZE : (idx + 1) * RECORD_SIZE]
-        timestamp, sensor_raw, value, min_val, max_val, is_valid = RECORD_STRUCT.unpack(chunk)
+        chunk = data[idx * record_size : (idx + 1) * record_size]
+        unpacked = record_struct.unpack(chunk)
+        if record_struct is RECORD_STRUCT:
+            timestamp, sensor_raw, value, min_val, max_val, cou_val, is_valid = unpacked
+        else:
+            timestamp, sensor_raw, value, min_val, max_val, is_valid = unpacked
+            cou_val = None
         dt_text, date, hour, minute, second = parse_timestamp(timestamp)
         if date and not date_in_range(date, date_from, date_to):
             continue
@@ -340,6 +357,7 @@ def read_dat_file(
                 value=float(value),
                 min_val=float(min_val),
                 max_val=float(max_val),
+                cou_val=None if cou_val is None else float(cou_val),
                 is_valid=int(is_valid),
             )
         )
@@ -402,6 +420,7 @@ def record_to_row(r: HistoryRecord) -> List[object]:
         r.value,
         r.min_val,
         r.max_val,
+        r.cou_val,
         r.is_valid,
         r.source_file,
     ]
@@ -422,6 +441,7 @@ HEADERS = [
     "value",
     "min_val",
     "max_val",
+    "cou_val",
     "is_valid",
     "source_file",
 ]
@@ -519,14 +539,44 @@ def write_excel(records: List[HistoryRecord], output: Path, no_wide: bool) -> Pa
     return output
 
 
+TYPE_FILE_NAMES = {
+    "raw": "实时数据.xlsx",
+    "min": "分钟数据.xlsx",
+    "hour": "小时数据.xlsx",
+    "day": "天数据.xlsx",
+}
+
+
+def output_root_from_arg(output_arg: str) -> Path:
+    """将 -o 解释为输出根目录；兼容旧的 .xlsx 写法，使用其父目录。"""
+    path = Path(output_arg).expanduser().resolve()
+    return path.parent if path.suffix.lower() == ".xlsx" else path
+
+
+def export_by_date(records: List[HistoryRecord], output_root: Path, csv_only: bool, no_wide: bool) -> List[Path]:
+    """按 YYYYMMDD/四类数据分别生成四个 Excel 文件。"""
+    written: List[Path] = []
+    dates = sorted({r.date for r in records if r.date})
+    for date in dates:
+        date_dir = output_root / date
+        for type_name in ("hour", "day", "min", "raw"):
+            type_records = [r for r in records if r.date == date and r.data_type_name == type_name]
+            target = date_dir / TYPE_FILE_NAMES[type_name]
+            if csv_only:
+                written.append(write_csv(type_records, target))
+            else:
+                written.append(write_excel(type_records, target, no_wide))
+    return written
+
+
 def main() -> int:
     args = parse_args()
     records = collect_records(args)
-    output = Path(args.output).expanduser().resolve()
+    output_root = output_root_from_arg(args.output)
     if args.csv_only:
-        written = write_csv(records, output)
+        written = export_by_date(records, output_root, True, args.no_wide)
     else:
-        written = write_excel(records, output, args.no_wide)
+        written = export_by_date(records, output_root, False, args.no_wide)
     print(f"[OK] 已导出：{written}")
     return 0
 
