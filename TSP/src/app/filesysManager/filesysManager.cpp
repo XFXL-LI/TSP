@@ -30,7 +30,7 @@ void filesysManager::parseTimestamp(uint64_t ts, char* date, char* hour, char* m
     sprintf(hour, "%02d", h);
     sprintf(min, "%02d", m);
 }
-// 202605151158
+// 20260515115800
 String filesysManager::getFilePath(int type, uint64_t ts) {
     char dateStr[10], hourStr[5], minStr[5];
     parseTimestamp(ts, dateStr, hourStr, minStr);
@@ -169,23 +169,17 @@ AllProcessedDataPacket* filesysManager::readPendingPacket(int type, uint64_t tim
     
     uint64_t matchedTime = 0;
     while (fread(&rec, sizeof(fileStorage), 1, f) == 1) {
-        bool exactTimestamp = timestamp > 999999999999ULL;
-        bool timestampMatches = exactTimestamp
-            ? (rec.timestamp == timestamp)
-            : (rec.timestamp / 100 == timestamp);
-        if (timestampMatches) {
-            ProcessedDataPacket processedData;
-            processedData.value = rec.value;
-            processedData.min_val = rec.min_val;
-            processedData.max_val = rec.max_val;
-            processedData.is_valid = (rec.is_valid != 0);
-            processedData.cou_val = rec.cou_val;
-            
-            String sensorId(rec.sensor_id);
-            pkg->processed_data_map[sensorId] = processedData;
-            matchedTime = rec.timestamp;
-            recordCount++;
-        }
+        ProcessedDataPacket processedData;
+        processedData.value = rec.value;
+        processedData.min_val = rec.min_val;
+        processedData.max_val = rec.max_val;
+        processedData.is_valid = (rec.is_valid != 0);
+        processedData.cou_val = rec.cou_val;
+        
+        String sensorId(rec.sensor_id);
+        pkg->processed_data_map[sensorId] = processedData;
+        matchedTime = rec.timestamp;
+        recordCount++;
     }
     pkg->last_update = matchedTime;
     fclose(f);
