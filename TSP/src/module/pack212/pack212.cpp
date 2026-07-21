@@ -58,6 +58,7 @@ String HJ212_DataCenter::build2017Hj212Packet(const AllProcessedDataPacket* allD
             } else {
                 cp += code + "-Min=" + String(packet.min_val, 2) + ",";
                 cp += code + "-Avg=" + String(packet.value, 2) + ","; 
+                cp += code + "-Cou=" + String(packet.cou_val, 2) + ","; 
                 cp += code + "-Max=" + String(packet.max_val, 2) + "," +
                       code + "-Flag=" + flag + ";";
             }
