@@ -22,8 +22,6 @@ void SerialManager::begin(void){
     println(SERIAL_LCD, "[INFO]: System uart LCD init");
     println(SERIAL_HJ212, "[INFO]: System uart HJ212 init");
     println(SERIAL_DTU, "[INFO]: System uart DTU init");
-    println(SERIAL_LED, "[INFO]: System uart LED init");
-
     LOG_INFO("Serial init success!");
 }
 
@@ -34,6 +32,7 @@ void SerialManager::HardwarePortInit(const String& name, HardwareSerial* serial,
     wrapper->stream = serial;
     wrapper->mutex = xSemaphoreCreateMutex();
     wrapper->isSoftware = false;
+    wrapper->overflowCount = 0;
     _serials[name] = wrapper;
 }
 
@@ -47,6 +46,7 @@ void SerialManager::SoftwarePortInit(const String& name, int rx, int tx, uint32_
     wrapper->stream = sw;
     wrapper->mutex = xSemaphoreCreateMutex();
     wrapper->isSoftware = true;
+    wrapper->overflowCount = 0;
     _serials[name] = wrapper;
 }
 
@@ -89,6 +89,25 @@ SemaphoreHandle_t SerialManager::getMutex(const String& name) {
         return it->second->mutex;
     }
     return nullptr;
+}
+
+bool SerialManager::checkAndReportOverflow(const String& name) {
+    auto it = _serials.find(name);
+    if (it == _serials.end() || !it->second->isSoftware) {
+        return false;
+    }
+
+    SoftwareSerial* sw = static_cast<SoftwareSerial*>(it->second->stream);
+    if (!sw->overflow()) {
+        return false;
+    }
+
+    ++it->second->overflowCount;
+    LOG_ERROR("[DIAG] UART_OVERFLOW port=%s count=%u available=%d",
+              name.c_str(),
+              (unsigned)it->second->overflowCount,
+              sw->available());
+    return true;
 }
 
 SerialManager::~SerialManager() {

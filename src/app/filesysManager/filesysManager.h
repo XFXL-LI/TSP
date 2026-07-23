@@ -57,7 +57,7 @@ private:
     String getFilePath(int type, uint64_t ts);
     String getPendingFilePath(DataTime type, uint64_t ts);
     void parseTimestamp(uint64_t ts, char* date, char* hour, char* min);
-    void writeToFile(const String& path, const std::vector<fileStorage>& rec);
+    bool writeToFile(const String& path, const std::vector<fileStorage>& rec);
 
     void processQuery(JSONCmdData* req);
 };

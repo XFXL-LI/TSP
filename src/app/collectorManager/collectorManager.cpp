@@ -199,6 +199,7 @@ void collectorManager::processQuery(JSONCmdData *req)
 
 void collectorManager::poll()
 {
+    static std::atomic<uint32_t> nextTraceId(1);
     if (_collectors.empty())
     {
         LOG_WARNING("No collectors registered.");
@@ -224,6 +225,7 @@ void collectorManager::poll()
     int subCount = EventBus::getInstance().getSubscriberCount(EventID::RAW_DATA_COLLECTED);
     LOG_DEBUG("Starting batch polling cycle for %d collectors", _collectors.size());
     AllDataPacket *allData = new AllDataPacket();
+    allData->trace_id = nextTraceId.fetch_add(1, std::memory_order_relaxed);
     for (auto *collector : _collectors)
     {
         DataPacket *data = collector->collect();
@@ -239,10 +241,11 @@ void collectorManager::poll()
                 LOG_WARNING("Invalid data collected - Sensor ID: %s, Raw Value: %.2f, Collector ID: %s",
                             data->sensor_id, data->value, collector->getID().c_str());
                 allData->data_map[String(collector->getID().c_str())] = nullptr;
-                auto data = new SystemRuntimeStatus();
-                data->systemErrorInfo = CHECK_RESULT::COLLECT_ERROR;
-                data->errorInfo = "Data collection error for sensor ID: " + String(collector->getID().c_str());
-                EventBus::getInstance().publish(EventID::ALARM_TRIGGERED, (void *)data);
+                auto alarmData = new SystemRuntimeStatus();
+                alarmData->systemErrorInfo = CHECK_RESULT::COLLECT_ERROR;
+                alarmData->errorInfo = "Data collection error for sensor ID: " + String(collector->getID().c_str());
+                EventBus::getInstance().publish(EventID::ALARM_TRIGGERED, (void *)alarmData);
+                data->release();
             }
         }
         vTaskDelay(pdMS_TO_TICKS(100));
@@ -254,7 +257,11 @@ void collectorManager::poll()
     }
     if (!allData->data_map.empty())
     {
-        LOG_INFO("Publishing AllDataPacket with %d sensors", allData->data_map.size());
+        LOG_INFO("[DIAG] COLLECT trace=%u timestamp=%llu sensors=%u subscribers=%d",
+                 (unsigned)allData->trace_id,
+                 allData->last_update,
+                 (unsigned)allData->data_map.size(),
+                 subCount);
         EventBus::getInstance().publish(EventID::RAW_DATA_COLLECTED, (void *)allData);
     }
     else

@@ -5,6 +5,7 @@
 #include <vector>
 #include <map>
 #include <functional>
+#include <atomic>
 #include <freertos/FreeRTOS.h>
 #include <freertos/queue.h>
 #include <freertos/semphr.h>
@@ -72,6 +73,7 @@ private:
     // 核心存储：EventID 对应 一组订阅者的队列句柄
     std::map<EventID, std::vector<QueueHandle_t>> subscribers;
     SemaphoreHandle_t busMutex;
+    std::atomic<uint32_t> droppedMessages;
 
     EventBus(); // 构造函数中初始化信号量
     ~EventBus() = default;
@@ -85,6 +87,7 @@ public:
     QueueHandle_t createReceiverQueue(uint32_t queueDepth = 10);
 
     int getSubscriberCount(EventID id);
+    uint32_t getDroppedMessageCount() const;
     static void clearQueue(QueueHandle_t queue);
     
     void subscribe(EventID id, QueueHandle_t receiverQueue);

@@ -48,8 +48,9 @@ private:
 struct AllDataPacket {
     std::map<String, DataPacket*> data_map;
     uint64_t last_update;
+    uint32_t trace_id;
     std::atomic<int> refCount;
-    AllDataPacket() : last_update(0), refCount(1) {} 
+    AllDataPacket() : last_update(0), trace_id(0), refCount(1) {}
     void retain() {
         refCount.fetch_add(1, std::memory_order_relaxed);
     }
@@ -88,8 +89,9 @@ struct AllProcessedDataPacket {
     std::map<String, ProcessedDataPacket> processed_data_map;
     uint64_t last_update; // 20250427 02
     DataTime dataTime;
+    uint32_t trace_id;
     std::atomic<int> refCount;
-    AllProcessedDataPacket() : last_update(0), refCount(1) {}
+    AllProcessedDataPacket() : last_update(0), dataTime(DataTime::REAL_DATA), trace_id(0), refCount(1) {}
     void retain() { 
         refCount.fetch_add(1, std::memory_order_relaxed); 
     }

@@ -59,7 +59,14 @@ String filesysManager::getFilePath(int type, uint64_t ts) {
 }
 
 void filesysManager::storeProcessedPacket(AllProcessedDataPacket* pkg) {
-    if (!pkg || !file_storage::getInstance().isSDcardReady()) return;
+    if (!pkg) return;
+    if (!file_storage::getInstance().isSDcardReady()) {
+        LOG_ERROR("[DIAG] STORE trace=%u type=%u timestamp=%llu skipped=sd_not_ready",
+                  (unsigned)pkg->trace_id,
+                  (unsigned)pkg->dataTime,
+                  pkg->last_update);
+        return;
+    }
     String path = getFilePath((int)pkg->dataTime, pkg->last_update);
     historyData.clear();
     for (auto const& [id, data] : pkg->processed_data_map) {
@@ -75,11 +82,18 @@ void filesysManager::storeProcessedPacket(AllProcessedDataPacket* pkg) {
         rec.is_valid = data.is_valid ? 1 : 0;
         historyData.push_back(rec);
     }
-    writeToFile(path, historyData);
+    bool ok = writeToFile(path, historyData);
+    LOG_INFO("[DIAG] STORE trace=%u type=%u timestamp=%llu records=%u ok=%d path=%s",
+             (unsigned)pkg->trace_id,
+             (unsigned)pkg->dataTime,
+             pkg->last_update,
+             (unsigned)historyData.size(),
+             ok ? 1 : 0,
+             path.c_str());
 }
 
-void filesysManager::writeToFile(const String& path, const std::vector<fileStorage>& rec) {
-    if (rec.empty()) return;
+bool filesysManager::writeToFile(const String& path, const std::vector<fileStorage>& rec) {
+    if (rec.empty()) return false;
 
     int lastSlash = path.lastIndexOf('/');
     if (lastSlash != -1) {
@@ -95,6 +109,7 @@ void filesysManager::writeToFile(const String& path, const std::vector<fileStora
 
                 if (written == rec.size()) {
                     LOG_DEBUG("Successfully saved %d records to: %s", (int)written, path.c_str());
+                    return true;
                 } else {
                     LOG_ERROR("Write size mismatch! Expected %d, wrote %d", rec.size(), written);
                 }
@@ -105,6 +120,7 @@ void filesysManager::writeToFile(const String& path, const std::vector<fileStora
             LOG_ERROR("Failed to make file path: %s", path.c_str());
         }
     }
+    return false;
 }
 
 String filesysManager::getPendingFilePath(DataTime type, uint64_t ts) {

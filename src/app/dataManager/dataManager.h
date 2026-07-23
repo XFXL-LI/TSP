@@ -82,7 +82,7 @@ private:
     // �ڲ���������
     void checkAndDispatch(AllDataPacket* rawData);
     void dispatchRealPacket(const AllDataPacket* rawData);
-    void dispatchPacket(DataTime type, uint64_t ts, std::map<String, StatValue>& source);
+    void dispatchPacket(DataTime type, uint64_t ts, std::map<String, StatValue>& source, uint32_t traceId);
 };
 
 #endif

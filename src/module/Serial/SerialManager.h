@@ -24,7 +24,7 @@
 
 #define SERIAL_LED      "LED"
 #define LED_TXD         0
-#define LED_RXD         45
+#define LED_RXD         -1
 #define LED_BAUD        9600
 
 #define SERIAL_TTL      "TTL"
@@ -41,6 +41,7 @@ struct SerialPortWrapper {
     Stream* stream;
     SemaphoreHandle_t mutex;
     bool isSoftware;
+    uint32_t overflowCount;
 };
 
 class SerialManager {
@@ -71,6 +72,7 @@ public:
     
     Stream* getStream(const String& name);
     SemaphoreHandle_t getMutex(const String& name);
+    bool checkAndReportOverflow(const String& name);
 
 private:
     SerialManager() {}

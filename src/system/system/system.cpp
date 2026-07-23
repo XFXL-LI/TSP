@@ -527,6 +527,7 @@ static void CollectTask(void *pvParameters)
         digitalWrite(PUMP1_PIN, HIGH);
         vTaskDelay(pdMS_TO_TICKS(collectTime * 1000 / 3));
         collectorManager.poll();
+        SerialManager::getInstance().checkAndReportOverflow(SERIAL_485);
         digitalWrite(PUMP1_PIN, LOW);
         vTaskDelayUntil(&xLastWakeTime, xFrequency);
         xLastWakeTime = xTaskGetTickCount();
@@ -604,8 +605,9 @@ static void Hj212_2017SendTask(void *pvParameters)
                         SemaphoreHandle_t _StreamMutex = SerialManager::getInstance().getMutex(SERIAL_HJ212);
                         if (xSemaphoreTake(_StreamMutex, pdMS_TO_TICKS(3000)) == pdTRUE)
                         {
-                            bool result = DTUManager::getInstance().sendHJ212Packet(HJ212_str);
+                            bool result = DTUManager::getInstance().sendHJ212Packet(HJ212_str, 3, allData->trace_id);
                             xSemaphoreGive(_StreamMutex);
+                            SerialManager::getInstance().checkAndReportOverflow(SERIAL_HJ212);
                             if (!result)
                             {
                                 LOG_WARNING("Failed to send HJ212 packet, saving for retry...");
@@ -655,8 +657,9 @@ static void Hj212_2017SendTask(void *pvParameters)
                     SemaphoreHandle_t _StreamMutex = SerialManager::getInstance().getMutex(SERIAL_HJ212);
                     if (xSemaphoreTake(_StreamMutex, pdMS_TO_TICKS(3000)) == pdTRUE)
                     {
-                        bool result = DTUManager::getInstance().sendHJ212Packet(HJ212_str);
+                        bool result = DTUManager::getInstance().sendHJ212Packet(HJ212_str, 3, allData->trace_id);
                         xSemaphoreGive(_StreamMutex);
+                        SerialManager::getInstance().checkAndReportOverflow(SERIAL_HJ212);
                         if (!result)
                         {
                             LOG_WARNING("Failed to send HJ212 packet, saving for retry...");
@@ -714,8 +717,9 @@ static void Hj212_2025SendTask(void *pvParameters)
                         SemaphoreHandle_t _StreamMutex = SerialManager::getInstance().getMutex(SERIAL_HJ212);
                         if (xSemaphoreTake(_StreamMutex, pdMS_TO_TICKS(3000)) == pdTRUE)
                         {
-                            bool result = DTUManager::getInstance().sendHJ212Packet(HJ212_str);
+                            bool result = DTUManager::getInstance().sendHJ212Packet(HJ212_str, 3, allData->trace_id);
                             xSemaphoreGive(_StreamMutex);
+                            SerialManager::getInstance().checkAndReportOverflow(SERIAL_HJ212);
                             if (!result)
                             {
                                 LOG_WARNING("Failed to send HJ212 packet, saving for retry...");
@@ -765,8 +769,9 @@ static void Hj212_2025SendTask(void *pvParameters)
                     SemaphoreHandle_t _StreamMutex = SerialManager::getInstance().getMutex(SERIAL_HJ212);
                     if (xSemaphoreTake(_StreamMutex, pdMS_TO_TICKS(3000)) == pdTRUE)
                     {
-                        bool result = DTUManager::getInstance().sendHJ212Packet(HJ212_str);
+                        bool result = DTUManager::getInstance().sendHJ212Packet(HJ212_str, 3, allData->trace_id);
                         xSemaphoreGive(_StreamMutex);
+                        SerialManager::getInstance().checkAndReportOverflow(SERIAL_HJ212);
                         if (!result)
                         {
                             LOG_WARNING("Failed to send HJ212 packet, saving for retry...");
@@ -998,6 +1003,7 @@ static void SerialControlTask_lcd(void *pvParameters)
             test = "";
             bracketLevel = 0;
         }
+        SerialManager::getInstance().checkAndReportOverflow(SERIAL_LCD);
         vTaskDelay(pdMS_TO_TICKS(1));
     }
     vTaskDelete(NULL);

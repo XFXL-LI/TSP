@@ -1,5 +1,6 @@
 #include "eventBus.h"
 #include <algorithm>
+#include "../../module/log/log_manager.h"
 EventCall::EventCall() : internalQueue(NULL) {
     busMutex = xSemaphoreCreateMutex();
 }
@@ -42,13 +43,13 @@ void EventBus::unsubscribe(EventID id, QueueHandle_t receiverQueue) {
 void EventCall::publish(EventID id, void* data) {
     EventMsg msg = {id, data};
     if (xQueueSend(internalQueue, &msg, 0) != pdTRUE) {
-        // 队列满，清理旧消息后重新发送
+        // Queue full: clear stale messages before retrying.
         EventMsg tempMsg;
         while (xQueueReceive(internalQueue, &tempMsg, 0) == pdTRUE) {
-            // 清空所有旧消息
+            // Drain every stale message.
         }
         xQueueReset(internalQueue);
-        // 重新发送新消息
+        // Retry the newest message.
         xQueueSend(internalQueue, &msg, pdMS_TO_TICKS(100));
     }
 }
@@ -73,7 +74,7 @@ void EventCall::eventLoopTask(void* pvParameters) {
     }
 }
 
-EventBus::EventBus() {
+EventBus::EventBus() : droppedMessages(0) {
     busMutex = xSemaphoreCreateMutex();
 }
 
@@ -112,6 +113,9 @@ int EventBus::getSubscriberCount(EventID id) {
     }
     return count;
 }
+uint32_t EventBus::getDroppedMessageCount() const {
+    return droppedMessages.load(std::memory_order_relaxed);
+}
 void EventBus::publish(EventID id, void* data) {
     EventMsg msg = {id, data};
     if (xSemaphoreTake(busMutex, portMAX_DELAY)) {
@@ -119,10 +123,20 @@ void EventBus::publish(EventID id, void* data) {
             for (QueueHandle_t q : subscribers[id]) {
                 if (xQueueSend(q, &msg, 0) != pdTRUE) {
                     EventMsg tempMsg;
+                    uint32_t droppedNow = 0;
                     while (xQueueReceive(q, &tempMsg, 0) == pdTRUE) {
+                        ++droppedNow;
                     }
                     xQueueReset(q);
-                    xQueueSend(q, &msg, pdMS_TO_TICKS(100));
+                    uint32_t total = droppedMessages.fetch_add(
+                        droppedNow, std::memory_order_relaxed) + droppedNow;
+                    BaseType_t resent = xQueueSend(q, &msg, pdMS_TO_TICKS(100));
+                    LOG_ERROR("[DIAG] EVENT_DROP event=%d dropped=%u total=%u resent=%d queue=%p",
+                              (int)id,
+                              (unsigned)droppedNow,
+                              (unsigned)total,
+                              resent == pdTRUE ? 1 : 0,
+                              q);
                 }
             }
         }

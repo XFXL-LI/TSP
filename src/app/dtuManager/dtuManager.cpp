@@ -137,19 +137,21 @@ bool DTUManager::updateHJDtuGoalIP(String newIP){
         return false;
     }
 }
-bool DTUManager::sendHJ212Packet(String dataContent, int maxRetry) {
+bool DTUManager::sendHJ212Packet(String dataContent, int maxRetry, uint32_t traceId) {
     String packet = dataContent;
     if (maxRetry < 1) maxRetry = 1;
     for (int retry = 1; retry <= maxRetry; retry++)
     {
-        LOG_DEBUG("HJ212 Send Attempt: %d", retry);
+        LOG_INFO("[DIAG] TX_ATTEMPT trace=%u attempt=%d bytes=%u",
+                 (unsigned)traceId, retry, (unsigned)packet.length());
         String res = _hj212DTU->sendData(packet);
         if (res.length() > 0)
         {
             //LOG_DEBUG("HJ212 DTU Response: %s", res.c_str());
             if (res.indexOf("CN=9014") != -1)
             {
-                LOG_DEBUG("HJ212 ACK Success.");
+                LOG_INFO("[DIAG] TX_RESULT trace=%u attempt=%d ack=1 response_bytes=%u",
+                         (unsigned)traceId, retry, (unsigned)res.length());
                 return true;
             }
             else
@@ -163,6 +165,8 @@ bool DTUManager::sendHJ212Packet(String dataContent, int maxRetry) {
         }
         vTaskDelay(pdMS_TO_TICKS(5000));
     }
+    LOG_ERROR("[DIAG] TX_RESULT trace=%u attempts=%d ack=0",
+              (unsigned)traceId, maxRetry);
     return false;
 }
 void DTUManager::processQuery(JSONCmdData* req){

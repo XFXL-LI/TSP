@@ -97,14 +97,14 @@ void DataManager::checkAndDispatch(AllDataPacket* rawData) {
                 _day_stats[item.first].update(item.second.getAvg());
             }
         }
-        dispatchPacket(DataTime::HOUR_DATA, _last_hour_time * 10000, _hour_stats);
+        dispatchPacket(DataTime::HOUR_DATA, _last_hour_time * 10000, _hour_stats, rawData->trace_id);
         for (auto &item : _hour_stats) item.second.reset();
         _last_hour_time = currentHour;
     }
 
     // Close the completed day after its final hour has entered day statistics.
     if (!firstSample && currentDay > _last_day_time) {
-        dispatchPacket(DataTime::DAY_DATA, _last_day_time * 1000000, _day_stats);
+        dispatchPacket(DataTime::DAY_DATA, _last_day_time * 1000000, _day_stats, rawData->trace_id);
         for (auto &item : _day_stats) item.second.reset();
         _last_day_time = currentDay;
     }
@@ -112,7 +112,7 @@ void DataManager::checkAndDispatch(AllDataPacket* rawData) {
     // CN=2051 is reported once per completed 10-minute window.
     if (!firstSample && currentMin / 10 > _last_min_time / 10) {
         uint64_t windowStartTime = (_last_min_time / 10) * 10 * 100;
-        dispatchPacket(DataTime::MIN_DATA, windowStartTime, _min_stats);
+        dispatchPacket(DataTime::MIN_DATA, windowStartTime, _min_stats, rawData->trace_id);
         if (xSemaphoreTake(_lastMinDataMutex, pdMS_TO_TICKS(100)) == pdTRUE) {
             _last_min_snapshot.clear();
             for (auto &item : _min_stats) {
@@ -152,6 +152,7 @@ void DataManager::dispatchRealPacket(const AllDataPacket* rawData) {
     AllProcessedDataPacket* pkg = new AllProcessedDataPacket();
     pkg->last_update = rawData->last_update;
     pkg->dataTime = DataTime::REAL_DATA;
+    pkg->trace_id = rawData->trace_id;
 
     for (auto const& [id, dataPtr] : rawData->data_map) {
         ProcessedDataPacket data = {};
@@ -175,6 +176,12 @@ void DataManager::dispatchRealPacket(const AllDataPacket* rawData) {
         LOG_WARNING("DataManager: Failed to update serial real-time snapshot");
     }
 
+    LOG_INFO("[DIAG] PROCESS trace=%u type=%u timestamp=%llu records=%u",
+             (unsigned)pkg->trace_id,
+             (unsigned)pkg->dataTime,
+             pkg->last_update,
+             (unsigned)pkg->processed_data_map.size());
+
     int subCount = EventBus::getInstance().getSubscriberCount(
         EventID::PROCESSED_DATA_COLLECTED);
     for (int i = 0; i < subCount; i++) {
@@ -184,10 +191,11 @@ void DataManager::dispatchRealPacket(const AllDataPacket* rawData) {
     pkg->release();
 }
 
-void DataManager::dispatchPacket(DataTime type, uint64_t ts, std::map<String, StatValue>& source) {
+void DataManager::dispatchPacket(DataTime type, uint64_t ts, std::map<String, StatValue>& source, uint32_t traceId) {
     AllProcessedDataPacket* pkg = new AllProcessedDataPacket();
     pkg->last_update = ts;
     pkg->dataTime = type;
+    pkg->trace_id = traceId;
     for (auto &item : source) {
         ProcessedDataPacket p; 
         p.value = item.second.getAvg();
@@ -197,6 +205,11 @@ void DataManager::dispatchPacket(DataTime type, uint64_t ts, std::map<String, St
         p.is_valid = item.second.count > 0;
         pkg->processed_data_map[item.first] = p;
     }
+    LOG_INFO("[DIAG] PROCESS trace=%u type=%u timestamp=%llu records=%u",
+             (unsigned)pkg->trace_id,
+             (unsigned)pkg->dataTime,
+             pkg->last_update,
+             (unsigned)pkg->processed_data_map.size());
     int subCount = EventBus::getInstance().getSubscriberCount(EventID::PROCESSED_DATA_COLLECTED);
     for (int i = 0; i < subCount; i++) {
         pkg->retain();
