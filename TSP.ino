@@ -2,7 +2,8 @@
 
 
 //�°汾
-#define VERSION2 "2.0.0"
+// Firmware 2.0.3: bounded LCD queries and centralized HJ212/SD arbitration.
+#define VERSION2 "2.0.3"
 
 void setup()
 {

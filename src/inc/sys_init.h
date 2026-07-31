@@ -10,7 +10,8 @@
 #include "../module/log/log_manager.h"
 
 //新版本
-#define VERSION2 "2.0.0"
+// Firmware 2.0.3: long-running heap, HJ212 scheduling and SD integrity fixes.
+#define VERSION2 "2.0.3"
 
 struct SYSINFO {
     int csq;

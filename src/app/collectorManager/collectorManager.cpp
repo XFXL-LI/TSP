@@ -250,6 +250,8 @@ void collectorManager::poll()
         }
         vTaskDelay(pdMS_TO_TICKS(100));
     }
+
+    
     allData->last_update = time;
     for (int i = 0; i < subCount; i++)
     {

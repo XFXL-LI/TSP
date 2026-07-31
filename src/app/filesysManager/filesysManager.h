@@ -49,6 +49,7 @@ private:
     std::vector<fileStorage> historyData;
 
     QueueHandle_t SaveDataFileTaskQueue;
+    SemaphoreHandle_t _sdMutex;
     filesysManager();
     void traversePendingDirectory(
         const char* dirPath,

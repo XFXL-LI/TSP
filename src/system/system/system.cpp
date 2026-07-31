@@ -38,6 +38,15 @@
 #define PUMP1_PIN 41
 #define ALARM_PIN 40    // 12v电控制开�?
 
+// Firmware 2.0.1 (2026-07-30):
+// Yinerda M100M-B2 requires packets to be sent one at a time with an
+// approximate minimum interval of 600 ms. Use 1000 ms as a safe margin.
+static constexpr uint32_t HJ212_PACKET_GAP_MS = 3000;
+// Firmware 2.0.2 (2026-07-30): pending recovery is maintenance work, not a
+// per-CSQ operation. Back off scans to avoid repeated task allocation.
+static constexpr uint32_t PENDING_SCAN_INTERVAL_MS = 5UL * 60UL * 1000UL;
+static constexpr uint32_t CSQ_POLL_INTERVAL_MS = 60UL * 1000UL;
+
 // ********** 时间相关定义 **********
 Ds1302 rtc(17, 6, 7);
 const char *WeekDays[] =
@@ -62,10 +71,6 @@ void fileRestore(void);
 //
 
 SYSINFO systemInfo;
-struct ResumeData
-{
-    std::vector<PendingPacketInfo> packets;
-};
 static std::atomic<bool> networkRestoreRunning(false);
 
 // 采集
@@ -74,7 +79,7 @@ static void CollectTask(void *pvParameters); // 采集后第一轮判断是否�
 static void Hj212_2017SendTask(void *pvParameters);
 static void Hj212_2025SendTask(void *pvParameters);
 // 断点续传
-static void netWorkRestoreTask(void *pvParameters);
+static void recoverPendingPacket(const PendingPacketInfo &pending);
 // 保存数据
 static void SaveDataFileTask(void *pvParameters);
 // OTA 升级
@@ -116,7 +121,14 @@ void System::SystemInit(void)
 #else
     LogManager::getInstance().setLevel(LOG_LEVEL_INFO);
 #endif
+    LOG_INFO("Firmware version: %s", VERSION2);
     LOG_DEBUG("System init start");
+
+    // Firmware 2.0.1 (2026-07-30): create shared system-state protection
+    // before Temp/CSQ tasks start, removing the startup mutex race.
+    if (systemInfo.mutex == NULL) {
+        systemInfo.mutex = xSemaphoreCreateMutex();
+    }
 
     alarmManager::getInstance().printRestartInfo();
 
@@ -174,7 +186,8 @@ void System::SystemConfigInit(void)
 
 void System::SystemSetupInit(void)
 {
-    xTaskCreatePinnedToCore(updateSetupTask, "udSetTask", 4 * 1024, NULL, 5, NULL, 1);
+    // Firmware 2.0.3: pending recovery reuses this permanent maintenance task.
+    xTaskCreatePinnedToCore(updateSetupTask, "udSetTask", 6 * 1024, NULL, 5, NULL, 1);
 }
 
 void System::SystemTaskInit(void)
@@ -209,9 +222,9 @@ static void updateSetupTask(void *pvParameters)
     setUpInit();
     // Restore starts after the first valid CSQ update.
 
-    systemInfo.mutex = xSemaphoreCreateMutex();
     volatile bool netWorkError = false;
     int countTime = 0;
+    uint32_t lastPendingScanMs = 0;
     while (true)
     {
         if (countTime >= 720)
@@ -234,21 +247,16 @@ static void updateSetupTask(void *pvParameters)
             countTime++;
         }
 
-        SemaphoreHandle_t _StreamMutex = SerialManager::getInstance().getMutex(SERIAL_HJ212);
-        if (xSemaphoreTake(_StreamMutex, pdMS_TO_TICKS(3000)) == pdTRUE)
+        // Firmware 2.0.3: DTUManager arbitrates SERIAL_HJ212 centrally.
+        // A CSQ command is skipped whenever an upload is active/waiting.
+        int csq = DTUManager::getInstance().hj212DTUCSQ();
+        if (csq == DTUManager::CSQ_DEFERRED)
         {
-            int csq = 99;
-            int i = 0;
-            for (i = 0; i < 3; i++)
-            {
-                vTaskDelay(pdMS_TO_TICKS(3000));
-                csq = DTUManager::getInstance().hj212DTUCSQ();
-                if (csq != 99)
-                {
-                    break;
-                }
-            }
-            xSemaphoreGive(_StreamMutex);
+            vTaskDelay(pdMS_TO_TICKS(CSQ_POLL_INTERVAL_MS));
+            continue;
+        }
+
+        {
             SYSTEM_SETUP newSetup = ConfigManager::getInstance().getSetup();
             newSetup.netCsq = csq;
             ConfigManager::getInstance().updateSetup(newSetup);
@@ -265,6 +273,7 @@ static void updateSetupTask(void *pvParameters)
             if (netWorkError && csq >= 0 && csq <= 31)
             {
                 fileRestore();
+                lastPendingScanMs = millis();
                 LOG_INFO("Network restored with CSQ: %d", csq);
                 netWorkError = false;
             }
@@ -272,9 +281,16 @@ static void updateSetupTask(void *pvParameters)
             {
                 netWorkError = false;
                 LOG_DEBUG("Updated network CSQ: %d", csq);
-                // Also retry packets when radio signal is healthy but the
-                // application server previously failed to acknowledge data.
-                fileRestore();
+                // Firmware 2.0.2 (2026-07-30): healthy CSQ does not require a
+                // filesystem scan every cycle. Retry pending data at a bounded
+                // maintenance interval to prevent heap churn.
+                uint32_t nowMs = millis();
+                if (lastPendingScanMs == 0 ||
+                    nowMs - lastPendingScanMs >= PENDING_SCAN_INTERVAL_MS)
+                {
+                    fileRestore();
+                    lastPendingScanMs = nowMs;
+                }
             }
             else
             {
@@ -282,18 +298,14 @@ static void updateSetupTask(void *pvParameters)
                 LOG_ERROR("Invalid CSQ value: %d, skipping update.", csq);
             }
         }
-        else
-        {
-            LOG_ERROR("Failed to acquire mutex for HJ212 stream to update CSQ");
-        }
-        vTaskDelay(pdMS_TO_TICKS(60000));
+        vTaskDelay(pdMS_TO_TICKS(CSQ_POLL_INTERVAL_MS));
     }
     vTaskDelete(NULL);
 }
 static void OtaUploadTask(void *pvParameters)
 {
     LOG_DEBUG("OtaUploadTask Started");
-    QueueHandle_t OtaUploadTaskQueue = EventBus::getInstance().createReceiverQueue(5);
+    QueueHandle_t OtaUploadTaskQueue = EventBus::getInstance().createReceiverQueue(5, "OTA");
     EventBus::getInstance().subscribe(EventID::UPLOAD_REQ, OtaUploadTaskQueue);
 
     EventMsg msg;
@@ -393,8 +405,15 @@ static void OtaUploadTask(void *pvParameters)
                         }
 
                         vTaskDelay(3000 / portTICK_PERIOD_MS);
+//代码修改 2026.7.27
+                    BaseType_t result = xTaskCreatePinnedToCore(otaUpload, "otaUpload", 8 * 1024, (void *)otaSize, 11, NULL, 1);
 
-                        xTaskCreatePinnedToCore(otaUpload, "otaUpload", 8 * 10240, (void *)otaSize, 11, NULL, 1);
+                        if (result != pdPASS)
+                    {
+                        LOG_ERROR("Failed to create OTA task");
+                        vTaskDelay(pdMS_TO_TICKS(3000));
+                        ESP.restart();
+                    }
                     }
                     LOG_DEBUG("****** OtaUploadTask Test Over ******");
                 }
@@ -569,7 +588,7 @@ static void TempControlTask(void *pvParameters)
 static void Hj212_2017SendTask(void *pvParameters)
 {
     LOG_INFO("Hj212_2017SendTask Started");
-    QueueHandle_t Hj212SendTaskQueue = EventBus::getInstance().createReceiverQueue(10);
+    QueueHandle_t Hj212SendTaskQueue = EventBus::getInstance().createReceiverQueue(20, "HJ212_2017");
     EventBus::getInstance().subscribe(EventID::PROCESSED_DATA_COLLECTED, Hj212SendTaskQueue);
     EventBus::getInstance().subscribe(EventID::RESUME_DATA, Hj212SendTaskQueue);
 
@@ -602,21 +621,12 @@ static void Hj212_2017SendTask(void *pvParameters)
                     if (HJ212_str.length() > 0)
                     {
                         LOG_DEBUG("Generated HJ212 Packet %d bytes", HJ212_str.length());
-                        SemaphoreHandle_t _StreamMutex = SerialManager::getInstance().getMutex(SERIAL_HJ212);
-                        if (xSemaphoreTake(_StreamMutex, pdMS_TO_TICKS(3000)) == pdTRUE)
+                        bool result = DTUManager::getInstance().sendHJ212Packet(
+                            HJ212_str, 3, allData->trace_id,
+                            (int)allData->dataTime, allData->last_update);
+                        if (!result)
                         {
-                            bool result = DTUManager::getInstance().sendHJ212Packet(HJ212_str, 3, allData->trace_id);
-                            xSemaphoreGive(_StreamMutex);
-                            SerialManager::getInstance().checkAndReportOverflow(SERIAL_HJ212);
-                            if (!result)
-                            {
-                                LOG_WARNING("Failed to send HJ212 packet, saving for retry...");
-                                filesys.savePendingPacket(allData, HJ212_str);
-                            }
-                        }
-                        else
-                        {
-                            LOG_WARNING("HJ212 serial busy, saving packet for retry...");
+                            LOG_WARNING("Failed to send HJ212 packet, saving for retry...");
                             filesys.savePendingPacket(allData, HJ212_str);
                         }
                     }
@@ -654,17 +664,13 @@ static void Hj212_2017SendTask(void *pvParameters)
                 if (HJ212_str.length() > 0)
                 {
                     LOG_DEBUG("Generated HJ212 Packet %d bytes", HJ212_str.length());
-                    SemaphoreHandle_t _StreamMutex = SerialManager::getInstance().getMutex(SERIAL_HJ212);
-                    if (xSemaphoreTake(_StreamMutex, pdMS_TO_TICKS(3000)) == pdTRUE)
+                    bool result = DTUManager::getInstance().sendHJ212Packet(
+                        HJ212_str, 3, allData->trace_id,
+                        (int)allData->dataTime, allData->last_update);
+                    if (!result)
                     {
-                        bool result = DTUManager::getInstance().sendHJ212Packet(HJ212_str, 3, allData->trace_id);
-                        xSemaphoreGive(_StreamMutex);
-                        SerialManager::getInstance().checkAndReportOverflow(SERIAL_HJ212);
-                        if (!result)
-                        {
-                            LOG_WARNING("Failed to send HJ212 packet, saving for retry...");
-                            filesys.savePendingPacket(allData, HJ212_str);
-                        }
+                        LOG_WARNING("Failed to send HJ212 packet, saving for retry...");
+                        filesys.savePendingPacket(allData, HJ212_str);
                     }
                 }
                 if (allData != nullptr)
@@ -673,7 +679,9 @@ static void Hj212_2017SendTask(void *pvParameters)
                 }
             }
         }
-        vTaskDelay(pdMS_TO_TICKS(15000));
+        // Firmware 2.0.1 (2026-07-30): avoid a 15-second backlog at
+        // 10-minute and hour boundaries while retaining a small packet gap.
+        vTaskDelay(pdMS_TO_TICKS(HJ212_PACKET_GAP_MS));
     }
     vTaskDelete(NULL);
 }
@@ -681,7 +689,7 @@ static void Hj212_2017SendTask(void *pvParameters)
 static void Hj212_2025SendTask(void *pvParameters)
 {
     LOG_INFO("Hj212_2017SendTask Started");
-    QueueHandle_t Hj212SendTaskQueue = EventBus::getInstance().createReceiverQueue(10);
+    QueueHandle_t Hj212SendTaskQueue = EventBus::getInstance().createReceiverQueue(20, "HJ212_2025");
     EventBus::getInstance().subscribe(EventID::PROCESSED_DATA_COLLECTED, Hj212SendTaskQueue);
     EventBus::getInstance().subscribe(EventID::RESUME_DATA, Hj212SendTaskQueue);
 
@@ -714,21 +722,12 @@ static void Hj212_2025SendTask(void *pvParameters)
                     if (HJ212_str.length() > 0)
                     {
                         LOG_DEBUG("Generated HJ212 Packet %d bytes", HJ212_str.length());
-                        SemaphoreHandle_t _StreamMutex = SerialManager::getInstance().getMutex(SERIAL_HJ212);
-                        if (xSemaphoreTake(_StreamMutex, pdMS_TO_TICKS(3000)) == pdTRUE)
+                        bool result = DTUManager::getInstance().sendHJ212Packet(
+                            HJ212_str, 3, allData->trace_id,
+                            (int)allData->dataTime, allData->last_update);
+                        if (!result)
                         {
-                            bool result = DTUManager::getInstance().sendHJ212Packet(HJ212_str, 3, allData->trace_id);
-                            xSemaphoreGive(_StreamMutex);
-                            SerialManager::getInstance().checkAndReportOverflow(SERIAL_HJ212);
-                            if (!result)
-                            {
-                                LOG_WARNING("Failed to send HJ212 packet, saving for retry...");
-                                filesys.savePendingPacket(allData, HJ212_str);
-                            }
-                        }
-                        else
-                        {
-                            LOG_WARNING("HJ212 serial busy, saving packet for retry...");
+                            LOG_WARNING("Failed to send HJ212 packet, saving for retry...");
                             filesys.savePendingPacket(allData, HJ212_str);
                         }
                     }
@@ -766,17 +765,13 @@ static void Hj212_2025SendTask(void *pvParameters)
                 if (HJ212_str.length() > 0)
                 {
                     LOG_DEBUG("Generated HJ212 Packet %d bytes", HJ212_str.length());
-                    SemaphoreHandle_t _StreamMutex = SerialManager::getInstance().getMutex(SERIAL_HJ212);
-                    if (xSemaphoreTake(_StreamMutex, pdMS_TO_TICKS(3000)) == pdTRUE)
+                    bool result = DTUManager::getInstance().sendHJ212Packet(
+                        HJ212_str, 3, allData->trace_id,
+                        (int)allData->dataTime, allData->last_update);
+                    if (!result)
                     {
-                        bool result = DTUManager::getInstance().sendHJ212Packet(HJ212_str, 3, allData->trace_id);
-                        xSemaphoreGive(_StreamMutex);
-                        SerialManager::getInstance().checkAndReportOverflow(SERIAL_HJ212);
-                        if (!result)
-                        {
-                            LOG_WARNING("Failed to send HJ212 packet, saving for retry...");
-                            filesys.savePendingPacket(allData, HJ212_str);
-                        }
+                        LOG_WARNING("Failed to send HJ212 packet, saving for retry...");
+                        filesys.savePendingPacket(allData, HJ212_str);
                     }
                 }
                 if (allData != nullptr)
@@ -785,7 +780,8 @@ static void Hj212_2025SendTask(void *pvParameters)
                 }
             }
         }
-        vTaskDelay(pdMS_TO_TICKS(15000));
+        // Firmware 2.0.1 (2026-07-30): match the 2017 sender pacing.
+        vTaskDelay(pdMS_TO_TICKS(HJ212_PACKET_GAP_MS));
     }
     vTaskDelete(NULL);
 }
@@ -796,90 +792,70 @@ static bool sendHJ212PacketLocked(const String &packet, int maxRetry)
     {
         return false;
     }
-
-    SemaphoreHandle_t streamMutex = SerialManager::getInstance().getMutex(SERIAL_HJ212);
-    if (streamMutex == nullptr ||
-        xSemaphoreTake(streamMutex, pdMS_TO_TICKS(3000)) != pdTRUE)
-    {
-        LOG_WARNING("Failed to acquire HJ212 serial mutex");
-        return false;
-    }
-
-    bool result = DTUManager::getInstance().sendHJ212Packet(packet, maxRetry);
-    xSemaphoreGive(streamMutex);
-    return result;
+    // Firmware 2.0.3: DTUManager is the single SERIAL_HJ212 lock owner.
+    return DTUManager::getInstance().sendHJ212Packet(packet, maxRetry);
 }
 
-static void netWorkRestoreTask(void *pvParameters)
+static void recoverPendingPacket(const PendingPacketInfo &pending)
 {
-    ResumeData *resumeData = (ResumeData *)pvParameters;
-    if (resumeData == nullptr)
-    {
-        LOG_ERROR("netWorkRestoreTask received null data");
-        networkRestoreRunning.store(false);
-        vTaskDelete(NULL);
-        return;
-    }
-
-    LOG_INFO("netWorkRestoreTask started with %d pending packets", resumeData->packets.size());
-
-    // The CSQ task and live collection normally wake up together. Let the
-    // current real-time report use the HJ212 serial port before recovery.
-    vTaskDelay(pdMS_TO_TICKS(20000));
-
     HJ212_DataCenter HJ212;
     const HJ212CONFIG config = ConfigManager::getInstance().getHJ212();
     auto &filesys = filesysManager::getInstance();
 
-    for (const PendingPacketInfo &pending : resumeData->packets)
+    LOG_INFO("Resending one pending packet: type=%d, timestamp=%llu",
+             (int)pending.dataTime, pending.timestamp);
+
+    String packet = filesys.loadPendingPacketContent(pending);
+    bool storedPacketInvalid = false;
+    if (packet.length() > 0 &&
+        !HJ212_DataCenter::isValidPacket(packet))
     {
-        LOG_INFO("Resending pending packet: type=%d, timestamp=%llu",
-                 (int)pending.dataTime, pending.timestamp);
-
-        String packet = filesys.loadPendingPacketContent(pending);
-        if (packet.length() == 0)
-        {
-            // Rebuild legacy .flag entries from the historical minute record.
-            AllProcessedDataPacket *legacyData =
-                filesys.readPendingPacket((int)pending.dataTime, pending.timestamp);
-            if (legacyData != nullptr)
-            {
-                packet = config.protocol_version == "2025"
-                    ? HJ212.build2025Hj212Packet(legacyData, config)
-                    : HJ212.build2017Hj212Packet(legacyData, config);
-                legacyData->release();
-            }
-        }
-
-        if (packet.length() == 0)
-        {
-            LOG_ERROR("Unable to rebuild pending packet, quarantining: %s",
-                      pending.filePath.c_str());
-            filesys.quarantinePendingPacket(pending);
-            continue;
-        }
-
-        // One recovery attempt is enough for this cycle. Repeating the DTU's
-        // own retries here used to hold the serial port for about 90 seconds.
-        bool delivered = sendHJ212PacketLocked(packet, 1);
-
-        if (delivered)
-        {
-            filesys.deletePendingPacket(pending);
-        }
-        else
-        {
-            LOG_WARNING("Pending delivery failed, marker retained: %s",
-                        pending.filePath.c_str());
-            break;
-        }
-        vTaskDelay(pdMS_TO_TICKS(1000));
+        storedPacketInvalid = true;
+        LOG_WARNING("[DIAG] PENDING_INVALID type=%d timestamp=%llu bytes=%u path=%s",
+                    (int)pending.dataTime, pending.timestamp,
+                    (unsigned)packet.length(), pending.filePath.c_str());
+        packet = "";
     }
-    delete resumeData;
-    networkRestoreRunning.store(false);
-    LOG_INFO("netWorkRestoreTask completed, free heap=%u, largest block=%u",
-             ESP.getFreeHeap(), ESP.getMaxAllocHeap());
-    vTaskDelete(NULL);
+    if (packet.length() == 0)
+    {
+        AllProcessedDataPacket *legacyData =
+            filesys.readPendingPacket((int)pending.dataTime, pending.timestamp);
+        if (legacyData != nullptr)
+        {
+            packet = config.protocol_version == "2025"
+                ? HJ212.build2025Hj212Packet(legacyData, config)
+                : HJ212.build2017Hj212Packet(legacyData, config);
+            legacyData->release();
+        }
+    }
+
+    if (packet.length() == 0 ||
+        !HJ212_DataCenter::isValidPacket(packet))
+    {
+        // A rebuild can fail because heap is temporarily tight. Keep the
+        // marker for the next maintenance cycle instead of quarantining it.
+        LOG_WARNING("[DIAG] RECOVERY_RETAIN reason=rebuild_unavailable path=%s free=%u largest=%u",
+                    pending.filePath.c_str(), ESP.getFreeHeap(), ESP.getMaxAllocHeap());
+        return;
+    }
+    if (storedPacketInvalid)
+    {
+        LOG_INFO("[DIAG] PENDING_REBUILT type=%d timestamp=%llu bytes=%u",
+                 (int)pending.dataTime, pending.timestamp,
+                 (unsigned)packet.length());
+    }
+
+    bool delivered = sendHJ212PacketLocked(packet, 1);
+
+    if (delivered)
+    {
+        filesys.deletePendingPacket(pending);
+    }
+    else
+    {
+        LOG_WARNING("Pending delivery failed, marker retained: %s",
+                    pending.filePath.c_str());
+    }
 }
 
 static void LedPrintTask(void *pvParameters)
@@ -889,7 +865,7 @@ static void LedPrintTask(void *pvParameters)
     auto &ledManager = LedManager::getInstance();
     ledManager.begin();
 
-    QueueHandle_t LedPrintTaskQueue = EventBus::getInstance().createReceiverQueue(5);
+    QueueHandle_t LedPrintTaskQueue = EventBus::getInstance().createReceiverQueue(5, "LED");
     EventBus::getInstance().subscribe(EventID::PROCESSED_DATA_COLLECTED, LedPrintTaskQueue);
     SYSTEMCONFIG sysCfg = ConfigManager::getInstance().getSystem();
     int collectTime = sysCfg.collect_time > 0 ? sysCfg.collect_time : 60; // 默认 60s 采集时间
@@ -1091,7 +1067,7 @@ static void MqttPublicTask(void *pvParameters)
 static void AlarmTask(void *pvParameters){
     LOG_INFO("AlarmTask started");
 
-    QueueHandle_t AlarmTaskQueue = EventBus::getInstance().createReceiverQueue(5);
+    QueueHandle_t AlarmTaskQueue = EventBus::getInstance().createReceiverQueue(5, "ALARM_TASK");
     EventBus::getInstance().subscribe(EventID::PROCESSED_DATA_COLLECTED, AlarmTaskQueue);
 
     EventMsg msg;
@@ -1240,9 +1216,8 @@ void setUpInit(void)
     auto &DTUMg = DTUManager::getInstance();
     DTUMg.init(*DTU_port, *HJ212_port);
 
-    SemaphoreHandle_t DTUMutex = sm.getMutex(SERIAL_DTU);
-    if (xSemaphoreTake(DTUMutex, pdMS_TO_TICKS(3000)) == pdTRUE)
     {
+        // Firmware 2.0.3: DTUManager owns the HJ212 lock for commands.
         uint64_t realTime = DTUMg.hjSystemTime();
         int i = 0;
         for (i = 0; i < 3; i++)
@@ -1255,7 +1230,6 @@ void setUpInit(void)
             realTime = DTUMg.hjSystemTime();
         }
         LOG_DEBUG("****** realTime Time: %llu ******", realTime);
-        xSemaphoreGive(DTUMutex);
         if (isValidClockTime(realTime))
         {
             timeInit(realTime);
@@ -1281,14 +1255,9 @@ void setUpInit(void)
 
     HJ212CONFIG hj212Cfg = ConfigManager::getInstance().getHJ212();
     SYSTEMCONFIG systemCfg = ConfigManager::getInstance().getSystem();
-    SemaphoreHandle_t DTUHj212Mutex = sm.getMutex(SERIAL_HJ212);
-    if (xSemaphoreTake(DTUHj212Mutex, pdMS_TO_TICKS(3000)) == pdTRUE)
+    if (!DTUMg.updateHJDtuGoalIP(hj212Cfg.ip))
     {
-        if (!DTUMg.updateHJDtuGoalIP(hj212Cfg.ip))
-        {
-            LOG_ERROR("Failed to update HJ212 DTU IP");
-        }
-        xSemaphoreGive(DTUHj212Mutex);
+        LOG_ERROR("Failed to update HJ212 DTU IP");
     }
 }
 void fileRestore(void)
@@ -1303,7 +1272,7 @@ void fileRestore(void)
     auto &filesys = filesysManager::getInstance();
     LOG_DEBUG("Scanning pending packets, free heap=%u, largest block=%u",
               ESP.getFreeHeap(), ESP.getMaxAllocHeap());
-    constexpr size_t RECOVERY_BATCH_SIZE = 3;
+    constexpr size_t RECOVERY_BATCH_SIZE = 1;
     std::vector<PendingPacketInfo> pendingPackets =
         filesys.scanPendingPackets(RECOVERY_BATCH_SIZE);
     if (pendingPackets.empty())
@@ -1312,23 +1281,13 @@ void fileRestore(void)
         return;
     }
 
-    LOG_INFO("Found %d pending packets, creating recovery task", pendingPackets.size());
-    ResumeData *resumeData = new (std::nothrow) ResumeData();
-    if (resumeData == nullptr)
-    {
-        LOG_ERROR("Insufficient heap to create pending recovery data");
-        networkRestoreRunning.store(false);
-        return;
-    }
-    resumeData->packets = std::move(pendingPackets);
-    BaseType_t result = xTaskCreatePinnedToCore(
-        netWorkRestoreTask, "netResTask", 8 * 1024, resumeData, 5, NULL, 0);
-    if (result != pdPASS)
-    {
-        LOG_ERROR("Failed to create pending packet recovery task");
-        delete resumeData;
-        networkRestoreRunning.store(false);
-    }
+    // Firmware 2.0.3: recover one marker in the existing maintenance task.
+    // No temporary ResumeData object or 5 KiB FreeRTOS task is allocated.
+    recoverPendingPacket(pendingPackets.front());
+    networkRestoreRunning.store(false);
+    LOG_INFO("[DIAG] RECOVERY_DONE free=%u largest=%u stack_high_water=%u",
+             ESP.getFreeHeap(), ESP.getMaxAllocHeap(),
+             (unsigned)uxTaskGetStackHighWaterMark(NULL));
 }
 
 static bool isValidClockTime(uint64_t timestamp)

@@ -126,14 +126,12 @@ DataPacket *TvocCollect::collect()
         }
         else
         {
-            packet->is_valid = false;
             LOG_ERROR("Modbus Parser -> All samples failed or data is invalid.");
         }
     }
     else
     {
         packet->value = 0.0f;
-        packet->is_valid = false;
         LOG_ERROR("Failed to get TTL Mutex for %s", _id.c_str());
     }
     return packet;

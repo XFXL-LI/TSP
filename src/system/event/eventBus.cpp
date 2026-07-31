@@ -83,8 +83,18 @@ EventBus& EventBus::getInstance() {
     return instance;
 }
 
-QueueHandle_t EventBus::createReceiverQueue(uint32_t queueDepth) {
-    return xQueueCreate(queueDepth, sizeof(EventMsg));
+QueueHandle_t EventBus::createReceiverQueue(uint32_t queueDepth, const char* queueName) {
+    QueueHandle_t queue = xQueueCreate(queueDepth, sizeof(EventMsg));
+    // Firmware 2.0.2 (2026-07-30): PermissionSystem creates and deletes a
+    // response queue for every LCD/DTU request. Registering those unnamed
+    // handles permanently in queueNames leaked one std::map node per request.
+    if (queue != nullptr && queueName != nullptr && queueName[0] != '\0') {
+        if (xSemaphoreTake(busMutex, portMAX_DELAY)) {
+            queueNames[queue] = String(queueName);
+            xSemaphoreGive(busMutex);
+        }
+    }
+    return queue;
 }
 void EventBus::clearQueue(QueueHandle_t queue) {
     if (queue == NULL) return;
@@ -121,6 +131,32 @@ void EventBus::publish(EventID id, void* data) {
     if (xSemaphoreTake(busMutex, portMAX_DELAY)) {
         if (subscribers.find(id) != subscribers.end()) {
             for (QueueHandle_t q : subscribers[id]) {
+                // Avoid allocating a temporary String for every published
+                // event. Only long-lived, explicitly named queues are stored.
+                const char* queueName = "unnamed";
+                auto nameIt = queueNames.find(q);
+                if (nameIt != queueNames.end()) {
+                    queueName = nameIt->second.c_str();
+                }
+
+                // Firmware 2.0.1 (2026-07-30):
+                // Processed monitoring data must not use the legacy
+                // "queue full -> clear every old message" policy. Apply
+                // backpressure so REAL/MIN/HOUR/DAY packets keep their order.
+                if (id == EventID::PROCESSED_DATA_COLLECTED) {
+                    UBaseType_t waiting = uxQueueMessagesWaiting(q);
+                    UBaseType_t spaces = uxQueueSpacesAvailable(q);
+                    if (spaces <= 2) {
+                        LOG_WARNING("[DIAG] QUEUE_PRESSURE event=%d queue=%s waiting=%u spaces=%u",
+                                    (int)id,
+                                    queueName,
+                                    (unsigned)waiting,
+                                    (unsigned)spaces);
+                    }
+                    xQueueSend(q, &msg, portMAX_DELAY);
+                    continue;
+                }
+
                 if (xQueueSend(q, &msg, 0) != pdTRUE) {
                     EventMsg tempMsg;
                     uint32_t droppedNow = 0;
@@ -131,8 +167,9 @@ void EventBus::publish(EventID id, void* data) {
                     uint32_t total = droppedMessages.fetch_add(
                         droppedNow, std::memory_order_relaxed) + droppedNow;
                     BaseType_t resent = xQueueSend(q, &msg, pdMS_TO_TICKS(100));
-                    LOG_ERROR("[DIAG] EVENT_DROP event=%d dropped=%u total=%u resent=%d queue=%p",
+                    LOG_ERROR("[DIAG] EVENT_DROP event=%d queue=%s dropped=%u total=%u resent=%d handle=%p",
                               (int)id,
+                              queueName,
                               (unsigned)droppedNow,
                               (unsigned)total,
                               resent == pdTRUE ? 1 : 0,
