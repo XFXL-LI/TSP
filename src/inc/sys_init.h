@@ -10,8 +10,8 @@
 #include "../module/log/log_manager.h"
 
 //新版本
-// Firmware 2.0.3: long-running heap, HJ212 scheduling and SD integrity fixes.
-#define VERSION2 "2.0.3"
+// Firmware 2.0.4: retain valid CSQ state and prevent LED statistics backlog.
+#define VERSION2 "2.0.4"
 
 struct SYSINFO {
     int csq;

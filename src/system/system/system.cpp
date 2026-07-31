@@ -38,9 +38,9 @@
 #define PUMP1_PIN 41
 #define ALARM_PIN 40    // 12v电控制开�?
 
-// Firmware 2.0.1 (2026-07-30):
-// Yinerda M100M-B2 requires packets to be sent one at a time with an
-// approximate minimum interval of 600 ms. Use 1000 ms as a safe margin.
+// Firmware 2.0.4 (2026-07-31):
+// Yinerda M100M-B2 requires packets to be sent one at a time. Keep the
+// field-test interval at 3000 ms; this is independent of CSQ scheduling.
 static constexpr uint32_t HJ212_PACKET_GAP_MS = 3000;
 // Firmware 2.0.2 (2026-07-30): pending recovery is maintenance work, not a
 // per-CSQ operation. Back off scans to avoid repeated task allocation.
@@ -258,6 +258,21 @@ static void updateSetupTask(void *pvParameters)
 
         {
             SYSTEM_SETUP newSetup = ConfigManager::getInstance().getSetup();
+            const int lastValidCsq = newSetup.netCsq;
+            const bool csqValid = csq >= 0 && csq <= 31;
+
+            // Firmware 2.0.4: a failed CSQ command is not proof that the
+            // network is down. Keep the last valid CSQ so live HJ212 delivery
+            // is still attempted; the packet ACK remains the delivery truth.
+            if (!csqValid)
+            {
+                netWorkError = true;
+                LOG_WARNING("[DIAG] CSQ_INVALID_KEEP value=%d last=%d",
+                            csq, lastValidCsq);
+                vTaskDelay(pdMS_TO_TICKS(CSQ_POLL_INTERVAL_MS));
+                continue;
+            }
+
             newSetup.netCsq = csq;
             ConfigManager::getInstance().updateSetup(newSetup);
             if (systemInfo.mutex == NULL)
@@ -270,14 +285,14 @@ static void updateSetupTask(void *pvParameters)
                 xSemaphoreGive(systemInfo.mutex);
             }
 
-            if (netWorkError && csq >= 0 && csq <= 31)
+            if (netWorkError)
             {
                 fileRestore();
                 lastPendingScanMs = millis();
                 LOG_INFO("Network restored with CSQ: %d", csq);
                 netWorkError = false;
             }
-            else if (csq >= 0 && csq <= 31)
+            else
             {
                 netWorkError = false;
                 LOG_DEBUG("Updated network CSQ: %d", csq);
@@ -291,11 +306,6 @@ static void updateSetupTask(void *pvParameters)
                     fileRestore();
                     lastPendingScanMs = nowMs;
                 }
-            }
-            else
-            {
-                netWorkError = true;
-                LOG_ERROR("Invalid CSQ value: %d, skipping update.", csq);
             }
         }
         vTaskDelay(pdMS_TO_TICKS(CSQ_POLL_INTERVAL_MS));
@@ -882,10 +892,19 @@ static void LedPrintTask(void *pvParameters)
                 AllProcessedDataPacket *allData = static_cast<AllProcessedDataPacket *>(msg.data);
                 if (allData != nullptr)
                 {
-                    ledManager.updateDisplay(allData, collectTime, collectMap);
-                }
-                if (allData != nullptr)
-                {
+                    // Firmware 2.0.4: the LED cycles through one real-time
+                    // snapshot for the full collection interval. Minute,
+                    // hour and day packets must not consume another full
+                    // display cycle or remain queued and retain heap.
+                    if (allData->dataTime == DataTime::REAL_DATA)
+                    {
+                        ledManager.updateDisplay(allData, collectTime, collectMap);
+                    }
+                    else
+                    {
+                        LOG_DEBUG("[DIAG] LED_SKIP_NONREAL type=%d timestamp=%llu",
+                                  (int)allData->dataTime, allData->last_update);
+                    }
                     allData->release();
                 }
             }

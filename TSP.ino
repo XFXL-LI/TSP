@@ -2,8 +2,8 @@
 
 
 //�°汾
-// Firmware 2.0.3: bounded LCD queries and centralized HJ212/SD arbitration.
-#define VERSION2 "2.0.3"
+// Firmware 2.0.4: retain valid CSQ state and prevent LED statistics backlog.
+#define VERSION2 "2.0.4"
 
 void setup()
 {
