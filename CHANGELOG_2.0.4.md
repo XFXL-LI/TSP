@@ -1,39 +1,48 @@
 # Firmware 2.0.4
 
-Date: 2026-07-31
+发布日期：2026-07-31
 
-## Evidence
+## 修改依据
 
-- Hardware logs showed complete minute collection and SD storage while live
-  delivery was skipped for several minutes after a CSQ command returned `99`.
-- The LED receiver queue reached `waiting=5 spaces=0`. Five processed packets
-  remained retained, matching the observed stepwise heap reduction.
-- Pending packet files were structurally intact and had no leading zero bytes.
-- Hour files and HJ212 hour packets were generated and acknowledged normally.
+- Firmware 2.0.3 硬件日志显示，逐分钟采集和 SD 保存完整，但 CSQ 命令返回
+  `99` 后会覆盖上一次有效值，导致数分钟实时数据没有立即尝试上传。
+- LED 接收队列曾达到 `waiting=5 spaces=0`，并持续保留5个处理包，与可用堆
+  阶梯式下降的现象一致。
+- pending 文件结构完整，没有发现前部零字节。
+- 小时文件和 HJ212 小时包均能正常生成。
 
-## Changes
+## 修改内容
 
-- An invalid CSQ command result no longer overwrites the last valid CSQ.
-- Added `CSQ_INVALID_KEEP` diagnostics for invalid CSQ results.
-- Live HJ212 upload remains eligible after a transient CSQ command failure;
-  the actual packet ACK determines whether the packet is saved for retry.
-- The RS485 LED display now processes only real-time packets. Minute, hour,
-  and day packets are released immediately instead of consuming a full display
-  cycle and filling the LED queue.
-- Added `LED_SKIP_NONREAL` diagnostics.
-- Kept the field-test HJ212 packet gap at 3000 ms.
+- 无效 CSQ 不再覆盖上一次有效 CSQ，并新增 `CSQ_INVALID_KEEP` 诊断标记。
+- CSQ 瞬时失败后，实时 HJ212 仍允许尝试上传；实际报文 ACK 决定是否写入
+  pending。
+- RS485 LED 只处理实时包。分钟、小时和日包立即释放并记录
+  `LED_SKIP_NONREAL`，避免统计包占用完整显示周期并填满 LED 队列。
+- HJ212 逐包测试间隔保持3000毫秒。
 
-## Compatibility
+## 2.0.4 硬件复测后的补充修正
 
-- LCD `get_data` behavior and polling interval are unchanged.
-- The LED real-time display cycle duration is unchanged.
-- Minute, hour, and day collection, calculation, boundary settlement, storage,
-  packet content, and dispatch rules are unchanged.
-- Pending packet format and SD write verification are unchanged.
+- 16:28–17:21 的复测中，CSQ 无效值被正确保留，实时采集和 SD 文件连续，
+  LED 非实时包能够释放。
+- 同时发现 CSQ 查询与实时上传均为60秒周期。一次碰撞后，CSQ 每次延后仍等待
+  完整60秒，可能长期与上传保持同相位，导致五分钟 pending 维护扫描停止。
+- `CSQ_DEFERRED` 或无效 CSQ 现在改为5秒后重试；健康状态下的正常 CSQ
+  查询仍保持60秒周期。
+- pending 五分钟维护在取得过一次有效 CSQ 后独立计时，不再依赖本次 CSQ
+  命令成功；实际补传仍由 `DTUManager` 统一仲裁串口。
 
-## Validation required
+## 兼容性说明
 
-- Confirm transient invalid CSQ results do not create consecutive live gaps.
-- Confirm the LED queue no longer remains full.
-- Confirm free heap and largest block stabilize during a multi-hour test.
-- Confirm hour files and `type=2` uploads remain unchanged.
+- LCD `get_data` 行为和查询间隔保持不变。
+- LED 实时显示周期保持不变。
+- 分钟、小时和日统计的采集、计算、边界结算、存储、报文内容和分发规则
+  均未修改。
+- pending 文件格式和 SD 写后校验保持不变。
+
+## 后续硬件验证
+
+- 确认 `CSQ_DEFER` 后约5秒能够重新查询，而不是每分钟重复碰撞。
+- 保留现有两个 pending 文件，确认首次有效 CSQ 后恢复一个，五分钟后恢复
+  第二个，并出现 `RECOVERY_DONE`。
+- 继续观察可用堆和最大连续块在多小时运行中保持稳定。
+- 确认小时文件和 `type=2` 上传规则保持不变。

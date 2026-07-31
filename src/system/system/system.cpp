@@ -46,6 +46,10 @@ static constexpr uint32_t HJ212_PACKET_GAP_MS = 3000;
 // per-CSQ operation. Back off scans to avoid repeated task allocation.
 static constexpr uint32_t PENDING_SCAN_INTERVAL_MS = 5UL * 60UL * 1000UL;
 static constexpr uint32_t CSQ_POLL_INTERVAL_MS = 60UL * 1000UL;
+// Firmware 2.0.4 hardware validation found that a full 60-second delay after
+// CSQ_DEFERRED can phase-lock the CSQ task to the once-per-minute live upload.
+// Retry briefly after a collision while keeping healthy polling at 60 seconds.
+static constexpr uint32_t CSQ_RETRY_INTERVAL_MS = 5UL * 1000UL;
 
 // ********** 时间相关定义 **********
 Ds1302 rtc(17, 6, 7);
@@ -225,8 +229,24 @@ static void updateSetupTask(void *pvParameters)
     volatile bool netWorkError = false;
     int countTime = 0;
     uint32_t lastPendingScanMs = 0;
+    bool hasValidCsq = false;
     while (true)
     {
+        // Firmware 2.0.4: pending maintenance must not depend on the current
+        // CSQ command succeeding. Once one valid CSQ has been observed, keep
+        // the five-minute recovery clock running even when CSQ is deferred by
+        // a live upload. DTUManager still arbitrates the actual serial send.
+        if (hasValidCsq)
+        {
+            uint32_t nowMs = millis();
+            if (lastPendingScanMs == 0 ||
+                nowMs - lastPendingScanMs >= PENDING_SCAN_INTERVAL_MS)
+            {
+                fileRestore();
+                lastPendingScanMs = millis();
+            }
+        }
+
         if (countTime >= 720)
         {
             uint64_t currentTime = getCurrentTime();
@@ -252,7 +272,7 @@ static void updateSetupTask(void *pvParameters)
         int csq = DTUManager::getInstance().hj212DTUCSQ();
         if (csq == DTUManager::CSQ_DEFERRED)
         {
-            vTaskDelay(pdMS_TO_TICKS(CSQ_POLL_INTERVAL_MS));
+            vTaskDelay(pdMS_TO_TICKS(CSQ_RETRY_INTERVAL_MS));
             continue;
         }
 
@@ -269,10 +289,11 @@ static void updateSetupTask(void *pvParameters)
                 netWorkError = true;
                 LOG_WARNING("[DIAG] CSQ_INVALID_KEEP value=%d last=%d",
                             csq, lastValidCsq);
-                vTaskDelay(pdMS_TO_TICKS(CSQ_POLL_INTERVAL_MS));
+                vTaskDelay(pdMS_TO_TICKS(CSQ_RETRY_INTERVAL_MS));
                 continue;
             }
 
+            hasValidCsq = true;
             newSetup.netCsq = csq;
             ConfigManager::getInstance().updateSetup(newSetup);
             if (systemInfo.mutex == NULL)
@@ -296,15 +317,12 @@ static void updateSetupTask(void *pvParameters)
             {
                 netWorkError = false;
                 LOG_DEBUG("Updated network CSQ: %d", csq);
-                // Firmware 2.0.2 (2026-07-30): healthy CSQ does not require a
-                // filesystem scan every cycle. Retry pending data at a bounded
-                // maintenance interval to prevent heap churn.
-                uint32_t nowMs = millis();
-                if (lastPendingScanMs == 0 ||
-                    nowMs - lastPendingScanMs >= PENDING_SCAN_INTERVAL_MS)
+                // Start maintenance after the first valid CSQ. Later scans are
+                // scheduled independently at the top of this task loop.
+                if (lastPendingScanMs == 0)
                 {
                     fileRestore();
-                    lastPendingScanMs = nowMs;
+                    lastPendingScanMs = millis();
                 }
             }
         }

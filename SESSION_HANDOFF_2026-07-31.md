@@ -2,8 +2,10 @@
 
 更新时间：2026-07-31  
 当前固件版本：`2.0.4`  
-当前状态：`2.0.3` 已完成约 74 分钟硬件取证；`2.0.4` 已按证据完成
-CSQ 保留和 LED 队列定向修复并编译通过，等待重新烧录和长时间测试。
+当前状态：`2.0.4` 已完成16:28–17:21硬件复测。CSQ无效值保留和LED非实时包
+释放均已验证有效；复测发现60秒CSQ查询与60秒实时上传可能相位锁定，导致
+pending维护停止，现已完成5秒短重试和独立五分钟维护调度并编译通过，等待
+重新烧录复测。
 
 ## 1. 新会话首先要做什么
 
@@ -20,7 +22,7 @@ CSQ 保留和 LED 队列定向修复并编译通过，等待重新烧录和长�
 本轮实际修改和编译的源码是：
 
 ```text
-D:\ChatGPT-Pro\TSP-ESP32-S3\tmp\github_compile_source_1933cb0\TSP
+D:\ChatGPT-Pro\TSP-ESP32-S3\tmp\Firmware_2.0.3_original\TSP
 ```
 
 注意：工作区内还有另一个目录：
@@ -40,7 +42,8 @@ D:\ChatGPT-Pro\TSP-ESP32-S3\TSP
 - PSRAM：Disabled
 - CPU：240 MHz
 - HJ212 DTU：银尔达 M100M-B2
-- DTU 厂家确认逐包发送的参考间隔约为 600 ms；固件使用 1000 ms 安全间隔。
+- DTU 厂家确认逐包发送的参考间隔约为 600 ms；当前现场测试配置使用
+  3000 ms逐包间隔。
 - SHT30 是独立 I2C 温湿度传感器，不走 RS485。
 - 屏幕实时查询 `get_data` 当前请求约 10 个传感器 ID。
 - 屏幕历史查询 `get_records` 每次只查询一个时间点，不会一次读取整段历史。
@@ -161,8 +164,9 @@ get_data
 - 实时上传登记“等待中/发送中”状态并具有优先权。
 - CSQ 遇到上传等待、正在上传或刚上传完成时返回 `CSQ_DEFERRED`。
 - `updateSetupTask` 收到 deferred 后保留上次 CSQ，不把它当成断网。
-- CSQ 查询周期保持 60 秒。
-- HJ212 逐包间隔保持 1000 ms。
+- 健康状态下CSQ查询周期保持60秒；deferred或无效值改为5秒后短重试，避免
+  与每分钟实时上传长期相位锁定。
+- HJ212逐包间隔保持3000毫秒。
 - 诊断标记：
   - `CSQ_DEFER`
   - `HJ_TX_DEFER`
@@ -174,6 +178,7 @@ get_data
 - 删除每次补传临时创建的 5 KiB FreeRTOS 任务。
 - 复用常驻维护任务，并将其固定栈从 4 KiB 调整到 6 KiB。
 - 每五分钟扫描一次，每个周期最多恢复一个 pending 包。
+- 取得过一次有效CSQ后，五分钟维护独立计时，不再依赖当前CSQ命令成功。
 - 重建失败可能是暂时内存不足，因此保留 marker，后续再试，不立即隔离。
 - 诊断标记：
   - `RECOVERY_RETAIN`
@@ -208,7 +213,7 @@ PENDING_WRITE_VERIFY_FAIL
 Arduino CLI 已完整编译成功：
 
 ```text
-Sketch uses 620472 bytes (19%) of program storage space.
+Sketch uses 620584 bytes (19%) of program storage space.
 Global variables use 25936 bytes (7%) of dynamic memory,
 leaving 301744 bytes for local variables.
 ```
@@ -216,15 +221,15 @@ leaving 301744 bytes for local variables.
 编译输出目录：
 
 ```text
-D:\ChatGPT-Pro\TSP-ESP32-S3\tmp\github_compile_source_1933cb0\TSP\.build_203
+D:\ChatGPT-Pro\TSP-ESP32-S3\tmp\Firmware_2.0.3_original\TSP\.build_204
 ```
 
 主要文件：
 
 ```text
-.build_203\TSP.ino.bin
-.build_203\TSP.ino.elf
-.build_203\TSP.ino.merged.bin
+.build_204\TSP.ino.bin
+.build_204\TSP.ino.elf
+.build_204\TSP.ino.merged.bin
 ```
 
 Arduino FQBN：
@@ -236,14 +241,15 @@ esp32:esp32:esp32s3:UploadSpeed=921600,USBMode=hwcdc,CDCOnBoot=default,MSCOnBoot
 ## 9. 下一轮测试步骤
 
 1. 在 Arduino IDE 中打开当前源码目录的 `TSP.ino`。
-2. 编译并重新烧录，因为 `2.0.3` 已修改固件代码。
+2. 编译并重新烧录包含CSQ短重试和独立pending维护调度的 `2.0.4`。
 3. 启动日志必须看到：
 
 ```text
-Firmware version: 2.0.3
+Firmware version: 2.0.4
 ```
 
-4. 清理测试用 SD 数据后，从设备启动开始连续记录 USB 日志。
+4. 暂时保留 `E:\pending` 中现有的两个测试文件，从设备启动开始连续记录
+   USB日志，用它们直接验证自动补传。
 5. 正常运行至少 2 小时，期间持续操作 LCD：
    - 实时查询；
    - 历史查询；
@@ -262,6 +268,7 @@ Firmware version: 2.0.3
 - `GET_DATA_DIRECT ids=10 ...`
 - `free` 和 `largest` 有小幅波动，但不持续单向下降到几 KB。
 - 上传繁忙时偶发 `CSQ_DEFER`。
+- `CSQ_DEFER` 后应约5秒重试，不应再连续每60秒同相位延后。
 - 大部分发送为 `TX_RESULT ... ack=1`。
 - 有待补传数据时每五分钟最多出现一次 `RECOVERY_DONE`。
 
@@ -302,10 +309,15 @@ DEV_LOG_2026-07-31.md
 
 ## 12. 尚未完成和不能过早下结论的事项
 
-- `2.0.3` 只完成了代码与编译验证，尚未获得烧录后的长时间硬件日志。
-- 尚不能宣称实时/小时数据缺失已经完全解决，必须通过新日志、SD 文件和服务器数据联合确认。
-- LED 队列压力需要继续观察，但没有新证据前不要与本次稳定性修改混在一起大改。
-- 若仍发生内存下降，应使用 `.build_203\TSP.ino.elf` 解码新崩溃栈，不能继续使用旧的 `.build_202` ELF。
+- `2.0.4` 的无效CSQ保留和LED非实时包释放已获得约53分钟硬件证据，但仍需
+  更长时间测试。
+- 新增的5秒CSQ短重试和独立pending维护尚未硬件验证；重点确认现有两个
+  marker能够自动删除，且不影响实时包。
+- 尚不能宣称实时/小时数据缺失已经完全解决，必须继续通过新日志、SD文件和
+  服务器数据联合确认。
+- LED队列压力继续观察，但当前堆基线稳定，没有证据要求继续调整显示周期。
+- 若仍发生内存下降，应使用最新 `.build_204\TSP.ino.elf` 解码，不能继续使用
+  旧版本ELF。
 
 ## 13. 推荐的新会话首条消息
 
@@ -315,14 +327,14 @@ DEV_LOG_2026-07-31.md
 请继续处理 TSP ESP32-S3 项目。
 
 当前实际源码目录是：
-D:\ChatGPT-Pro\TSP-ESP32-S3\tmp\github_compile_source_1933cb0\TSP
+D:\ChatGPT-Pro\TSP-ESP32-S3\tmp\Firmware_2.0.3_original\TSP
 
 请先完整读取：
 SESSION_HANDOFF_2026-07-31.md
 CHANGELOG_2.0.3.md
 DEV_LOG_2026-07-31.md
 
-当前 Firmware 2.0.3 已编译通过，小时统计逻辑明确不允许修改。
+当前 Firmware 2.0.4 已编译通过，小时统计逻辑明确不允许修改。
 下一步先根据我提供的新日志和 SD 卡目录验证屏幕内存、HJ212 实时/小时上传、
 CSQ 延后调度、pending 补传和 SD 文件完整性。没有证据前不要继续扩大修改范围。
 ```
