@@ -1,32 +1,25 @@
 # Firmware 2.0.3
 
-Date: 2026-07-31
+发布日期：2026-07-31
 
-## Stability changes
+## 稳定性修改
 
-- LCD `get_data` now reads only the requested sensor values into fixed-size
-  buffers. It no longer creates a temporary EventBus response queue or clones
-  the complete real-time `std::map` on every screen poll.
-- Added allocation-failure protection to the legacy internal data-query route.
-- Centralized all HJ212 serial arbitration in `DTUManager`.
-- Live HJ212 upload has priority. CSQ returns a deferred state when an upload is
-  active, waiting, or has just completed; the last known CSQ remains in use.
-- Removed the transient 5 KiB pending-recovery task. The permanent maintenance
-  task now restores one pending packet per five-minute maintenance cycle.
-- A pending marker is retained when rebuilding is temporarily unavailable
-  instead of being quarantined immediately.
-- Serialized SD/FAT operations across storage, LCD history reads, and pending
-  recovery.
-- Pending HJ212 files are read back and byte-compared after writing. A failed
-  verification is logged and the corrupt marker is removed.
+- LCD 调用 `get_data` 时，只把请求的传感器值读取到固定大小的缓冲区中。屏幕每次轮询时，不再临时创建 EventBus 响应队列，也不再复制完整的实时数据 `std::map`。
+- 为原有的内部数据查询路径增加内存分配失败保护。
+- 将所有 HJ212 串口访问统一交由 `DTUManager` 仲裁。
+- 实时 HJ212 上传具有优先权。当上传正在进行、等待发送或刚刚完成时，CSQ 查询返回延后状态，并继续使用上一次有效的 CSQ。
+- 移除临时创建、占用约 5 KiB 栈空间的待补传恢复任务。改由常驻维护任务每五分钟最多恢复一个待补传数据包。
+- 待补传数据暂时无法重建时，保留其标记，避免立即将其隔离。
+- 对数据存储、LCD 历史记录读取和待补传恢复涉及的 SD/FAT 操作进行串行化保护。
+- HJ212 待补传文件写入后重新读取并逐字节校验。校验失败时记录日志，并删除损坏的标记文件。
 
-## Compatibility
+## 兼容性说明
 
-- HJ212 2017/2025 packet contents and the 1-second packet gap are unchanged.
-- Minute, hour, and day statistic calculation and dispatch logic are unchanged.
-- Screen and remote-control JSON response fields remain compatible.
+- HJ212 2017/2025 报文内容及 1 秒逐包间隔保持不变。
+- 分钟、小时和日统计的计算及分发逻辑保持不变。
+- 屏幕和远程控制使用的 JSON 响应字段保持兼容。
 
-## Diagnostic markers
+## 诊断日志标记
 
 - `GET_DATA_DIRECT`
 - `DATA_QUERY_OOM`
