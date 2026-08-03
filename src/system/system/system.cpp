@@ -663,6 +663,7 @@ static void Hj212_2017SendTask(void *pvParameters)
                         if (allData->last_update > 20260527000000)
                         {
                             LOG_WARNING("HJ212 Packet construction failed or empty.");
+                            filesys.savePendingRebuildMarker(allData);
                         }
                     }
                 }
@@ -672,7 +673,14 @@ static void Hj212_2017SendTask(void *pvParameters)
                     {
                         String HJ212_str = HJ212.build2017Hj212Packet(allData, config);
                         LOG_WARNING("Network unavailable, saving HJ212 packet for retry.");
-                        filesys.savePendingPacket(allData, HJ212_str);
+                        if (HJ212_str.length() > 0)
+                        {
+                            filesys.savePendingPacket(allData, HJ212_str);
+                        }
+                        else
+                        {
+                            filesys.savePendingRebuildMarker(allData);
+                        }
                     }
                 }
                 if (allData != nullptr)
@@ -764,6 +772,7 @@ static void Hj212_2025SendTask(void *pvParameters)
                         if (allData->last_update > 20260527000000)
                         {
                             LOG_WARNING("HJ212 Packet construction failed or empty.");
+                            filesys.savePendingRebuildMarker(allData);
                         }
                     }
                 }
@@ -773,7 +782,14 @@ static void Hj212_2025SendTask(void *pvParameters)
                     {
                         String HJ212_str = HJ212.build2025Hj212Packet(allData, config);
                         LOG_WARNING("Network unavailable, saving HJ212 packet for retry.");
-                        filesys.savePendingPacket(allData, HJ212_str);
+                        if (HJ212_str.length() > 0)
+                        {
+                            filesys.savePendingPacket(allData, HJ212_str);
+                        }
+                        else
+                        {
+                            filesys.savePendingRebuildMarker(allData);
+                        }
                     }
                 }
                 if (allData != nullptr)
@@ -908,6 +924,41 @@ static void LedPrintTask(void *pvParameters)
             if (msg.id == EventID::PROCESSED_DATA_COLLECTED)
             {
                 AllProcessedDataPacket *allData = static_cast<AllProcessedDataPacket *>(msg.data);
+                uint32_t coalescedCount = 0;
+                EventMsg queuedMsg;
+                while (EventBus::getInstance().waitEvent(
+                    LedPrintTaskQueue, queuedMsg, 0))
+                {
+                    if (queuedMsg.id != EventID::PROCESSED_DATA_COLLECTED)
+                    {
+                        continue;
+                    }
+                    AllProcessedDataPacket *queuedData =
+                        static_cast<AllProcessedDataPacket *>(queuedMsg.data);
+                    if (queuedData == nullptr)
+                    {
+                        continue;
+                    }
+                    if (queuedData->dataTime == DataTime::REAL_DATA)
+                    {
+                        if (allData != nullptr)
+                        {
+                            allData->release();
+                        }
+                        allData = queuedData;
+                    }
+                    else
+                    {
+                        queuedData->release();
+                    }
+                    coalescedCount++;
+                }
+                if (coalescedCount > 0)
+                {
+                    LOG_INFO("[DIAG] LED_COALESCE drained=%u latest_timestamp=%llu",
+                             (unsigned)coalescedCount,
+                             allData != nullptr ? allData->last_update : 0ULL);
+                }
                 if (allData != nullptr)
                 {
                     // Firmware 2.0.4: the LED cycles through one real-time

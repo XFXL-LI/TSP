@@ -34,6 +34,7 @@ public:
     // ���������ݹ���ӿ�
     AllProcessedDataPacket* readPendingPacket(int type, uint64_t timestamp);
     bool savePendingPacket(const AllProcessedDataPacket* data, const String& packet);
+    bool savePendingRebuildMarker(const AllProcessedDataPacket* data);
     std::vector<PendingPacketInfo> scanPendingPackets(size_t maxPackets = 3);
     String loadPendingPacketContent(const PendingPacketInfo& pending);
     bool deletePendingPacket(const PendingPacketInfo& pending);

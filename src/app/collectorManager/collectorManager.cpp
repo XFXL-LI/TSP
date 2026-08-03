@@ -244,7 +244,16 @@ void collectorManager::poll()
                 auto alarmData = new SystemRuntimeStatus();
                 alarmData->systemErrorInfo = CHECK_RESULT::COLLECT_ERROR;
                 alarmData->errorInfo = "Data collection error for sensor ID: " + String(collector->getID().c_str());
+                int alarmSubscriberCount = EventBus::getInstance().getSubscriberCount(
+                    EventID::ALARM_TRIGGERED);
+                for (int i = 0; i < alarmSubscriberCount; ++i)
+                {
+                    alarmData->retain();
+                }
                 EventBus::getInstance().publish(EventID::ALARM_TRIGGERED, (void *)alarmData);
+                // The publisher owns the initial reference. Each subscriber
+                // owns one retained reference and releases it after handling.
+                alarmData->release();
                 data->release();
             }
         }

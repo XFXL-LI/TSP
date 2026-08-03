@@ -214,6 +214,53 @@ bool filesysManager::savePendingPacket(const AllProcessedDataPacket* data, const
     return false;
 }
 
+bool filesysManager::savePendingRebuildMarker(const AllProcessedDataPacket* data) {
+    if (data == nullptr || !file_storage::getInstance().isSDcardReady()) {
+        return false;
+    }
+    ScopedSdLock sdLock(_sdMutex);
+    if (!sdLock.locked()) {
+        LOG_WARNING("[DIAG] SD_LOCK_BUSY operation=save_rebuild_marker");
+        return false;
+    }
+
+    String path = getPendingFilePath(data->dataTime, data->last_update);
+    int lastSlash = path.lastIndexOf('/');
+    if (lastSlash == -1) return false;
+
+    String dirPath = path.substring(0, lastSlash);
+    if (file_storage::getInstance().makeDirs(dirPath.c_str()) != 0) {
+        LOG_ERROR("Failed to create pending rebuild directory: %s", dirPath.c_str());
+        return false;
+    }
+
+    // Never overwrite a complete pending HJ212 packet for the same timestamp.
+    FILE* existing = fopen(path.c_str(), "rb");
+    if (existing != nullptr) {
+        fclose(existing);
+        LOG_INFO("[DIAG] PENDING_MARKER_EXISTS type=%u timestamp=%llu path=%s",
+                 (unsigned)data->dataTime, data->last_update, path.c_str());
+        return true;
+    }
+
+    static const char marker[] = "REBUILD_FROM_SD";
+    FILE* f = fopen(path.c_str(), "wb");
+    if (f == nullptr) {
+        LOG_ERROR("Failed to create pending rebuild marker: %s", path.c_str());
+        return false;
+    }
+    size_t written = fwrite(marker, 1, sizeof(marker) - 1, f);
+    fclose(f);
+    if (written != sizeof(marker) - 1) {
+        remove(path.c_str());
+        LOG_ERROR("Pending rebuild marker write size mismatch: %s", path.c_str());
+        return false;
+    }
+    LOG_INFO("[DIAG] PENDING_REBUILD_MARKER type=%u timestamp=%llu path=%s",
+             (unsigned)data->dataTime, data->last_update, path.c_str());
+    return true;
+}
+
 AllProcessedDataPacket* filesysManager::readPendingPacket(int type, uint64_t timestamp) {
     ScopedSdLock sdLock(_sdMutex);
     if (!sdLock.locked()) {
