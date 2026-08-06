@@ -10,7 +10,8 @@
 #include "../module/log/log_manager.h"
 
 //新版本
-#define VERSION2 "2.0.0"
+// Firmware 2.0.4: retain valid CSQ state and prevent LED statistics backlog.
+#define VERSION2 "2.0.4"
 
 struct SYSINFO {
     int csq;

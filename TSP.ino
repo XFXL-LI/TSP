@@ -2,7 +2,8 @@
 
 
 //�°汾
-#define VERSION2 "2.0.0"
+// Firmware 2.0.4: retain valid CSQ state and prevent LED statistics backlog.
+#define VERSION2 "2.0.4"
 
 void setup()
 {

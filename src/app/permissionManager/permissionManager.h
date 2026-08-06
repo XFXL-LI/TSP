@@ -6,14 +6,15 @@
 #include "../../inc/sys_init.h"
 #include "../../system/event/eventBus.h"
 #include "../../module/Serial/SerialManager.h"
+#include <cJSON.h>
 
 class PermissionSystem;
 
 enum class PermissionLevel
 {
-    GUEST = 0, // ·Ã¿Í
-    USER = 1,  // ²Ù×÷Ô±
-    ADMIN = 2  // ¹ÜÀíÔ±
+    GUEST = 0, // è®¿å®¢
+    USER = 1,  // æ“ä½œå‘˜
+    ADMIN = 2  // ç®¡ç†å‘˜
 };
 struct CommandPermission
 {
@@ -66,13 +67,14 @@ private:
     void executeCommand(String cmd, String args, Stream *stream);
     void dispatchBusiness(JSONCmdData *data, Stream *stream);
     void sendResponse(Stream *stream, String op, String code, String msg);
+    void sendRealtimeDataDirect(cJSON *request, Stream *stream);
     void sendEventData(JSONCmdData *data, EventID id);
     void executeAsyncRoute(JSONCmdData *data, Stream *stream, const CommandRoute *route);
     bool handleGenericRequest(JSONCmdData *data, Stream *stream, EventID reqID, EventID resID);
 
     void sendMsg(Stream *stream, const char *msg);
 
-    // »Øµ÷
+    // å›è°ƒ
     static void onDataQueryRes(void *eventData, Stream *stream, String cmd, String args);
     void getData(AllProcessedDataPacket *allData, Stream *stream, const String &cmd, const String &args);
     void getRecordsData(AllProcessedDataPacket *allData, Stream *stream, const String &cmd, const String &args);

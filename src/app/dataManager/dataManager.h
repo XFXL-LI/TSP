@@ -49,6 +49,10 @@ public:
     void processAllData(AllDataPacket* pkg);
     void begin();
     void poll();
+    // Firmware 2.0.3: copy only the values requested by the LCD. This avoids
+    // cloning the complete std::map for every get_data command.
+    bool readLatestValues(const char* const* ids, size_t idCount,
+                          float* values, uint64_t& timestamp);
 
 private:
     DataManager();

@@ -37,7 +37,18 @@ void LedManager::updateDisplay(const AllProcessedDataPacket *packet, int updateT
     }
     int step = 1;
     int size = packet->processed_data_map.size();
-    uint32_t delay = updateTime / size * 1000;
+    const uint32_t updateMs = (uint32_t)updateTime * 1000U;
+    const uint32_t displayHeadroomMs = 5000U;
+    const uint32_t displayBudgetMs = updateMs > displayHeadroomMs
+        ? updateMs - displayHeadroomMs
+        : updateMs;
+    uint32_t itemDelayMs = displayBudgetMs / (uint32_t)size;
+    if (itemDelayMs == 0)
+    {
+        itemDelayMs = 1;
+    }
+    LOG_DEBUG("[DIAG] LED_CYCLE records=%d budget_ms=%u item_delay_ms=%u",
+              size, (unsigned)displayBudgetMs, (unsigned)itemDelayMs);
     for (const auto &entry : packet->processed_data_map)
     {
         const String &sensorId = entry.first;
@@ -74,7 +85,7 @@ void LedManager::updateDisplay(const AllProcessedDataPacket *packet, int updateT
             }
             step = 1;
         }
-        vTaskDelay(pdMS_TO_TICKS(delay));
+        vTaskDelay(pdMS_TO_TICKS(itemDelayMs));
     }
 }
 

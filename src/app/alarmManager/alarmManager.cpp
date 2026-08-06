@@ -74,6 +74,7 @@ void alarmManager::poll(void) {
                 sys_status->systemErrorInfo = status->systemErrorInfo;
                 sys_status->errorInfo = status->errorInfo;
                 LOG_ERROR("Alarm triggered! System error info: %d", status->systemErrorInfo);
+                status->release();
             }
         }
     }

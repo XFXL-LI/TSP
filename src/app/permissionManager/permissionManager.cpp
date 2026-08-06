@@ -4,6 +4,8 @@
 #include "../../module/file/file_storage.h"
 #include "../../module/json/config_json.h"
 #include "../../system/event/eventBus.h"
+#include "../dataManager/dataManager.h"
+#include <stdarg.h>
 
 const char *USER_DB_PATH = "/users.db";
 
@@ -142,7 +144,7 @@ void PermissionSystem::handleStreamInput(Stream *stream, String &buf)
             else if (c == '}') bracketLevel--;
             if (isReceiving && bracketLevel == 0) {
                 LOG_DEBUG("Received TRUE Full JSON: %s", test.c_str());
-                // ÕâÀïµ÷ÓÃÄãµÄ processLine(test);
+                // è¿™é‡Œè°ƒç”¨ä½ çš„ processLine(test);
                 isReceiving = false;
                 test = "";
                 break;
@@ -166,20 +168,20 @@ void PermissionSystem::processLine(String line, Stream *stream)
 {
     LOG_DEBUG("Auth Receive: %s", line.c_str());
 
-    // Ê¹ÓÃÄã·â×°µÄ cJSON ¹¤¾ßÀà½âÎö
+    // ä½¿ç”¨ä½ å°è£…çš„ cJSON å·¥å…·ç±»è§£æ
     config_json json(line.c_str());
 
-    // 1. Èç¹ûÊÇºÏ·¨µÄ JSON ¸ñÊ½
+    // 1. å¦‚æœæ˜¯åˆæ³•çš„ JSON æ ¼å¼
     if (json.isValid())
     {
         LOG_DEBUG("json is valid");
         String op = json.getString("operation", "");
 
-        // --- ´¦ÀíµÇÂ¼ ---
+        // --- å¤„ç†ç™»å½• ---
         if (op == "login")
         {
             LOG_DEBUG("Start login");
-            // Ö§³Ö JSON ¸ñÊ½µÇÂ¼: {"operation":"login","user":"admin","pass":"123456"}
+            // æ”¯æŒ JSON æ ¼å¼ç™»å½•: {"operation":"login","user":"admin","pass":"123456"}
             String u = json.getString("user", "");
             String p = json.getString("pass", "");
             handleLogin(u, p, stream);
@@ -191,10 +193,10 @@ void PermissionSystem::processLine(String line, Stream *stream)
         }
         else if (op == "get_data")
         {
-            JSONCmdData *data = new JSONCmdData();
-            data->command = "get_data";
-            data->arguments = line;
-            dispatchBusiness(data, stream);
+            // Firmware 2.0.3: answer LCD polling directly from the protected
+            // snapshot. The previous asynchronous route copied a complete
+            // std::map and fragmented the heap on every screen operation.
+            sendRealtimeDataDirect(json.getJsonObject(), stream);
         }
         else if (op == "get_records"){
             JSONCmdData *data = new JSONCmdData();
@@ -216,6 +218,87 @@ void PermissionSystem::processLine(String line, Stream *stream)
     {
         sendResponse(stream, "ERROR", "NG", "Not parse json, json is error");
     }
+}
+
+static bool appendJson(char *buffer, size_t capacity, size_t &used,
+                       const char *format, ...)
+{
+    if (used >= capacity) return false;
+    va_list args;
+    va_start(args, format);
+    int written = vsnprintf(buffer + used, capacity - used, format, args);
+    va_end(args);
+    if (written < 0 || static_cast<size_t>(written) >= capacity - used) {
+        buffer[capacity - 1] = '\0';
+        return false;
+    }
+    used += static_cast<size_t>(written);
+    return true;
+}
+
+void PermissionSystem::sendRealtimeDataDirect(cJSON *request, Stream *stream)
+{
+    constexpr size_t MAX_LCD_IDS = 16;
+    constexpr size_t RESPONSE_CAPACITY = 1024;
+    const char *ids[MAX_LCD_IDS] = {};
+    float values[MAX_LCD_IDS] = {};
+    size_t idCount = 0;
+
+    cJSON *idsArray = request ? cJSON_GetObjectItemCaseSensitive(request, "ids") : nullptr;
+    if (cJSON_IsArray(idsArray)) {
+        cJSON *item = nullptr;
+        cJSON_ArrayForEach(item, idsArray) {
+            if (idCount >= MAX_LCD_IDS) break;
+            if (cJSON_IsString(item) && item->valuestring != nullptr) {
+                ids[idCount++] = item->valuestring;
+            }
+        }
+    }
+
+    uint64_t timestamp = 0;
+    if (!DataManager::getInstance().readLatestValues(ids, idCount, values, timestamp)) {
+        sendResponse(stream, "get_data", "NG", "Data snapshot busy");
+        return;
+    }
+
+    int csq = 99;
+    float temp = 0.0f;
+    float mete = 0.0f;
+    if (systemInfo.mutex != nullptr &&
+        xSemaphoreTake(systemInfo.mutex, pdMS_TO_TICKS(100)) == pdTRUE) {
+        csq = systemInfo.csq;
+        temp = systemInfo.temp;
+        mete = systemInfo.mete;
+        xSemaphoreGive(systemInfo.mutex);
+    }
+
+    char response[RESPONSE_CAPACITY] = {};
+    size_t used = 0;
+    bool ok = appendJson(response, sizeof(response), used,
+        "{\"operation\":\"get_data\",\"code\":\"OK\","
+        "\"message\":\"get data success\",\"timestamp\":%llu,"
+        "\"csq\":%d,\"temp\":%.2f,\"mete\":%.2f,\"params\":[",
+        timestamp, csq, temp, mete);
+    for (size_t i = 0; ok && i < idCount; ++i) {
+        ok = appendJson(response, sizeof(response), used, "%s\"%s\"",
+                        i == 0 ? "" : ",", ids[i]);
+    }
+    ok = ok && appendJson(response, sizeof(response), used, "],\"values\":[");
+    for (size_t i = 0; ok && i < idCount; ++i) {
+        ok = appendJson(response, sizeof(response), used, "%s%.2f",
+                        i == 0 ? "" : ",", values[i]);
+    }
+    ok = ok && appendJson(response, sizeof(response), used, "]}");
+    if (!ok) {
+        LOG_ERROR("[DIAG] GET_DATA_RESPONSE_OVERFLOW ids=%u capacity=%u",
+                  (unsigned)idCount, (unsigned)sizeof(response));
+        sendResponse(stream, "get_data", "NG", "Too many requested ids");
+        return;
+    }
+    sendMsg(stream, response);
+    LOG_DEBUG("[DIAG] GET_DATA_DIRECT ids=%u bytes=%u free=%u largest=%u",
+              (unsigned)idCount, (unsigned)used,
+              ESP.getFreeHeap(), ESP.getMaxAllocHeap());
 }
 
 void PermissionSystem::handleLogin(String user, String pass, Stream *stream)
@@ -350,7 +433,7 @@ void PermissionSystem::sendResponse(Stream *stream, String op, String code, Stri
     }
 }
 
-// ***************************************    »Øµ÷º¯Êı    ***************************************
+// ***************************************    å›è°ƒå‡½æ•°    ***************************************
 void PermissionSystem::onDataQueryRes(void *eventData, Stream *stream, String cmd, String args)
 {
     auto *packet = static_cast<AllProcessedDataPacket *>(eventData);
@@ -463,9 +546,9 @@ void PermissionSystem::onDTUCommand(void *eventData, Stream *stream, String cmd,
     }
 }
 
-// ***************************************    »Øµ÷º¯Êı    ***************************************
+// ***************************************    å›è°ƒå‡½æ•°    ***************************************
 
-// ***************************************    ´ò°ü´¦Àí    ***************************************
+// ***************************************    æ‰“åŒ…å¤„ç†    ***************************************
 void PermissionSystem::getData(AllProcessedDataPacket *allData, Stream *stream, const String &cmd, const String &args)
 {
     config_json request(args.c_str());
@@ -607,4 +690,4 @@ void PermissionSystem::getRecordsData(AllProcessedDataPacket *allData, Stream *s
     sendMsg(stream, jsonRes.c_str());
 }
 
-// ***************************************    ´ò°ü´¦Àí    ***************************************
+// ***************************************    æ‰“åŒ…å¤„ç†    ***************************************
