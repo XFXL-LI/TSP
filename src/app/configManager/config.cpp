@@ -47,7 +47,7 @@ void ConfigManager::begin(){
     }
     LOG_INFO("======== Global Configuration Dump ========");
 
-    // 1. ´òÓ¡ System ÅäÖÃ
+    // 1. æ‰“å° System é…ç½®
     LOG_INFO("[System Config]");
     LOG_INFO("  Collect Time: %d s", globalCfg.system.collect_time);
     LOG_INFO("  Upload Interval: %d s", globalCfg.system.upload_interval);
@@ -57,25 +57,25 @@ void ConfigManager::begin(){
              globalCfg.systemSwitch.save_raw_data, globalCfg.systemSwitch.save_min_data,
              globalCfg.systemSwitch.enable_hj212, globalCfg.systemSwitch.enable_remote_dtu);
 
-    // 2. ´òÓ¡ ÎÂ¿Ø ÅäÖÃ
+    // 2. æ‰“å° æ¸©æ§ é…ç½®
     LOG_INFO("[TempControl Config]");
     LOG_INFO("  Switch: %s", globalCfg.systemSwitch.tempConSwitch ? "ON" : "OFF");
     LOG_INFO("  Temp Range: [%d - %d]", globalCfg.tempControl.tempLowerLimit, globalCfg.tempControl.tempUpperLimit);
     LOG_INFO("  Humi Range: [%d - %d]", globalCfg.tempControl.wetnLowerLimit, globalCfg.tempControl.wetnUpperLimit);
 
-    // 3. ´òÓ¡ HJ212 ÅäÖÃ
+    // 3. æ‰“å° HJ212 é…ç½®
     LOG_INFO("[HJ212 Config]");
     LOG_INFO("  Server: %s", globalCfg.hj212.ip.c_str());
     LOG_INFO("  MN: %s, PW: %s", globalCfg.hj212.mn.c_str(), globalCfg.hj212.pw.c_str());
 
-    // 4. ´òÓ¡ ´«¸ĞÆ÷ (Map ±éÀú)
+    // 4. æ‰“å° ä¼ æ„Ÿå™¨ (Map éå†)
     LOG_INFO("[Sensor Collections] Total: %d", globalCfg.collectConfig.size());
     for (auto const& [id, cfg] : globalCfg.collectConfig) {
         LOG_INFO("  - ID: %s | Name: %s | Unit: %s",
                  id.c_str(), cfg.name.c_str(), cfg.unit.c_str());
     }
 
-    // 5. ´òÓ¡ ±¨¾¯ ÅäÖÃ
+    // 5. æ‰“å° æŠ¥è­¦ é…ç½®
     LOG_INFO("[Alarm Config]");
     LOG_INFO("  Sensor: %s | Upper Limit: %.2f | Lower Limit: %.2f | Switch: %s",
              globalCfg.alarmConfig.alarm_sensor.c_str(),
@@ -133,12 +133,12 @@ void ConfigManager::_parseSensors(cJSON *objectNode, COLLECTMAP &target_map)
         LOG_ERROR("Sensors node is NOT an object!");
         return;
     }
-    char *rawJson = cJSON_Print(objectNode); // ¸ñÊ½»¯´òÓ¡£¨´øËõ½ø£©
+    char *rawJson = cJSON_Print(objectNode); // æ ¼å¼åŒ–æ‰“å°ï¼ˆå¸¦ç¼©è¿›ï¼‰
     if (rawJson) {
         LOG_INFO("--- [Debug] Sensors JSON Node Content ---");
         LOG_INFO("\n%s", rawJson);
         LOG_INFO("-----------------------------------------");
-        cJSON_free(rawJson); // ±ØĞëÊÖ¶¯ÊÍ·Å cJSON_Print ·ÖÅäµÄÄÚ´æ
+        cJSON_free(rawJson); // å¿…é¡»æ‰‹åŠ¨é‡Šæ”¾ cJSON_Print åˆ†é…çš„å†…å­˜
     } else {
         LOG_ERROR("Failed to print sensors JSON node.");
     }
@@ -221,7 +221,7 @@ bool ConfigManager::loadFromFile(const char *path)
         else if (strcmp(path, SWITCH_PATH) == 0) defaultTemplate = SWITCH_JSON;
         else if (strcmp(path, ALARM_PATH) == 0) defaultTemplate = ALARM_JSON;
 
-        if (defaultTemplate && fs.writeFFAT(path, defaultTemplate) == 3) {
+        if (defaultTemplate && fs.writeFFAT(path, defaultTemplate) == 0) {
             content = String(defaultTemplate);
             ret = 0;
         } else {
@@ -344,7 +344,7 @@ bool ConfigManager::saveConfig(const char *path, const String &content)
 {    
     if (path == nullptr || strlen(path) == 0) return false;
 
-    return fs.writeFFAT(path, content.c_str()) == 3;
+    return fs.writeFFAT(path, content.c_str()) == 0;
 }
 bool ConfigManager::removeConfig(const char *path)
 {

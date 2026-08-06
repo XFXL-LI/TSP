@@ -52,23 +52,47 @@ int file_storage::readFFAT(const char *path, String &config_content) {
 
 int file_storage::writeFFAT(const char *path, const String &config_content) {
     if (!ffat_initialized) return 1;
+
+    // Reject empty content before removing the existing valid config file.
+    size_t expected = config_content.length();
+    if (expected == 0) {
+        LOG_ERROR("FFAT write rejected: empty content, path=%s", path);
+        return 3;
+    }
+
     if (FFat.exists(path)) {
         if (!FFat.remove(path)) {
-            return 4; 
+            return 4;
         }
     }
+
     File file = FFat.open(path, FILE_WRITE);
     if (!file) {
         return 2;
     }
 
-    if (file.print(config_content)) {
-        file.close();
-        return 0;
-    } else {
-        file.close();
+    size_t written = file.print(config_content);
+
+    file.flush();
+    file.close();
+
+    if (written != expected) {
+        LOG_ERROR(
+            "FFAT write incomplete: path=%s expected=%u written=%u",
+            path,
+            (unsigned)expected,
+            (unsigned)written
+        );
         return 3;
     }
+
+    LOG_INFO(
+        "FFAT write success: path=%s bytes=%u",
+        path,
+        (unsigned)written
+    );
+
+    return 0;
 }
 
 bool file_storage::SDcardInit() {
