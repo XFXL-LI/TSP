@@ -3,6 +3,8 @@
 #include "SerialManager.h"
 #include <SoftwareSerial.h>
 
+static constexpr size_t REMOTE_DTU_RX_BUFFER_SIZE = 2048;
+
 SerialManager& SerialManager::getInstance() {
     static SerialManager instance;
     return instance;
@@ -27,6 +29,14 @@ void SerialManager::begin(void){
 
 void SerialManager::HardwarePortInit(const String& name, HardwareSerial* serial, uint32_t baud, int rxPin, int txPin) {
    if (_serials.find(name) != _serials.end()) return;
+    if (name == SERIAL_DTU) {
+        size_t configuredSize = serial->setRxBufferSize(REMOTE_DTU_RX_BUFFER_SIZE);
+        if (configuredSize < REMOTE_DTU_RX_BUFFER_SIZE) {
+            LOG_ERROR("DTU UART RX buffer setup failed: requested=%u actual=%u",
+                      (unsigned)REMOTE_DTU_RX_BUFFER_SIZE,
+                      (unsigned)configuredSize);
+        }
+    }
     serial->begin(baud, SERIAL_8N1, rxPin, txPin);
     SerialPortWrapper* wrapper = new SerialPortWrapper();
     wrapper->stream = serial;

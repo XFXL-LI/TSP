@@ -2,8 +2,8 @@
 
 
 //�°汾
-// Firmware 2.0.4: retain valid CSQ state and prevent LED statistics backlog.
-#define VERSION2 "2.0.4"
+// Firmware 2.0.5: integrate verified time fixes with prioritized tasks and OTA.
+#define VERSION2 "2.0.5"
 
 void setup()
 {

@@ -1,4 +1,5 @@
 #include "collectorManager.h"
+#include "../../system/ota/remote_ota_manager.h"
 #include "../../system/event/eventBus.h"
 #include "../../module/log/log_manager.h"
 #include "../../module/Serial/SerialManager.h"
@@ -72,6 +73,7 @@ void collectorManager::galpoll()
     EventMsg msg;
     if (EventBus::waitEvent(_queryQueue, msg))
     {
+        RemoteOtaManager::BusinessActivityGuard businessActivity;
         if (msg.id == EventID::GAL_REQ)
         {
             JSONCmdData *req = (JSONCmdData *)msg.data;

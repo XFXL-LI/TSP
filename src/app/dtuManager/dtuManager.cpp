@@ -28,12 +28,13 @@ uint64_t DTUManager::dtuSystemTime() {
     LOG_DEBUG("Send GET_TIME_COMM res: %s", res.c_str());
 
     if (res.length() > 0) {
-        int year, month, day, hour, minute, second, week;
+        int year, month, day, hour, minute, second = 0, week = 0;
         int count = sscanf(res.c_str(), "config,nettime,ok,%d,%d,%d,%d,%d,%d,%d", 
                            &year, &month, &day, &hour, &minute, &second, &week);
         if (count >= 5) {
-            char buf[16];
-            snprintf(buf, sizeof(buf), "%04d%02d%02d%02d%02d", year, month, day, hour, minute);
+            char buf[20];
+            snprintf(buf, sizeof(buf), "%04d%02d%02d%02d%02d%02d",
+                     year, month, day, hour, minute, second);
             LOG_INFO("Parsed Time String: %s", buf);
             uint64_t fullTime = strtoull(buf, NULL, 10);
             return fullTime;
@@ -45,9 +46,23 @@ uint64_t DTUManager::dtuSystemTime() {
 }
 
 uint64_t DTUManager::hjSystemTime() {
+    // Live and pending HJ212 packets always take priority over maintenance
+    // time queries. A deferred query is retried by the maintenance scheduler.
+    uint32_t now = millis();
+    if (_hjUploadWaiters.load(std::memory_order_acquire) > 0 ||
+        _hjUploadActive.load(std::memory_order_acquire) ||
+        now - _lastHjUploadEndMs.load(std::memory_order_acquire) < 1500) {
+        LOG_INFO("[DIAG] TIME_SYNC_DEFER reason=upload_priority");
+        return 0;
+    }
     SemaphoreHandle_t mutex = SerialManager::getInstance().getMutex(SERIAL_HJ212);
-    if (mutex == nullptr || xSemaphoreTake(mutex, pdMS_TO_TICKS(3000)) != pdTRUE) {
-        LOG_WARNING("[DIAG] HJ_COMMAND_BUSY command=time");
+    if (mutex == nullptr || xSemaphoreTake(mutex, pdMS_TO_TICKS(100)) != pdTRUE) {
+        LOG_INFO("[DIAG] TIME_SYNC_DEFER reason=serial_busy");
+        return 0;
+    }
+    if (_hjUploadWaiters.load(std::memory_order_acquire) > 0) {
+        xSemaphoreGive(mutex);
+        LOG_INFO("[DIAG] TIME_SYNC_DEFER reason=upload_waiting");
         return 0;
     }
     String res = _hj212DTU->sendCommand(GET_TIME_COMM);
@@ -55,12 +70,13 @@ uint64_t DTUManager::hjSystemTime() {
     LOG_DEBUG("Send GET_TIME_COMM res: %s", res.c_str());
 
     if (res.length() > 0) {
-        int year, month, day, hour, minute, second, week;
+        int year, month, day, hour, minute, second = 0, week = 0;
         int count = sscanf(res.c_str(), "config,nettime,ok,%d,%d,%d,%d,%d,%d,%d", 
                            &year, &month, &day, &hour, &minute, &second, &week);
         if (count >= 5) {
-            char buf[16];
-            snprintf(buf, sizeof(buf), "%04d%02d%02d%02d%02d", year, month, day, hour, minute);
+            char buf[20];
+            snprintf(buf, sizeof(buf), "%04d%02d%02d%02d%02d%02d",
+                     year, month, day, hour, minute, second);
             LOG_INFO("Parsed Time String: %s", buf);
             uint64_t fullTime = strtoull(buf, NULL, 10);
             return fullTime;

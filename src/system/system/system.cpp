@@ -2,10 +2,7 @@
 #include <freertos/FreeRTOS.h>
 #include <freertos/queue.h>
 #include <freertos/task.h>
-#include <Update.h>
-#include <esp_ota_ops.h>
 #include "esp_task_wdt.h"
-#include <esp_https_ota.h>
 #include <SoftwareSerial.h>
 #include <time.h>
 #include <stdio.h>
@@ -16,6 +13,7 @@
 #include "src/module/log/log_manager.h"
 #include "../../inc/sys_init.h"
 #include "../event/eventBus.h"
+#include "../ota/remote_ota_manager.h"
 #include "../../module/Serial/SerialManager.h"
 #include "../call/base_call.h"
 #include "../../module/json/config_json.h"
@@ -33,6 +31,7 @@
 #include "../../app/ledManager/ledManager.h"
 
 
+// Firmware 2.0.5 integration and hardware validation keep DEBUG enabled.
 #define DEBUG
 
 #define PUMP1_PIN 41
@@ -50,6 +49,29 @@ static constexpr uint32_t CSQ_POLL_INTERVAL_MS = 60UL * 1000UL;
 // CSQ_DEFERRED can phase-lock the CSQ task to the once-per-minute live upload.
 // Retry briefly after a collision while keeping healthy polling at 60 seconds.
 static constexpr uint32_t CSQ_RETRY_INTERVAL_MS = 5UL * 1000UL;
+static constexpr uint32_t TIME_SYNC_INTERVAL_MS = 24UL * 60UL * 60UL * 1000UL;
+static constexpr uint32_t TIME_SYNC_RETRY_INTERVAL_MS = 5UL * 60UL * 1000UL;
+static constexpr int TIME_SYNC_SAFE_SECOND_START = 10;
+static constexpr int TIME_SYNC_SAFE_SECOND_END = 40;
+static constexpr int64_t TIME_SYNC_APPLY_THRESHOLD_SEC = 3;
+
+// Firmware 2.0.5: keep durable data work above UI/background work. Serial
+// parsers retain their hardware-verified priority 10 pending dedicated tests.
+static constexpr UBaseType_t TASK_PRIORITY_OTA_ACTIVE = 11;
+static constexpr UBaseType_t TASK_PRIORITY_DATA_PROCESS = 10;
+static constexpr UBaseType_t TASK_PRIORITY_SERIAL_CONTROL = 10;
+static constexpr UBaseType_t TASK_PRIORITY_COLLECT = 9;
+static constexpr UBaseType_t TASK_PRIORITY_STORAGE = 9;
+static constexpr UBaseType_t TASK_PRIORITY_HJ212 = 8;
+static constexpr UBaseType_t TASK_PRIORITY_ALARM = 7;
+static constexpr UBaseType_t TASK_PRIORITY_TEMP_CONTROL = 7;
+static constexpr UBaseType_t TASK_PRIORITY_MAINTENANCE = 6;
+static constexpr UBaseType_t TASK_PRIORITY_PERMISSION = 4;
+static constexpr UBaseType_t TASK_PRIORITY_CONFIG = 4;
+static constexpr UBaseType_t TASK_PRIORITY_CALIBRATION = 4;
+static constexpr UBaseType_t TASK_PRIORITY_OTA_LISTENER = 4;
+static constexpr UBaseType_t TASK_PRIORITY_LED = 3;
+static constexpr UBaseType_t TASK_PRIORITY_MQTT = 3;
 
 // ********** 时间相关定义 **********
 Ds1302 rtc(17, 6, 7);
@@ -67,6 +89,8 @@ void timeInit(uint64_t timestamp);
 bool updateMillisTime(uint64_t newTime);
 uint64_t getCurrentTime();
 static bool isValidClockTime(uint64_t timestamp);
+static bool clockTimestampToEpoch(uint64_t timestamp, time_t &epoch);
+static bool synchronizeTimeFromDtu();
 // ********** 时间相关定义 **********
 
 // ********** 其他全局定义 **********
@@ -87,7 +111,6 @@ static void recoverPendingPacket(const PendingPacketInfo &pending);
 // 保存数据
 static void SaveDataFileTask(void *pvParameters);
 // OTA 升级
-static void OtaUploadTask(void *pvParameters);
 // LED
 static void LedPrintTask(void *pvParameters);
 // 串口解析及管理权�?
@@ -108,7 +131,6 @@ static void TempControlTask(void *pvParameters);
 static void MqttPublicTask(void *pvParameters);
 
 static void AlarmTask(void *pvParameters);
-static void otaUpload(void *pvParameters);
 static bool sendHJ212PacketLocked(const String &packet, int maxRetry);
 
 System::System()
@@ -159,56 +181,57 @@ void System::SystemConfigInit(void)
     if (hj212Cfg.protocol_version == "2017")
     {
         LOG_INFO("HJ212 protocol version set to 2017");
-        xTaskCreatePinnedToCore(Hj212_2017SendTask, "Hj2017Task", 8 * 1024, NULL, 5, NULL, 0);
+        xTaskCreatePinnedToCore(Hj212_2017SendTask, "Hj2017Task", 8 * 1024, NULL, TASK_PRIORITY_HJ212, NULL, 0);
     }
     else if (hj212Cfg.protocol_version == "2025")
     {
         LOG_INFO("HJ212 protocol version set to 2025");
-        xTaskCreatePinnedToCore(Hj212_2025SendTask, "Hj2025Task", 8 * 1024, NULL, 5, NULL, 0);
+        xTaskCreatePinnedToCore(Hj212_2025SendTask, "Hj2025Task", 8 * 1024, NULL, TASK_PRIORITY_HJ212, NULL, 0);
     }
     else
     {
         LOG_WARNING("Unknown HJ212 protocol version '%s', defaulting to 2017", hj212Cfg.protocol_version.c_str());
-        xTaskCreatePinnedToCore(Hj212_2017SendTask, "Hj2017Task", 8 * 1024, NULL, 5, NULL, 0);
+        xTaskCreatePinnedToCore(Hj212_2017SendTask, "Hj2017Task", 8 * 1024, NULL, TASK_PRIORITY_HJ212, NULL, 0);
     }
     cfg.runIfTempCon([]()
                      {
         LOG_INFO("Temperature control enabled, starting related tasks...");
-        xTaskCreatePinnedToCore(TempControlTask, "TempConTask", 4 * 1024, NULL, 5, NULL, 1); });
+        xTaskCreatePinnedToCore(TempControlTask, "TempConTask", 4 * 1024, NULL, TASK_PRIORITY_TEMP_CONTROL, NULL, 1); });
     cfg.runMqttCon([]()
                    {
         LOG_INFO("mqtt control enabled, starting mqtt tasks...");
-        xTaskCreatePinnedToCore(MqttPublicTask, "MqttPublicTask", 8 * 1024, NULL, 5, NULL, 1); });
+        xTaskCreatePinnedToCore(MqttPublicTask, "MqttPublicTask", 8 * 1024, NULL, TASK_PRIORITY_MQTT, NULL, 1); });
 
     cfg.runAlarmCon([]()
                     {
         LOG_INFO("Alarm control enabled, starting alarm tasks...");
-        xTaskCreatePinnedToCore(AlarmTask, "AlarmTask", 4 * 1024, NULL, 5, NULL, 1); });
+        xTaskCreatePinnedToCore(AlarmTask, "AlarmTask", 4 * 1024, NULL, TASK_PRIORITY_ALARM, NULL, 1); });
 
-    xTaskCreatePinnedToCore(updateConfigTask, "updateConfigTask", 8 * 1024, NULL, 5, NULL, 0);
+    xTaskCreatePinnedToCore(updateConfigTask, "updateConfigTask", 8 * 1024, NULL, TASK_PRIORITY_CONFIG, NULL, 0);
 }
 
 void System::SystemSetupInit(void)
 {
     // Firmware 2.0.3: pending recovery reuses this permanent maintenance task.
-    xTaskCreatePinnedToCore(updateSetupTask, "udSetTask", 6 * 1024, NULL, 5, NULL, 1);
+    xTaskCreatePinnedToCore(updateSetupTask, "udSetTask", 6 * 1024, NULL, TASK_PRIORITY_MAINTENANCE, NULL, 1);
 }
 
 void System::SystemTaskInit(void)
 {
     LOG_INFO("System Task Init Start!");
 
-    xTaskCreatePinnedToCore(CollectTask, "CollectTask", 4 * 1024, NULL, 6, NULL, 1);
+    xTaskCreatePinnedToCore(CollectTask, "CollectTask", 4 * 1024, NULL, TASK_PRIORITY_COLLECT, NULL, 1);
 
-    xTaskCreatePinnedToCore(LedPrintTask, "LedPrintTask", 4 * 1024, NULL, 5, NULL, 0);
+    xTaskCreatePinnedToCore(LedPrintTask, "LedPrintTask", 4 * 1024, NULL, TASK_PRIORITY_LED, NULL, 0);
 
-    xTaskCreatePinnedToCore(SaveDataFileTask, "SaveFileTask", 4 * 1024, NULL, 5, NULL, 0);
+    xTaskCreatePinnedToCore(SaveDataFileTask, "SaveFileTask", 4 * 1024, NULL, TASK_PRIORITY_STORAGE, NULL, 0);
 
-    xTaskCreatePinnedToCore(PermissionTask, "PermissionTask", 4 * 1024, NULL, 5, NULL, 1);
+    xTaskCreatePinnedToCore(PermissionTask, "PermissionTask", 4 * 1024, NULL, TASK_PRIORITY_PERMISSION, NULL, 1);
 
-    xTaskCreatePinnedToCore(CollectGalTask, "CollectGalTask", 4 * 1024, NULL, 5, NULL, 0);
+    xTaskCreatePinnedToCore(CollectGalTask, "CollectGalTask", 4 * 1024, NULL, TASK_PRIORITY_CALIBRATION, NULL, 0);
 
-    xTaskCreatePinnedToCore(OtaUploadTask, "OtaUploadTask", 4 * 1024, NULL, 11, NULL, 1);
+    RemoteOtaManager::begin(TASK_PRIORITY_OTA_LISTENER,
+                            TASK_PRIORITY_OTA_ACTIVE);
 }
 
 static void updateConfigTask(void *pvParameters)
@@ -227,11 +250,16 @@ static void updateSetupTask(void *pvParameters)
     // Restore starts after the first valid CSQ update.
 
     volatile bool netWorkError = false;
-    int countTime = 0;
     uint32_t lastPendingScanMs = 0;
+    uint32_t lastTimeSyncAttemptMs = 0;
+    uint32_t lastTimeSyncSuccessMs = 0;
     bool hasValidCsq = false;
+    bool hasNetworkTimeSync = false;
     while (true)
     {
+        uint32_t loopDelayMs = CSQ_POLL_INTERVAL_MS;
+        {
+            RemoteOtaManager::BusinessActivityGuard businessActivity;
         // Firmware 2.0.4: pending maintenance must not depend on the current
         // CSQ command succeeding. Once one valid CSQ has been observed, keep
         // the five-minute recovery clock running even when CSQ is deferred by
@@ -247,24 +275,41 @@ static void updateSetupTask(void *pvParameters)
             }
         }
 
-        if (countTime >= 720)
+        // Network time is maintenance work. Use elapsed milliseconds rather
+        // than loop counts, which accelerate whenever CSQ is deferred.
+        uint32_t nowMs = millis();
+        bool timeSyncDue = !hasNetworkTimeSync ||
+                           nowMs - lastTimeSyncSuccessMs >= TIME_SYNC_INTERVAL_MS;
+        bool timeSyncRetryReady = lastTimeSyncAttemptMs == 0 ||
+                                  nowMs - lastTimeSyncAttemptMs >= TIME_SYNC_RETRY_INTERVAL_MS;
+        if (hasValidCsq && timeSyncDue && timeSyncRetryReady)
         {
-            uint64_t currentTime = getCurrentTime();
-            if (currentTime < 202605270000)
+            // Avoid applying a clock correction close to a minute boundary.
+            time_t wallNow;
+            time(&wallNow);
+            struct tm localNow;
+            localtime_r(&wallNow, &localNow);
+            int waitSeconds = 0;
+            if (localNow.tm_sec < TIME_SYNC_SAFE_SECOND_START)
             {
-                vTaskDelay(pdMS_TO_TICKS(3000));
-                currentTime = getCurrentTime();
+                waitSeconds = TIME_SYNC_SAFE_SECOND_START - localNow.tm_sec;
             }
-            if (!updateMillisTime(currentTime))
+            else if (localNow.tm_sec > TIME_SYNC_SAFE_SECOND_END)
             {
-                LOG_ERROR("Failed to update milliseconds time");
+                waitSeconds = 60 - localNow.tm_sec + TIME_SYNC_SAFE_SECOND_START;
             }
-            LOG_DEBUG("Current Time: %llu", currentTime);
-            countTime = 0;
-        }
-        else
-        {
-            countTime++;
+            if (waitSeconds > 0)
+            {
+                LOG_DEBUG("[DIAG] TIME_SYNC_WAIT seconds=%d", waitSeconds);
+                vTaskDelay(pdMS_TO_TICKS(waitSeconds * 1000));
+            }
+
+            lastTimeSyncAttemptMs = millis();
+            if (synchronizeTimeFromDtu())
+            {
+                hasNetworkTimeSync = true;
+                lastTimeSyncSuccessMs = millis();
+            }
         }
 
         // Firmware 2.0.3: DTUManager arbitrates SERIAL_HJ212 centrally.
@@ -272,10 +317,9 @@ static void updateSetupTask(void *pvParameters)
         int csq = DTUManager::getInstance().hj212DTUCSQ();
         if (csq == DTUManager::CSQ_DEFERRED)
         {
-            vTaskDelay(pdMS_TO_TICKS(CSQ_RETRY_INTERVAL_MS));
-            continue;
+            loopDelayMs = CSQ_RETRY_INTERVAL_MS;
         }
-
+        else
         {
             SYSTEM_SETUP newSetup = ConfigManager::getInstance().getSetup();
             const int lastValidCsq = newSetup.netCsq;
@@ -289,273 +333,61 @@ static void updateSetupTask(void *pvParameters)
                 netWorkError = true;
                 LOG_WARNING("[DIAG] CSQ_INVALID_KEEP value=%d last=%d",
                             csq, lastValidCsq);
-                vTaskDelay(pdMS_TO_TICKS(CSQ_RETRY_INTERVAL_MS));
-                continue;
-            }
-
-            hasValidCsq = true;
-            newSetup.netCsq = csq;
-            ConfigManager::getInstance().updateSetup(newSetup);
-            if (systemInfo.mutex == NULL)
-            {
-                LOG_ERROR("Failed to create mutex for CSQ info");
-            }
-            else if (xSemaphoreTake(systemInfo.mutex, pdMS_TO_TICKS(3000)) == pdTRUE)
-            {
-                systemInfo.csq = csq;
-                xSemaphoreGive(systemInfo.mutex);
-            }
-
-            if (netWorkError)
-            {
-                fileRestore();
-                lastPendingScanMs = millis();
-                LOG_INFO("Network restored with CSQ: %d", csq);
-                netWorkError = false;
+                loopDelayMs = CSQ_RETRY_INTERVAL_MS;
             }
             else
             {
-                netWorkError = false;
-                LOG_DEBUG("Updated network CSQ: %d", csq);
-                // Start maintenance after the first valid CSQ. Later scans are
-                // scheduled independently at the top of this task loop.
-                if (lastPendingScanMs == 0)
+                hasValidCsq = true;
+                newSetup.netCsq = csq;
+                ConfigManager::getInstance().updateSetup(newSetup);
+                if (systemInfo.mutex == NULL)
+                {
+                    LOG_ERROR("Failed to create mutex for CSQ info");
+                }
+                else if (xSemaphoreTake(systemInfo.mutex, pdMS_TO_TICKS(3000)) == pdTRUE)
+                {
+                    systemInfo.csq = csq;
+                    xSemaphoreGive(systemInfo.mutex);
+                }
+
+                if (netWorkError)
                 {
                     fileRestore();
                     lastPendingScanMs = millis();
+                    LOG_INFO("Network restored with CSQ: %d", csq);
+                    netWorkError = false;
                 }
+                else
+                {
+                    netWorkError = false;
+                    LOG_DEBUG("Updated network CSQ: %d", csq);
+                    // Start maintenance after the first valid CSQ. Later scans are
+                    // scheduled independently at the top of this task loop.
+                    if (lastPendingScanMs == 0)
+                    {
+                        fileRestore();
+                        lastPendingScanMs = millis();
+                    }
+                }
+
+                // After the first valid CSQ, schedule the initial network-time
+                // attempt promptly. Later healthy loops use the normal period.
+                loopDelayMs = lastTimeSyncAttemptMs == 0
+                                  ? CSQ_RETRY_INTERVAL_MS
+                                  : CSQ_POLL_INTERVAL_MS;
             }
         }
-        vTaskDelay(pdMS_TO_TICKS(CSQ_POLL_INTERVAL_MS));
+        }
+        vTaskDelay(pdMS_TO_TICKS(loopDelayMs));
     }
     vTaskDelete(NULL);
-}
-static void OtaUploadTask(void *pvParameters)
-{
-    LOG_DEBUG("OtaUploadTask Started");
-    QueueHandle_t OtaUploadTaskQueue = EventBus::getInstance().createReceiverQueue(5, "OTA");
-    EventBus::getInstance().subscribe(EventID::UPLOAD_REQ, OtaUploadTaskQueue);
-
-    EventMsg msg;
-    while (true)
-    {
-        if (EventBus::waitEvent(OtaUploadTaskQueue, msg))
-        {
-            if (msg.id == EventID::UPLOAD_REQ)
-            {
-                JSONCmdData *allData = (JSONCmdData *)msg.data;
-
-                if (allData != nullptr)
-                {
-                    LOG_DEBUG("upload request: %s", allData->arguments.c_str());
-
-                    config_json uploadJson(allData->arguments.c_str());
-                    int otaSize = uploadJson.isValid() ? uploadJson.getInt("size", 0) : 0;
-
-                    int subscriberCount = EventBus::getInstance().getSubscriberCount(EventID::UPLOAD_RES);
-                    if (subscriberCount > 0)
-                    {
-                        allData->retain();
-                    }
-                    EventBus::getInstance().publish(EventID::UPLOAD_RES, allData);
-                    allData->release();
-
-                    if (otaSize > 0)
-                    {
-                        LOG_INFO("Starting OTA upload with size: %d", otaSize);
-                        TaskHandle_t CollectTaskHandle = xTaskGetHandle("CollectTask");
-                        TaskHandle_t Hj212SendHandle = xTaskGetHandle("Hj2017Task");
-                        TaskHandle_t SaveDataFileHandle = xTaskGetHandle("SaveFileTask");
-                        TaskHandle_t LedPrintHandle = xTaskGetHandle("LedPrintTask");
-                        TaskHandle_t SerialRemoteHandle = xTaskGetHandle("CollectGalTask");
-                        TaskHandle_t Hj2122025SendHandle = xTaskGetHandle("Hj2025Task");
-                        TaskHandle_t TempConTaskHandle = xTaskGetHandle("TempConTask");
-                        TaskHandle_t udSetTaskHandle = xTaskGetHandle("udSetTask");
-                        TaskHandle_t netResTaskHandle = xTaskGetHandle("netResTask");
-                        TaskHandle_t ControllcdHandle = xTaskGetHandle("Controllcd");
-                        TaskHandle_t ControldtuHandle = xTaskGetHandle("Controldtu");
-
-                        
-                        if (ControldtuHandle != NULL)
-                        {
-                            vTaskDelete(ControldtuHandle);
-                            LOG_INFO("Stopped: Controldtu task");
-                        }
-                        if (ControllcdHandle != NULL)
-                        {
-                            vTaskDelete(ControllcdHandle);
-                            LOG_INFO("Stopped: Controllcd task");
-                        }
-                        if (netResTaskHandle != NULL)
-                        {
-                            vTaskDelete(netResTaskHandle);
-                            LOG_INFO("Stopped: netResTaskHandle task");
-                        }
-                        if (udSetTaskHandle != NULL)
-                        {
-                            vTaskDelete(udSetTaskHandle);
-                            LOG_INFO("Stopped: udSetTask task");
-                        }
-                        if (TempConTaskHandle != NULL)
-                        {
-                            vTaskDelete(TempConTaskHandle);
-                            LOG_INFO("Stopped: TempConTask task");
-                        }
-                        if (CollectTaskHandle != NULL)
-                        {
-                            vTaskDelete(CollectTaskHandle);
-                            LOG_INFO("Stopped: collect task");
-                        }
-                        if (Hj2122025SendHandle != NULL)
-                        {
-                            vTaskDelete(Hj2122025SendHandle);
-                            LOG_INFO("Stopped: Hj2122025SendHandle task");
-                        }
-                        if (Hj212SendHandle != NULL)
-                        {
-                            vTaskDelete(Hj212SendHandle);
-                            LOG_INFO("Stopped: LED task");
-                        }
-                        if (SaveDataFileHandle != NULL)
-                        {
-                            vTaskDelete(SaveDataFileHandle);
-                            LOG_INFO("Stopped: serial task");
-                        }
-                        if (LedPrintHandle != NULL)
-                        {
-                            vTaskDelete(LedPrintHandle);
-                            LOG_INFO("Stopped: calibration data task");
-                        }
-                        if (SerialRemoteHandle != NULL)
-                        {
-                            vTaskDelete(SerialRemoteHandle);
-                            LOG_INFO("Stopped: calibration data task");
-                        }
-
-                        vTaskDelay(3000 / portTICK_PERIOD_MS);
-//代码修改 2026.7.27
-                    BaseType_t result = xTaskCreatePinnedToCore(otaUpload, "otaUpload", 8 * 1024, (void *)otaSize, 11, NULL, 1);
-
-                        if (result != pdPASS)
-                    {
-                        LOG_ERROR("Failed to create OTA task");
-                        vTaskDelay(pdMS_TO_TICKS(3000));
-                        ESP.restart();
-                    }
-                    }
-                    LOG_DEBUG("****** OtaUploadTask Test Over ******");
-                }
-            }
-            vTaskDelay(pdMS_TO_TICKS(10));
-        }
-        vTaskDelete(NULL);
-    }
-}
-static void otaUpload(void *pvParameters)
-{
-    int otaSize = (int)pvParameters;
-    volatile uint32_t otaTotalSize = otaSize;
-    esp_ota_handle_t ota_handle;
-    const esp_partition_t *update_partition = esp_ota_get_next_update_partition(NULL);
-    if (esp_ota_begin(update_partition, OTA_SIZE_UNKNOWN, &ota_handle) != ESP_OK)
-    {
-        LOG_ERROR("Failed to start OTA");
-        return;
-    }
-
-#define OTA_BUFFER_SIZE 1024
-    auto &sm = SerialManager::getInstance();
-    Stream *DTU_port = sm.getStream(SERIAL_DTU);
-    SemaphoreHandle_t DTUMutex = sm.getMutex(SERIAL_DTU);
-    LOG_INFO("Attempting to lock serial mutexes...");
-    while (true)
-    {
-        if (xSemaphoreTake(DTUMutex, pdMS_TO_TICKS(3000)) == pdTRUE)
-        {
-            break;
-        }
-        vTaskDelay(500 / portTICK_PERIOD_MS);
-    }
-    while (DTU_port->available())
-    {
-        DTU_port->read();
-        vTaskDelay(1 / portTICK_PERIOD_MS);
-    }
-
-    DTU_port->printf("Ready to start OTA, size: %d byte, Please send the OTA upgrade package within 600 seconds\n", otaTotalSize);
-    DTU_port->printf("The single packet sent is 800 bytes, with a sending interval of 1000ms\n");
-    LOG_INFO("Ready to start OTA");
-
-    uint8_t data[OTA_BUFFER_SIZE];
-    int bytes_written = 0;
-    unsigned long lastDataTime = millis();
-    int local_buf_idx = 0;
-
-    while (bytes_written < otaTotalSize)
-    {
-        while (DTU_port->available() > 0 && local_buf_idx < 1024)
-        {
-            if (bytes_written + local_buf_idx >= otaTotalSize)
-            {
-                break;
-            }
-            int c = DTU_port->read();
-            if (c != -1)
-            {
-                data[local_buf_idx++] = (uint8_t)c;
-                lastDataTime = millis();
-            }
-        }
-        if (local_buf_idx <= 1024 && local_buf_idx > 0)
-        {
-            if (esp_ota_write(ota_handle, data, local_buf_idx) != ESP_OK)
-            {
-                LOG_ERROR("Failed to write data to flash");
-                break;
-            }
-            bytes_written += local_buf_idx;
-            DTU_port->printf("%d/%d \n", bytes_written, otaTotalSize);
-            Serial.printf("Received OTA data: %d/%d bytes\n", bytes_written, otaTotalSize);
-            local_buf_idx = 0;
-            lastDataTime = millis();
-        }
-        if (millis() - lastDataTime > 90000)
-        {
-            LOG_ERROR("OTA upload timeout!");
-            break;
-        }
-        vTaskDelay(1 / portTICK_PERIOD_MS);
-    }
-    if (bytes_written == otaTotalSize)
-    {
-        DTU_port->printf("OTA download complete! Finalizing...");
-        if (esp_ota_end(ota_handle) == ESP_OK)
-        {
-            DTU_port->printf("OTA success! System restarting in 3 seconds...");
-            esp_ota_set_boot_partition(update_partition);
-            vTaskDelay(3000 / portTICK_PERIOD_MS);
-            ESP.restart();
-        }
-        else
-        {
-            DTU_port->printf("Failed to end OTA (checksum error etc.), please restart");
-            ESP.restart();
-        }
-    }
-    else
-    {
-        DTU_port->printf("OTA Failed. Written %d / %d bytes. Restarting system...", bytes_written, otaTotalSize);
-        esp_ota_end(ota_handle);
-        vTaskDelay(3000 / portTICK_PERIOD_MS);
-        ESP.restart();
-    }
 }
 
 static void CollectTask(void *pvParameters)
 {
     LOG_INFO("CollectTask Started");
 
-    xTaskCreatePinnedToCore(DataProcessTask, "DataProcessTask", 4 * 1024, NULL, 8, NULL, 0);
+    xTaskCreatePinnedToCore(DataProcessTask, "DataProcessTask", 4 * 1024, NULL, TASK_PRIORITY_DATA_PROCESS, NULL, 0);
 
     auto &collectorManager = collectorManager::getInstance();
     auto &collectMap = ConfigManager::getInstance().getCollectConfigs();
@@ -571,13 +403,17 @@ static void CollectTask(void *pvParameters)
     pinMode(PUMP1_PIN, OUTPUT);
     while (true)
     {
-        digitalWrite(PUMP1_PIN, HIGH);
-        vTaskDelay(pdMS_TO_TICKS(collectTime * 1000 / 3));
-        collectorManager.poll();
-        SerialManager::getInstance().checkAndReportOverflow(SERIAL_485);
-        digitalWrite(PUMP1_PIN, LOW);
+        {
+            RemoteOtaManager::BusinessActivityGuard businessActivity;
+            digitalWrite(PUMP1_PIN, HIGH);
+            vTaskDelay(pdMS_TO_TICKS(collectTime * 1000 / 3));
+            collectorManager.poll();
+            SerialManager::getInstance().checkAndReportOverflow(SERIAL_485);
+            digitalWrite(PUMP1_PIN, LOW);
+        }
+        // vTaskDelayUntil advances xLastWakeTime itself. Do not reset it to
+        // the delayed actual wake tick, otherwise scheduling latency accumulates.
         vTaskDelayUntil(&xLastWakeTime, xFrequency);
-        xLastWakeTime = xTaskGetTickCount();
     }
 
     vTaskDelete(NULL);
@@ -606,7 +442,10 @@ static void TempControlTask(void *pvParameters)
 
     while (true)
     {
-        tempManager.poll();
+        {
+            RemoteOtaManager::BusinessActivityGuard businessActivity;
+            tempManager.poll();
+        }
         vTaskDelay(pdMS_TO_TICKS(30000));
     }
     vTaskDelete(NULL);
@@ -630,6 +469,7 @@ static void Hj212_2017SendTask(void *pvParameters)
     {
         if (EventBus::getInstance().waitEvent(Hj212SendTaskQueue, msg, portMAX_DELAY))
         {
+            RemoteOtaManager::BusinessActivityGuard businessActivity;
             if (msg.id == EventID::PROCESSED_DATA_COLLECTED)
             {
                 AllProcessedDataPacket *allData = static_cast<AllProcessedDataPacket *>(msg.data);
@@ -739,6 +579,7 @@ static void Hj212_2025SendTask(void *pvParameters)
     {
         if (EventBus::getInstance().waitEvent(Hj212SendTaskQueue, msg, portMAX_DELAY))
         {
+            RemoteOtaManager::BusinessActivityGuard businessActivity;
             if (msg.id == EventID::PROCESSED_DATA_COLLECTED)
             {
                 AllProcessedDataPacket *allData = static_cast<AllProcessedDataPacket *>(msg.data);
@@ -921,6 +762,7 @@ static void LedPrintTask(void *pvParameters)
     {
         if (EventBus::waitEvent(LedPrintTaskQueue, msg))
         {
+            RemoteOtaManager::BusinessActivityGuard businessActivity;
             if (msg.id == EventID::PROCESSED_DATA_COLLECTED)
             {
                 AllProcessedDataPacket *allData = static_cast<AllProcessedDataPacket *>(msg.data);
@@ -1000,12 +842,15 @@ static void PermissionTask(void *pvParameters)
     auto &permission = PermissionSystem::getInstance();
     permission.begin(SERIAL_LCD, SERIAL_DTU);
 
-    xTaskCreatePinnedToCore(SerialControlTask_lcd, "Controllcd", 4 * 1024, NULL, 10, NULL, 1);
-    xTaskCreatePinnedToCore(SerialControlTask_dtu, "Controldtu", 4 * 1024, NULL, 10, NULL, 1);
+    xTaskCreatePinnedToCore(SerialControlTask_lcd, "Controllcd", 4 * 1024, NULL, TASK_PRIORITY_SERIAL_CONTROL, NULL, 1);
+    xTaskCreatePinnedToCore(SerialControlTask_dtu, "Controldtu", 4 * 1024, NULL, TASK_PRIORITY_SERIAL_CONTROL, NULL, 1);
 
     while (true)
     {
-        permission.poll();
+        {
+            RemoteOtaManager::BusinessActivityGuard businessActivity;
+            permission.poll();
+        }
         vTaskDelay(pdMS_TO_TICKS(1000));
     }
     vTaskDelete(NULL);
@@ -1023,6 +868,7 @@ static void SerialControlTask_lcd(void *pvParameters)
 
     while (true)
     {
+        RemoteOtaManager::BusinessActivityGuard businessActivity;
         while (_lcdStream && _lcdStream->available() > 0)
         {
             char c = _lcdStream->read();
@@ -1084,6 +930,7 @@ static void SerialControlTask_dtu(void *pvParameters)
     unsigned long lastByteTime = 0;
     while (true)
     {
+        RemoteOtaManager::BusinessActivityGuard businessActivity;
         while (_dtuStream && _dtuStream->available() > 0)
         {
             char c = _dtuStream->read();
@@ -1172,6 +1019,7 @@ static void AlarmTask(void *pvParameters){
     {
         if (EventBus::waitEvent(AlarmTaskQueue, msg))
         {
+            RemoteOtaManager::BusinessActivityGuard businessActivity;
             if (msg.id == EventID::PROCESSED_DATA_COLLECTED)
             {
                 AllProcessedDataPacket *allData = static_cast<AllProcessedDataPacket *>(msg.data);
@@ -1221,6 +1069,17 @@ void timeInit(uint64_t timestamp)
     {
         Ds1302::DateTime dt;
         uint64_t temp = timestamp;
+        // DTU time is normally YYYYMMDDhhmmss. Keep compatibility with the
+        // legacy 12-digit value while preserving seconds whenever available.
+        if (timestamp >= 10000000000000ULL)
+        {
+            dt.second = temp % 100;
+            temp /= 100;
+        }
+        else
+        {
+            dt.second = 0;
+        }
         dt.minute = temp % 100;
         temp /= 100;
         dt.hour = temp % 100;
@@ -1230,7 +1089,6 @@ void timeInit(uint64_t timestamp)
         dt.month = temp % 100;
         temp /= 100;
         dt.year = (uint8_t)(temp % 100);
-        dt.second = 0;
         dt.dow = 3;
         rtc.setDateTime(&dt);
         Serial.println("RTC Init sucessfully with network time!");
@@ -1243,8 +1101,9 @@ uint64_t getCurrentTime()
     Ds1302::DateTime now;
     rtc.getDateTime(&now);
     char buffer[20];
-    snprintf(buffer, sizeof(buffer), "%04d%02d%02d%02d%02d",
-             now.year + 2000, now.month, now.day, now.hour, now.minute);
+    snprintf(buffer, sizeof(buffer), "%04d%02d%02d%02d%02d%02d",
+             now.year + 2000, now.month, now.day,
+             now.hour, now.minute, now.second);
     return strtoull(buffer, nullptr, 10);
 }
 // 202605220939
@@ -1256,8 +1115,10 @@ bool updateMillisTime(uint64_t newTime)
         return false;
     }
 
-    int year, month, day, hour, minute;
-    if (sscanf(String(newTime).c_str(), "%4d%2d%2d%2d%2d", &year, &month, &day, &hour, &minute) == 5)
+    int year, month, day, hour, minute, second = 0;
+    int parsed = sscanf(String(newTime).c_str(), "%4d%2d%2d%2d%2d%2d",
+                        &year, &month, &day, &hour, &minute, &second);
+    if (parsed == 5 || parsed == 6)
     {
         struct tm timeinfo = {};
         timeinfo.tm_year = year - 1900; // �?900年起的年�?
@@ -1268,6 +1129,8 @@ bool updateMillisTime(uint64_t newTime)
         timeinfo.tm_sec = 0;    // 格式中无秒，默认�?
         timeinfo.tm_isdst = -1; // 自动判断夏令�?
 
+        // Override the legacy zero-second default when a 14-digit time is supplied.
+        timeinfo.tm_sec = second;
         time_t t = mktime(&timeinfo);
         if (t != -1)
         {
@@ -1295,6 +1158,65 @@ bool updateMillisTime(uint64_t newTime)
 }
 
 // ******************* 函数实现 *******************
+static bool clockTimestampToEpoch(uint64_t timestamp, time_t &epoch)
+{
+    if (!isValidClockTime(timestamp)) return false;
+
+    int year, month, day, hour, minute, second = 0;
+    char value[20];
+    snprintf(value, sizeof(value), "%llu", timestamp);
+    int parsed = sscanf(value, "%4d%2d%2d%2d%2d%2d",
+                        &year, &month, &day, &hour, &minute, &second);
+    if (parsed != 5 && parsed != 6) return false;
+
+    struct tm timeinfo = {};
+    timeinfo.tm_year = year - 1900;
+    timeinfo.tm_mon = month - 1;
+    timeinfo.tm_mday = day;
+    timeinfo.tm_hour = hour;
+    timeinfo.tm_min = minute;
+    timeinfo.tm_sec = second;
+    timeinfo.tm_isdst = -1;
+    epoch = mktime(&timeinfo);
+    return epoch != (time_t)-1;
+}
+
+static bool synchronizeTimeFromDtu()
+{
+    uint64_t networkTime = DTUManager::getInstance().hjSystemTime();
+    time_t networkEpoch;
+    if (!clockTimestampToEpoch(networkTime, networkEpoch))
+    {
+        if (networkTime != 0)
+        {
+            LOG_WARNING("[DIAG] TIME_SYNC_INVALID timestamp=%llu", networkTime);
+        }
+        return false;
+    }
+
+    time_t systemEpoch;
+    time(&systemEpoch);
+    int64_t deltaSeconds = (int64_t)difftime(networkEpoch, systemEpoch);
+    int64_t absoluteDelta = deltaSeconds < 0 ? -deltaSeconds : deltaSeconds;
+    if (absoluteDelta <= TIME_SYNC_APPLY_THRESHOLD_SEC)
+    {
+        LOG_INFO("[DIAG] TIME_SYNC_VERIFIED timestamp=%llu delta_sec=%lld applied=0",
+                 networkTime, (long long)deltaSeconds);
+        return true;
+    }
+
+    timeInit(networkTime);
+    if (!updateMillisTime(networkTime))
+    {
+        LOG_ERROR("[DIAG] TIME_SYNC_APPLY_FAIL timestamp=%llu delta_sec=%lld",
+                  networkTime, (long long)deltaSeconds);
+        return false;
+    }
+    LOG_INFO("[DIAG] TIME_SYNC_APPLIED timestamp=%llu delta_sec=%lld",
+             networkTime, (long long)deltaSeconds);
+    return true;
+}
+
 void setUpInit(void)
 {
     LOG_INFO("System setup init start!");
@@ -1304,41 +1226,17 @@ void setUpInit(void)
     auto &DTUMg = DTUManager::getInstance();
     DTUMg.init(*DTU_port, *HJ212_port);
 
+    // Start from RTC immediately so collection never waits for DTU command
+    // retries. Network time is synchronized later after the first valid CSQ.
+    rtc.init();
+    uint64_t rtcTime = getCurrentTime();
+    if (!updateMillisTime(rtcTime))
     {
-        // Firmware 2.0.3: DTUManager owns the HJ212 lock for commands.
-        uint64_t realTime = DTUMg.hjSystemTime();
-        int i = 0;
-        for (i = 0; i < 3; i++)
-        {
-            if (realTime >= 202605270000)
-            {
-                break;
-            }
-            vTaskDelay(pdMS_TO_TICKS(3000));
-            realTime = DTUMg.hjSystemTime();
-        }
-        LOG_DEBUG("****** realTime Time: %llu ******", realTime);
-        if (isValidClockTime(realTime))
-        {
-            timeInit(realTime);
-            uint64_t currentTime1 = getCurrentTime();
-            LOG_DEBUG("****** currentTime1 Time: %llu ******", currentTime1);
-            if (!updateMillisTime(realTime))
-            {
-                LOG_ERROR("Failed to update system time from DTU");
-            }
-        }
-        else
-        {
-            LOG_WARNING("DTU time unavailable, trying RTC fallback");
-            rtc.init();
-            uint64_t rtcTime = getCurrentTime();
-            if (!updateMillisTime(rtcTime))
-            {
-                LOG_ERROR("RTC fallback invalid; waiting for a valid clock");
-            }
-        }
-        vTaskDelay(pdMS_TO_TICKS(50));
+        LOG_ERROR("RTC startup time invalid; waiting for network synchronization");
+    }
+    else
+    {
+        LOG_INFO("[DIAG] TIME_BOOT_RTC timestamp=%llu", rtcTime);
     }
 
     HJ212CONFIG hj212Cfg = ConfigManager::getInstance().getHJ212();
@@ -1380,12 +1278,14 @@ void fileRestore(void)
 
 static bool isValidClockTime(uint64_t timestamp)
 {
-    int year, month, day, hour, minute;
-    char value[16];
+    int year, month, day, hour, minute, second = 0;
+    char value[20];
     snprintf(value, sizeof(value), "%llu", timestamp);
-    if (strlen(value) != 12 ||
-        sscanf(value, "%4d%2d%2d%2d%2d",
-               &year, &month, &day, &hour, &minute) != 5)
+    size_t length = strlen(value);
+    int parsed = sscanf(value, "%4d%2d%2d%2d%2d%2d",
+                        &year, &month, &day, &hour, &minute, &second);
+    if ((length != 12 && length != 14) ||
+        (parsed != 5 && parsed != 6))
     {
         return false;
     }
@@ -1393,5 +1293,6 @@ static bool isValidClockTime(uint64_t timestamp)
            month >= 1 && month <= 12 &&
            day >= 1 && day <= 31 &&
            hour >= 0 && hour <= 23 &&
-           minute >= 0 && minute <= 59;
+           minute >= 0 && minute <= 59 &&
+           second >= 0 && second <= 59;
 }

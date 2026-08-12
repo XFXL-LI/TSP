@@ -1,4 +1,5 @@
 #include "dataManager.h"
+#include "../../system/ota/remote_ota_manager.h"
 #include "../../system/event/eventBus.h"
 #include "../../inc/sys_init.h"
 #include <new>
@@ -22,6 +23,7 @@ void DataManager::begin() {
 void DataManager::poll() {
     EventMsg msg;
     if (EventBus::waitEvent(_queryQueue, msg)) {
+        RemoteOtaManager::BusinessActivityGuard businessActivity;
         if (msg.id == EventID::DATA_QUERY_REQ) {
             JSONCmdData* req = (JSONCmdData*)msg.data;
             processQuery(req);
