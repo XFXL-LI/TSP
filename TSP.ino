@@ -2,8 +2,8 @@
 
 
 //�°汾
-// Firmware 2.0.5: integrate verified time fixes with prioritized tasks and OTA.
-#define VERSION2 "2.0.5"
+// Firmware 2.0.6: use one pre-created OTA task with cooperative business pause.
+#define VERSION2 "2.0.6"
 
 void setup()
 {

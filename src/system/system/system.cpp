@@ -31,7 +31,7 @@
 #include "../../app/ledManager/ledManager.h"
 
 
-// Firmware 2.0.5 integration and hardware validation keep DEBUG enabled.
+// Firmware 2.0.6 integration and hardware validation keep DEBUG enabled.
 #define DEBUG
 
 #define PUMP1_PIN 41
@@ -55,7 +55,7 @@ static constexpr int TIME_SYNC_SAFE_SECOND_START = 10;
 static constexpr int TIME_SYNC_SAFE_SECOND_END = 40;
 static constexpr int64_t TIME_SYNC_APPLY_THRESHOLD_SEC = 3;
 
-// Firmware 2.0.5: keep durable data work above UI/background work. Serial
+// Firmware 2.0.6: keep durable data work above UI/background work. Serial
 // parsers retain their hardware-verified priority 10 pending dedicated tests.
 static constexpr UBaseType_t TASK_PRIORITY_OTA_ACTIVE = 11;
 static constexpr UBaseType_t TASK_PRIORITY_DATA_PROCESS = 10;

@@ -11,7 +11,8 @@
 优先阅读其中的 `README.md`。根目录旧 `TSP`、`worktrees` 以及
 `firmware_workspace\archive` 中的内容都不是当前源码或烧录来源。
 
-当前源码版本是Firmware 2.0.5，已通过完整编译但尚未烧录或硬件验证。最新构建位于：
+当前源码版本是Firmware 2.0.6，已通过完整编译但尚未烧录或进行真实OTA验证。
+2.0.5已由用户完成约15小时22分钟主业务冒烟运行，但其OTA没有触发。最新构建位于：
 
 `firmware_workspace\build\current`
 

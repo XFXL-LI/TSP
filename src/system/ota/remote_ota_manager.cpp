@@ -3,11 +3,11 @@
 #include <Arduino.h>
 #include <atomic>
 #include <esp_err.h>
+#include <esp_heap_caps.h>
 #include <esp_ota_ops.h>
 #include <freertos/queue.h>
 #include <freertos/semphr.h>
 #include <freertos/task.h>
-#include <new>
 
 #include "../../inc/sys_init.h"
 #include "../../module/Serial/SerialManager.h"
@@ -24,19 +24,53 @@ constexpr uint32_t OTA_INACTIVITY_TIMEOUT_MS = 90000;
 constexpr uint32_t OTA_SESSION_TIMEOUT_MS = 20UL * 60UL * 1000UL;
 constexpr uint32_t OTA_REQUEST_SETTLE_MS = 250;
 constexpr uint32_t OTA_WRITE_IDLE_GAP_MS = 20;
-constexpr uint32_t OTA_WORKER_STACK_SIZE = 8 * 1024;
 
-struct OtaRequest
-{
-    size_t imageSize;
-};
+// Firmware 2.0.6: this is the only OTA task. It is created during startup,
+// before the long-running workload fragments the heap, and performs both
+// request listening and flash writing. The receive buffer is static so it
+// does not consume task stack during a session.
+constexpr uint32_t OTA_TASK_STACK_SIZE = 6 * 1024;
+uint8_t otaDataBuffer[OTA_BUFFER_SIZE];
 
 std::atomic<bool> otaActive(false);
 bool businessPauseRequested = false;
 uint32_t activeBusinessOperations = 0;
 portMUX_TYPE businessStateMux = portMUX_INITIALIZER_UNLOCKED;
 TaskHandle_t listenerHandle = nullptr;
-UBaseType_t otaWorkerPriority = 1;
+UBaseType_t otaIdlePriority = 1;
+UBaseType_t otaActivePriority = 1;
+
+uint32_t freeInternalHeap()
+{
+    return static_cast<uint32_t>(
+        heap_caps_get_free_size(MALLOC_CAP_INTERNAL));
+}
+
+uint32_t largestInternalBlock()
+{
+    return static_cast<uint32_t>(
+        heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL));
+}
+
+void updateSessionMinimum(uint32_t &minimumFree)
+{
+    uint32_t currentFree = freeInternalHeap();
+    if (currentFree < minimumFree)
+    {
+        minimumFree = currentFree;
+    }
+}
+
+void logOtaMemory(const char *phase, uint32_t sessionMinimumFree = 0)
+{
+    LOG_INFO(
+        "[DIAG] OTA_MEMORY phase=%s free=%u largest=%u stack_high_water=%u session_min_free=%u",
+        phase,
+        static_cast<unsigned>(freeInternalHeap()),
+        static_cast<unsigned>(largestInternalBlock()),
+        static_cast<unsigned>(uxTaskGetStackHighWaterMark(nullptr)),
+        static_cast<unsigned>(sessionMinimumFree));
+}
 
 [[noreturn]] void deleteCurrentTask()
 {
@@ -68,50 +102,55 @@ void drainInput(Stream *port)
     }
 }
 
-[[noreturn]] void finishWorkerWithoutBusinessPause(esp_ota_handle_t otaHandle,
-                                                    bool otaHandleOpen,
-                                                    const char *reason)
+bool finishFailedSession(esp_ota_handle_t otaHandle,
+                         bool otaHandleOpen,
+                         SemaphoreHandle_t dtuMutex,
+                         bool dtuMutexHeld,
+                         Stream *dtuPort,
+                         bool businessPaused,
+                         const char *reason,
+                         size_t bytesWritten,
+                         size_t otaTotalSize,
+                         uint32_t sessionMinimumFree)
 {
     if (otaHandleOpen)
     {
         esp_ota_abort(otaHandle);
     }
-    LOG_ERROR("Remote OTA stopped before business pause: %s", reason);
-    otaActive.store(false, std::memory_order_release);
-    deleteCurrentTask();
-}
 
-[[noreturn]] void finishWorkerAfterPauseFailure(esp_ota_handle_t otaHandle,
-                                                SemaphoreHandle_t dtuMutex,
-                                                Stream *dtuPort,
-                                                const char *reason)
-{
-    RemoteOtaManager::resumeBusiness();
-    esp_ota_abort(otaHandle);
-    if (dtuPort != nullptr)
+    if (dtuPort != nullptr && dtuMutexHeld)
     {
-        dtuPort->printf("OTA rejected: %s\n", reason);
+        dtuPort->printf("OTA failed: %s. Written %u/%u bytes.\n",
+                        reason,
+                        static_cast<unsigned>(bytesWritten),
+                        static_cast<unsigned>(otaTotalSize));
+        drainInput(dtuPort);
     }
-    if (dtuMutex != nullptr)
+    if (dtuMutexHeld && dtuMutex != nullptr)
     {
         xSemaphoreGive(dtuMutex);
     }
-    LOG_ERROR("Remote OTA stopped: %s", reason);
-    otaActive.store(false, std::memory_order_release);
-    deleteCurrentTask();
+    if (businessPaused)
+    {
+        RemoteOtaManager::resumeBusiness();
+    }
+
+    LOG_ERROR("Remote OTA failed: reason=%s written=%u/%u",
+              reason,
+              static_cast<unsigned>(bytesWritten),
+              static_cast<unsigned>(otaTotalSize));
+    logOtaMemory("failed", sessionMinimumFree);
+    return false;
 }
 
-void otaWorkerTask(void *pvParameters)
+bool runOtaSession(size_t otaTotalSize)
 {
-    OtaRequest *request = static_cast<OtaRequest *>(pvParameters);
-    const size_t otaTotalSize = request != nullptr ? request->imageSize : 0;
-    delete request;
+    logOtaMemory("request");
 
     if (otaTotalSize == 0)
     {
         LOG_ERROR("Remote OTA rejected: image size is zero");
-        otaActive.store(false, std::memory_order_release);
-        deleteCurrentTask();
+        return false;
     }
 
     const esp_partition_t *updatePartition =
@@ -123,9 +162,41 @@ void otaWorkerTask(void *pvParameters)
                   updatePartition == nullptr
                       ? 0U
                       : static_cast<unsigned>(updatePartition->size));
-        otaActive.store(false, std::memory_order_release);
-        deleteCurrentTask();
+        return false;
     }
+
+    auto &serialManager = SerialManager::getInstance();
+    Stream *dtuPort = serialManager.getStream(SERIAL_DTU);
+    SemaphoreHandle_t dtuMutex = serialManager.getMutex(SERIAL_DTU);
+    if (dtuPort == nullptr || dtuMutex == nullptr)
+    {
+        LOG_ERROR("Remote OTA stopped: DTU port is unavailable");
+        return false;
+    }
+
+    // Allow the request parser to publish UPLOAD_RES, return from processLine
+    // and leave its guarded business region before requesting quiescence.
+    vTaskDelay(pdMS_TO_TICKS(OTA_REQUEST_SETTLE_MS));
+
+    // First prevent new guarded work and wait for every active operation to
+    // leave its safe region. Taking the DTU mutex only after this avoids
+    // holding the mutex while an in-flight guarded command still needs it.
+    if (!RemoteOtaManager::requestBusinessPause(
+            OTA_BUSINESS_QUIESCE_TIMEOUT_MS))
+    {
+        LOG_ERROR("Remote OTA stopped: business quiesce timeout");
+        return false;
+    }
+    bool businessPaused = true;
+
+    if (xSemaphoreTake(dtuMutex,
+                       pdMS_TO_TICKS(OTA_SERIAL_LOCK_TIMEOUT_MS)) != pdTRUE)
+    {
+        return finishFailedSession(0, false, dtuMutex, false, dtuPort,
+                                   businessPaused, "DTU mutex timeout",
+                                   0, otaTotalSize, freeInternalHeap());
+    }
+    bool dtuMutexHeld = true;
 
     esp_ota_handle_t otaHandle = 0;
     esp_err_t beginResult =
@@ -133,39 +204,13 @@ void otaWorkerTask(void *pvParameters)
     if (beginResult != ESP_OK)
     {
         LOG_ERROR("Remote OTA begin failed: %s", esp_err_to_name(beginResult));
-        otaActive.store(false, std::memory_order_release);
-        deleteCurrentTask();
+        return finishFailedSession(otaHandle, false, dtuMutex, dtuMutexHeld,
+                                   dtuPort, businessPaused,
+                                   "flash begin failed", 0, otaTotalSize,
+                                   freeInternalHeap());
     }
     bool otaHandleOpen = true;
-
-    auto &serialManager = SerialManager::getInstance();
-    Stream *dtuPort = serialManager.getStream(SERIAL_DTU);
-    SemaphoreHandle_t dtuMutex = serialManager.getMutex(SERIAL_DTU);
-    if (dtuPort == nullptr || dtuMutex == nullptr)
-    {
-        finishWorkerWithoutBusinessPause(otaHandle, otaHandleOpen,
-                                         "DTU port is unavailable");
-    }
-
-    // Allow the request parser to publish UPLOAD_RES, return from processLine
-    // and leave its guarded business region before the OTA asks for quiescence.
-    vTaskDelay(pdMS_TO_TICKS(OTA_REQUEST_SETTLE_MS));
-
-    if (xSemaphoreTake(dtuMutex,
-                       pdMS_TO_TICKS(OTA_SERIAL_LOCK_TIMEOUT_MS)) != pdTRUE)
-    {
-        finishWorkerWithoutBusinessPause(otaHandle, otaHandleOpen,
-                                         "DTU mutex timeout");
-    }
-
-    // Stop new business operations, then wait for every in-flight guarded
-    // operation to finish. This replaces the old fixed 250 ms assumption.
-    if (!RemoteOtaManager::requestBusinessPause(
-            OTA_BUSINESS_QUIESCE_TIMEOUT_MS))
-    {
-        finishWorkerAfterPauseFailure(otaHandle, dtuMutex, dtuPort,
-                                      "business quiesce timeout");
-    }
+    uint32_t sessionMinimumFree = freeInternalHeap();
 
     drainInput(dtuPort);
     dtuPort->printf(
@@ -176,8 +221,8 @@ void otaWorkerTask(void *pvParameters)
         "The single packet sent is 800 bytes, with a sending interval of 1000ms\n");
     LOG_INFO("Remote OTA ready: size=%u business_pause=confirmed",
              static_cast<unsigned>(otaTotalSize));
+    logOtaMemory("ready", sessionMinimumFree);
 
-    uint8_t data[OTA_BUFFER_SIZE];
     size_t bytesWritten = 0;
     size_t localBufferLength = 0;
     uint32_t lastDataTime = millis();
@@ -193,7 +238,8 @@ void otaWorkerTask(void *pvParameters)
             int value = dtuPort->read();
             if (value >= 0)
             {
-                data[localBufferLength++] = static_cast<uint8_t>(value);
+                otaDataBuffer[localBufferLength++] =
+                    static_cast<uint8_t>(value);
                 lastDataTime = millis();
             }
         }
@@ -206,7 +252,7 @@ void otaWorkerTask(void *pvParameters)
         if (bufferReady)
         {
             esp_err_t writeResult =
-                esp_ota_write(otaHandle, data, localBufferLength);
+                esp_ota_write(otaHandle, otaDataBuffer, localBufferLength);
             if (writeResult != ESP_OK)
             {
                 LOG_ERROR("Remote OTA flash write failed: %s",
@@ -223,6 +269,7 @@ void otaWorkerTask(void *pvParameters)
                       static_cast<unsigned>(bytesWritten),
                       static_cast<unsigned>(otaTotalSize));
             localBufferLength = 0;
+            updateSessionMinimum(sessionMinimumFree);
         }
 
         now = millis();
@@ -245,19 +292,26 @@ void otaWorkerTask(void *pvParameters)
         dtuPort->printf("OTA download complete! Finalizing...\n");
         esp_err_t endResult = esp_ota_end(otaHandle);
         otaHandleOpen = false;
+        updateSessionMinimum(sessionMinimumFree);
         if (endResult == ESP_OK)
         {
-            esp_err_t bootResult = esp_ota_set_boot_partition(updatePartition);
+            esp_err_t bootResult =
+                esp_ota_set_boot_partition(updatePartition);
             if (bootResult == ESP_OK)
             {
                 dtuPort->printf(
                     "OTA success! System restarting in 3 seconds...\n");
                 LOG_INFO("Remote OTA completed: %u bytes",
                          static_cast<unsigned>(bytesWritten));
+                logOtaMemory("complete", sessionMinimumFree);
                 xSemaphoreGive(dtuMutex);
+                dtuMutexHeld = false;
                 vTaskDelay(pdMS_TO_TICKS(3000));
                 ESP.restart();
-                deleteCurrentTask();
+                while (true)
+                {
+                    vTaskDelay(portMAX_DELAY);
+                }
             }
 
             LOG_ERROR("Remote OTA boot partition failed: %s",
@@ -276,31 +330,20 @@ void otaWorkerTask(void *pvParameters)
         failureReason = "received size mismatch";
     }
 
-    if (otaHandleOpen)
-    {
-        esp_ota_abort(otaHandle);
-    }
-
-    dtuPort->printf("OTA failed: %s. Written %u/%u bytes.\n",
-                    failureReason,
-                    static_cast<unsigned>(bytesWritten),
-                    static_cast<unsigned>(otaTotalSize));
-    LOG_ERROR("Remote OTA failed: reason=%s written=%u/%u",
-              failureReason,
-              static_cast<unsigned>(bytesWritten),
-              static_cast<unsigned>(otaTotalSize));
-
-    drainInput(dtuPort);
-    xSemaphoreGive(dtuMutex);
-    RemoteOtaManager::resumeBusiness();
-    otaActive.store(false, std::memory_order_release);
-    deleteCurrentTask();
+    return finishFailedSession(otaHandle, otaHandleOpen, dtuMutex,
+                               dtuMutexHeld, dtuPort, businessPaused,
+                               failureReason, bytesWritten, otaTotalSize,
+                               sessionMinimumFree);
 }
 
 void otaListenerTask(void *pvParameters)
 {
     (void)pvParameters;
-    LOG_INFO("Remote OTA listener started");
+    LOG_INFO("Remote OTA single task started: stack=%u idle_priority=%u active_priority=%u",
+             static_cast<unsigned>(OTA_TASK_STACK_SIZE),
+             static_cast<unsigned>(otaIdlePriority),
+             static_cast<unsigned>(otaActivePriority));
+    logOtaMemory("listener_started");
 
     QueueHandle_t requestQueue =
         EventBus::getInstance().createReceiverQueue(5, "OTA");
@@ -328,9 +371,12 @@ void otaListenerTask(void *pvParameters)
         JSONCmdData *request = static_cast<JSONCmdData *>(msg.data);
         LOG_DEBUG("Remote OTA request: %s", request->arguments.c_str());
 
-        config_json uploadJson(request->arguments.c_str());
-        int requestedSize =
-            uploadJson.isValid() ? uploadJson.getInt("size", 0) : 0;
+        int requestedSize = 0;
+        {
+            config_json uploadJson(request->arguments.c_str());
+            requestedSize =
+                uploadJson.isValid() ? uploadJson.getInt("size", 0) : 0;
+        }
 
         publishUploadResponse(request);
 
@@ -349,56 +395,42 @@ void otaListenerTask(void *pvParameters)
             continue;
         }
 
-        OtaRequest *workerRequest = new (std::nothrow) OtaRequest{
-            static_cast<size_t>(requestedSize)};
-        if (workerRequest == nullptr)
-        {
-            LOG_ERROR("Remote OTA request allocation failed");
-            otaActive.store(false, std::memory_order_release);
-            continue;
-        }
-
-        BaseType_t result = xTaskCreatePinnedToCore(
-            otaWorkerTask,
-            "otaUpload",
-            OTA_WORKER_STACK_SIZE,
-            workerRequest,
-            otaWorkerPriority,
-            nullptr,
-            1);
-        if (result != pdPASS)
-        {
-            delete workerRequest;
-            otaActive.store(false, std::memory_order_release);
-            LOG_ERROR("Remote OTA worker creation failed");
-        }
+        vTaskPrioritySet(nullptr, otaActivePriority);
+        runOtaSession(static_cast<size_t>(requestedSize));
+        otaActive.store(false, std::memory_order_release);
+        vTaskPrioritySet(nullptr, otaIdlePriority);
+        LOG_INFO("Remote OTA listener resumed after failed session");
+        logOtaMemory("listener_resumed");
     }
 }
 } // namespace
 
 namespace RemoteOtaManager
 {
-bool begin(UBaseType_t listenerPriority, UBaseType_t workerPriority)
+bool begin(UBaseType_t listenerPriority, UBaseType_t activePriority)
 {
     if (listenerHandle != nullptr)
     {
         return true;
     }
 
-    otaWorkerPriority = workerPriority;
+    otaIdlePriority = listenerPriority;
+    otaActivePriority = activePriority;
     BaseType_t result = xTaskCreatePinnedToCore(
         otaListenerTask,
         "OtaUploadTask",
-        4 * 1024,
+        OTA_TASK_STACK_SIZE,
         nullptr,
-        listenerPriority,
+        otaIdlePriority,
         &listenerHandle,
         1);
 
     if (result != pdPASS)
     {
         listenerHandle = nullptr;
-        LOG_ERROR("Remote OTA listener creation failed");
+        LOG_ERROR("Remote OTA task creation failed: free=%u largest=%u",
+                  static_cast<unsigned>(freeInternalHeap()),
+                  static_cast<unsigned>(largestInternalBlock()));
         return false;
     }
     return true;

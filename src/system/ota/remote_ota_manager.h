@@ -5,9 +5,10 @@
 
 namespace RemoteOtaManager
 {
-// Start the persistent OTA request listener. The active worker is created only
-// for an accepted upload request.
-bool begin(UBaseType_t listenerPriority, UBaseType_t workerPriority);
+// Start the single persistent OTA task during boot. The same task listens at
+// listenerPriority and temporarily raises itself to activePriority while it
+// performs an accepted upload; no second runtime worker task is allocated.
+bool begin(UBaseType_t listenerPriority, UBaseType_t activePriority);
 
 bool isActive();
 
