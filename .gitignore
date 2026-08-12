@@ -1,5 +1,6 @@
 # Arduino / ESP32 build outputs
 /build/
+/.build*/
 *.bin
 *.bin_rep
 *.elf

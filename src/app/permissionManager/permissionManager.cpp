@@ -529,8 +529,17 @@ void PermissionSystem::onGALRes(void *eventData, Stream *stream, String cmd, Str
     resData->release();
 }
 void PermissionSystem::onUpload(void *eventData, Stream *stream, String cmd, String args){
-    config_json uploadJson(args.c_str());
-    int size = uploadJson.isValid() ? uploadJson.getInt("size", 0) : 0;
+    (void)stream;
+    (void)cmd;
+    (void)args;
+
+    // The OTA listener retains the request while publishing UPLOAD_RES. This
+    // handler owns that response reference and releases it after unblocking
+    // the synchronous permission route.
+    auto *request = static_cast<JSONCmdData *>(eventData);
+    if (request != nullptr) {
+        request->release();
+    }
 }
 void PermissionSystem::onDTUCommand(void *eventData, Stream *stream, String cmd, String args){
     LOG_DEBUG("Handling Config Response");

@@ -1,4 +1,5 @@
 #include "filesysManager.h"
+#include "../../system/ota/remote_ota_manager.h"
 #include "../../module/log/log_manager.h"
 #include "../../module/pack212/pack212.h"
 #include "../../system/event/eventBus.h"
@@ -721,6 +722,7 @@ void filesysManager::poll() {
     EventMsg msg;
     if (EventBus::waitEvent(SaveDataFileTaskQueue, msg))
     {
+        RemoteOtaManager::BusinessActivityGuard businessActivity;
         if (msg.id == EventID::PROCESSED_DATA_COLLECTED)
         {
             AllProcessedDataPacket *allData = (AllProcessedDataPacket *)msg.data;

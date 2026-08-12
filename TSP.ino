@@ -2,8 +2,8 @@
 
 
 //�°汾
-// Firmware 2.0.4: retain valid CSQ state and prevent LED statistics backlog.
-#define VERSION2 "2.0.4"
+// Firmware 2.0.6: use one pre-created OTA task with cooperative business pause.
+#define VERSION2 "2.0.6"
 
 void setup()
 {
