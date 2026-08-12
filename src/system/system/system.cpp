@@ -33,6 +33,7 @@
 #include "../../app/ledManager/ledManager.h"
 
 
+// 正式运行默认关闭 DEBUG 详细日志；需要现场排查时再临时取消下一行注释。
 #define DEBUG
 
 #define PUMP1_PIN 41
@@ -50,6 +51,11 @@ static constexpr uint32_t CSQ_POLL_INTERVAL_MS = 60UL * 1000UL;
 // CSQ_DEFERRED can phase-lock the CSQ task to the once-per-minute live upload.
 // Retry briefly after a collision while keeping healthy polling at 60 seconds.
 static constexpr uint32_t CSQ_RETRY_INTERVAL_MS = 5UL * 1000UL;
+static constexpr uint32_t TIME_SYNC_INTERVAL_MS = 24UL * 60UL * 60UL * 1000UL;
+static constexpr uint32_t TIME_SYNC_RETRY_INTERVAL_MS = 5UL * 60UL * 1000UL;
+static constexpr int TIME_SYNC_SAFE_SECOND_START = 10;
+static constexpr int TIME_SYNC_SAFE_SECOND_END = 40;
+static constexpr int64_t TIME_SYNC_APPLY_THRESHOLD_SEC = 3;
 
 // ********** 时间相关定义 **********
 Ds1302 rtc(17, 6, 7);
@@ -67,6 +73,8 @@ void timeInit(uint64_t timestamp);
 bool updateMillisTime(uint64_t newTime);
 uint64_t getCurrentTime();
 static bool isValidClockTime(uint64_t timestamp);
+static bool clockTimestampToEpoch(uint64_t timestamp, time_t &epoch);
+static bool synchronizeTimeFromDtu();
 // ********** 时间相关定义 **********
 
 // ********** 其他全局定义 **********
@@ -227,9 +235,11 @@ static void updateSetupTask(void *pvParameters)
     // Restore starts after the first valid CSQ update.
 
     volatile bool netWorkError = false;
-    int countTime = 0;
     uint32_t lastPendingScanMs = 0;
+    uint32_t lastTimeSyncAttemptMs = 0;
+    uint32_t lastTimeSyncSuccessMs = 0;
     bool hasValidCsq = false;
+    bool hasNetworkTimeSync = false;
     while (true)
     {
         // Firmware 2.0.4: pending maintenance must not depend on the current
@@ -247,24 +257,41 @@ static void updateSetupTask(void *pvParameters)
             }
         }
 
-        if (countTime >= 720)
+        // Network time is maintenance work. Use elapsed milliseconds rather
+        // than loop counts, which accelerate whenever CSQ is deferred.
+        uint32_t nowMs = millis();
+        bool timeSyncDue = !hasNetworkTimeSync ||
+                           nowMs - lastTimeSyncSuccessMs >= TIME_SYNC_INTERVAL_MS;
+        bool timeSyncRetryReady = lastTimeSyncAttemptMs == 0 ||
+                                  nowMs - lastTimeSyncAttemptMs >= TIME_SYNC_RETRY_INTERVAL_MS;
+        if (hasValidCsq && timeSyncDue && timeSyncRetryReady)
         {
-            uint64_t currentTime = getCurrentTime();
-            if (currentTime < 202605270000)
+            // Avoid applying a clock correction close to a minute boundary.
+            time_t wallNow;
+            time(&wallNow);
+            struct tm localNow;
+            localtime_r(&wallNow, &localNow);
+            int waitSeconds = 0;
+            if (localNow.tm_sec < TIME_SYNC_SAFE_SECOND_START)
             {
-                vTaskDelay(pdMS_TO_TICKS(3000));
-                currentTime = getCurrentTime();
+                waitSeconds = TIME_SYNC_SAFE_SECOND_START - localNow.tm_sec;
             }
-            if (!updateMillisTime(currentTime))
+            else if (localNow.tm_sec > TIME_SYNC_SAFE_SECOND_END)
             {
-                LOG_ERROR("Failed to update milliseconds time");
+                waitSeconds = 60 - localNow.tm_sec + TIME_SYNC_SAFE_SECOND_START;
             }
-            LOG_DEBUG("Current Time: %llu", currentTime);
-            countTime = 0;
-        }
-        else
-        {
-            countTime++;
+            if (waitSeconds > 0)
+            {
+                LOG_DEBUG("[DIAG] TIME_SYNC_WAIT seconds=%d", waitSeconds);
+                vTaskDelay(pdMS_TO_TICKS(waitSeconds * 1000));
+            }
+
+            lastTimeSyncAttemptMs = millis();
+            if (synchronizeTimeFromDtu())
+            {
+                hasNetworkTimeSync = true;
+                lastTimeSyncSuccessMs = millis();
+            }
         }
 
         // Firmware 2.0.3: DTUManager arbitrates SERIAL_HJ212 centrally.
@@ -326,7 +353,12 @@ static void updateSetupTask(void *pvParameters)
                 }
             }
         }
-        vTaskDelay(pdMS_TO_TICKS(CSQ_POLL_INTERVAL_MS));
+        // After the first valid CSQ, schedule the initial network-time attempt
+        // promptly. Once an attempt has occurred, resume the normal CSQ period.
+        uint32_t loopDelayMs = hasValidCsq && lastTimeSyncAttemptMs == 0
+                                   ? CSQ_RETRY_INTERVAL_MS
+                                   : CSQ_POLL_INTERVAL_MS;
+        vTaskDelay(pdMS_TO_TICKS(loopDelayMs));
     }
     vTaskDelete(NULL);
 }
@@ -576,8 +608,9 @@ static void CollectTask(void *pvParameters)
         collectorManager.poll();
         SerialManager::getInstance().checkAndReportOverflow(SERIAL_485);
         digitalWrite(PUMP1_PIN, LOW);
+        // vTaskDelayUntil advances xLastWakeTime itself. Do not reset it to
+        // the delayed actual wake tick, otherwise scheduling latency accumulates.
         vTaskDelayUntil(&xLastWakeTime, xFrequency);
-        xLastWakeTime = xTaskGetTickCount();
     }
 
     vTaskDelete(NULL);
@@ -1221,6 +1254,17 @@ void timeInit(uint64_t timestamp)
     {
         Ds1302::DateTime dt;
         uint64_t temp = timestamp;
+        // DTU time is normally YYYYMMDDhhmmss. Keep compatibility with the
+        // legacy 12-digit value while preserving seconds whenever available.
+        if (timestamp >= 10000000000000ULL)
+        {
+            dt.second = temp % 100;
+            temp /= 100;
+        }
+        else
+        {
+            dt.second = 0;
+        }
         dt.minute = temp % 100;
         temp /= 100;
         dt.hour = temp % 100;
@@ -1230,7 +1274,6 @@ void timeInit(uint64_t timestamp)
         dt.month = temp % 100;
         temp /= 100;
         dt.year = (uint8_t)(temp % 100);
-        dt.second = 0;
         dt.dow = 3;
         rtc.setDateTime(&dt);
         Serial.println("RTC Init sucessfully with network time!");
@@ -1243,8 +1286,9 @@ uint64_t getCurrentTime()
     Ds1302::DateTime now;
     rtc.getDateTime(&now);
     char buffer[20];
-    snprintf(buffer, sizeof(buffer), "%04d%02d%02d%02d%02d",
-             now.year + 2000, now.month, now.day, now.hour, now.minute);
+    snprintf(buffer, sizeof(buffer), "%04d%02d%02d%02d%02d%02d",
+             now.year + 2000, now.month, now.day,
+             now.hour, now.minute, now.second);
     return strtoull(buffer, nullptr, 10);
 }
 // 202605220939
@@ -1256,8 +1300,10 @@ bool updateMillisTime(uint64_t newTime)
         return false;
     }
 
-    int year, month, day, hour, minute;
-    if (sscanf(String(newTime).c_str(), "%4d%2d%2d%2d%2d", &year, &month, &day, &hour, &minute) == 5)
+    int year, month, day, hour, minute, second = 0;
+    int parsed = sscanf(String(newTime).c_str(), "%4d%2d%2d%2d%2d%2d",
+                        &year, &month, &day, &hour, &minute, &second);
+    if (parsed == 5 || parsed == 6)
     {
         struct tm timeinfo = {};
         timeinfo.tm_year = year - 1900; // �?900年起的年�?
@@ -1268,6 +1314,8 @@ bool updateMillisTime(uint64_t newTime)
         timeinfo.tm_sec = 0;    // 格式中无秒，默认�?
         timeinfo.tm_isdst = -1; // 自动判断夏令�?
 
+        // Override the legacy zero-second default when a 14-digit time is supplied.
+        timeinfo.tm_sec = second;
         time_t t = mktime(&timeinfo);
         if (t != -1)
         {
@@ -1295,6 +1343,65 @@ bool updateMillisTime(uint64_t newTime)
 }
 
 // ******************* 函数实现 *******************
+static bool clockTimestampToEpoch(uint64_t timestamp, time_t &epoch)
+{
+    if (!isValidClockTime(timestamp)) return false;
+
+    int year, month, day, hour, minute, second = 0;
+    char value[20];
+    snprintf(value, sizeof(value), "%llu", timestamp);
+    int parsed = sscanf(value, "%4d%2d%2d%2d%2d%2d",
+                        &year, &month, &day, &hour, &minute, &second);
+    if (parsed != 5 && parsed != 6) return false;
+
+    struct tm timeinfo = {};
+    timeinfo.tm_year = year - 1900;
+    timeinfo.tm_mon = month - 1;
+    timeinfo.tm_mday = day;
+    timeinfo.tm_hour = hour;
+    timeinfo.tm_min = minute;
+    timeinfo.tm_sec = second;
+    timeinfo.tm_isdst = -1;
+    epoch = mktime(&timeinfo);
+    return epoch != (time_t)-1;
+}
+
+static bool synchronizeTimeFromDtu()
+{
+    uint64_t networkTime = DTUManager::getInstance().hjSystemTime();
+    time_t networkEpoch;
+    if (!clockTimestampToEpoch(networkTime, networkEpoch))
+    {
+        if (networkTime != 0)
+        {
+            LOG_WARNING("[DIAG] TIME_SYNC_INVALID timestamp=%llu", networkTime);
+        }
+        return false;
+    }
+
+    time_t systemEpoch;
+    time(&systemEpoch);
+    int64_t deltaSeconds = (int64_t)difftime(networkEpoch, systemEpoch);
+    int64_t absoluteDelta = deltaSeconds < 0 ? -deltaSeconds : deltaSeconds;
+    if (absoluteDelta <= TIME_SYNC_APPLY_THRESHOLD_SEC)
+    {
+        LOG_INFO("[DIAG] TIME_SYNC_VERIFIED timestamp=%llu delta_sec=%lld applied=0",
+                 networkTime, (long long)deltaSeconds);
+        return true;
+    }
+
+    timeInit(networkTime);
+    if (!updateMillisTime(networkTime))
+    {
+        LOG_ERROR("[DIAG] TIME_SYNC_APPLY_FAIL timestamp=%llu delta_sec=%lld",
+                  networkTime, (long long)deltaSeconds);
+        return false;
+    }
+    LOG_INFO("[DIAG] TIME_SYNC_APPLIED timestamp=%llu delta_sec=%lld",
+             networkTime, (long long)deltaSeconds);
+    return true;
+}
+
 void setUpInit(void)
 {
     LOG_INFO("System setup init start!");
@@ -1304,41 +1411,17 @@ void setUpInit(void)
     auto &DTUMg = DTUManager::getInstance();
     DTUMg.init(*DTU_port, *HJ212_port);
 
+    // Start from RTC immediately so collection never waits for DTU command
+    // retries. Network time is synchronized later after the first valid CSQ.
+    rtc.init();
+    uint64_t rtcTime = getCurrentTime();
+    if (!updateMillisTime(rtcTime))
     {
-        // Firmware 2.0.3: DTUManager owns the HJ212 lock for commands.
-        uint64_t realTime = DTUMg.hjSystemTime();
-        int i = 0;
-        for (i = 0; i < 3; i++)
-        {
-            if (realTime >= 202605270000)
-            {
-                break;
-            }
-            vTaskDelay(pdMS_TO_TICKS(3000));
-            realTime = DTUMg.hjSystemTime();
-        }
-        LOG_DEBUG("****** realTime Time: %llu ******", realTime);
-        if (isValidClockTime(realTime))
-        {
-            timeInit(realTime);
-            uint64_t currentTime1 = getCurrentTime();
-            LOG_DEBUG("****** currentTime1 Time: %llu ******", currentTime1);
-            if (!updateMillisTime(realTime))
-            {
-                LOG_ERROR("Failed to update system time from DTU");
-            }
-        }
-        else
-        {
-            LOG_WARNING("DTU time unavailable, trying RTC fallback");
-            rtc.init();
-            uint64_t rtcTime = getCurrentTime();
-            if (!updateMillisTime(rtcTime))
-            {
-                LOG_ERROR("RTC fallback invalid; waiting for a valid clock");
-            }
-        }
-        vTaskDelay(pdMS_TO_TICKS(50));
+        LOG_ERROR("RTC startup time invalid; waiting for network synchronization");
+    }
+    else
+    {
+        LOG_INFO("[DIAG] TIME_BOOT_RTC timestamp=%llu", rtcTime);
     }
 
     HJ212CONFIG hj212Cfg = ConfigManager::getInstance().getHJ212();
@@ -1380,12 +1463,14 @@ void fileRestore(void)
 
 static bool isValidClockTime(uint64_t timestamp)
 {
-    int year, month, day, hour, minute;
-    char value[16];
+    int year, month, day, hour, minute, second = 0;
+    char value[20];
     snprintf(value, sizeof(value), "%llu", timestamp);
-    if (strlen(value) != 12 ||
-        sscanf(value, "%4d%2d%2d%2d%2d",
-               &year, &month, &day, &hour, &minute) != 5)
+    size_t length = strlen(value);
+    int parsed = sscanf(value, "%4d%2d%2d%2d%2d%2d",
+                        &year, &month, &day, &hour, &minute, &second);
+    if ((length != 12 && length != 14) ||
+        (parsed != 5 && parsed != 6))
     {
         return false;
     }
@@ -1393,5 +1478,6 @@ static bool isValidClockTime(uint64_t timestamp)
            month >= 1 && month <= 12 &&
            day >= 1 && day <= 31 &&
            hour >= 0 && hour <= 23 &&
-           minute >= 0 && minute <= 59;
+           minute >= 0 && minute <= 59 &&
+           second >= 0 && second <= 59;
 }

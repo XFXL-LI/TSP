@@ -53,7 +53,7 @@ int file_storage::readFFAT(const char *path, String &config_content) {
 int file_storage::writeFFAT(const char *path, const String &config_content) {
     if (!ffat_initialized) return 1;
 
-    // Reject empty content before removing the existing valid config file.
+    // 写入前先拒绝空内容，避免删除已有的有效配置文件。
     size_t expected = config_content.length();
     if (expected == 0) {
         LOG_ERROR("FFAT write rejected: empty content, path=%s", path);
