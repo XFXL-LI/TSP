@@ -15,7 +15,7 @@ const char *MODEL_JSON = R"({
   "a21026": {"name": "SO2","alarmLimit": 20,"unit": "ppb"},
   "a01001": {"name": "TEMP","alarmLimit": 40,"unit": "celsius"},
   "a01002": {"name": "HUMI","alarmLimit": 90,"unit": "%"},
-  "a01006": {"name": "PRESSURE","alarmLimit": 999,"unit": "kPa"},
+  "a01006": {"name": "PRESSURE","alarmLimit": 999,"unit": "kPa"}, 
   "L90": {"name": "NOISE","alarmLimit": 60,"unit": "dB"}
 })";
 
