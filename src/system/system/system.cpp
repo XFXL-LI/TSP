@@ -31,11 +31,11 @@
 #include "../../app/ledManager/ledManager.h"
 
 
-// Firmware 2.0.6 integration and hardware validation keep DEBUG enabled.
+// Firmware 2.0.7 integration and hardware validation keep DEBUG enabled.
 #define DEBUG
 
 #define PUMP1_PIN 41
-#define ALARM_PIN 40    // 12v电控制开�?
+#define ALARM_PIN 40    // 12v电控制开关
 
 // Firmware 2.0.4 (2026-07-31):
 // Yinerda M100M-B2 requires packets to be sent one at a time. Keep the
@@ -113,7 +113,7 @@ static void SaveDataFileTask(void *pvParameters);
 // OTA 升级
 // LED
 static void LedPrintTask(void *pvParameters);
-// 串口解析及管理权�?
+// 串口解析及管理权限
 static void SerialControlTask_lcd(void *pvParameters);
 static void SerialControlTask_dtu(void *pvParameters);
 static void PermissionTask(void *pvParameters);
@@ -127,7 +127,7 @@ static void updateSetupTask(void *pvParameters);
 static void updateConfigTask(void *pvParameters);
 // 温度控制
 static void TempControlTask(void *pvParameters);
-// mqtt 订阅发�?
+// mqtt 订阅发布
 static void MqttPublicTask(void *pvParameters);
 
 static void AlarmTask(void *pvParameters);
@@ -232,6 +232,7 @@ void System::SystemTaskInit(void)
 
     RemoteOtaManager::begin(TASK_PRIORITY_OTA_LISTENER,
                             TASK_PRIORITY_OTA_ACTIVE);
+    RemoteOtaManager::notifyLcdNormal(VERSION2);
 }
 
 static void updateConfigTask(void *pvParameters)
@@ -865,10 +866,39 @@ static void SerialControlTask_lcd(void *pvParameters)
     bool isReceiving = false;
     int bracketLevel = 0;
     unsigned long lastByteTime = 0;
+    uint32_t observedParserEpoch = RemoteOtaManager::lcdParserEpoch();
+
+    auto resetParser = [&]() {
+        isReceiving = false;
+        test = "";
+        bracketLevel = 0;
+        lastByteTime = 0;
+    };
 
     while (true)
     {
-        RemoteOtaManager::BusinessActivityGuard businessActivity;
+        uint32_t parserEpoch = RemoteOtaManager::lcdParserEpoch();
+        if (parserEpoch != observedParserEpoch)
+        {
+            resetParser();
+            observedParserEpoch = parserEpoch;
+        }
+
+        RemoteOtaManager::LcdInputMode inputMode =
+            RemoteOtaManager::lcdInputMode();
+        if (inputMode == RemoteOtaManager::LcdInputMode::Drain)
+        {
+            while (_lcdStream && _lcdStream->available() > 0)
+            {
+                _lcdStream->read();
+                taskYIELD();
+            }
+            resetParser();
+            SerialManager::getInstance().checkAndReportOverflow(SERIAL_LCD);
+            vTaskDelay(pdMS_TO_TICKS(1));
+            continue;
+        }
+
         while (_lcdStream && _lcdStream->available() > 0)
         {
             char c = _lcdStream->read();
@@ -892,9 +922,23 @@ static void SerialControlTask_lcd(void *pvParameters)
             if (isReceiving && bracketLevel == 0)
             {
                 LOG_DEBUG("Received TRUE Full JSON: %s", test.c_str());
-                permission.processLine(test, _lcdStream);
+                bool otaControlHandled =
+                    RemoteOtaManager::handleLcdOtaControlMessage(
+                        test.c_str());
+                if (!otaControlHandled &&
+                    RemoteOtaManager::lcdInputMode() ==
+                        RemoteOtaManager::LcdInputMode::Normal)
+                {
+                    RemoteOtaManager::BusinessActivityGuard businessActivity;
+                    if (RemoteOtaManager::lcdInputMode() ==
+                        RemoteOtaManager::LcdInputMode::Normal)
+                    {
+                        permission.processLine(test, _lcdStream);
+                    }
+                }
                 isReceiving = false;
                 test = "";
+                bracketLevel = 0;
                 break;
             }
 

@@ -2,8 +2,8 @@
 
 
 //�°汾
-// Firmware 2.0.6: use one pre-created OTA task with cooperative business pause.
-#define VERSION2 "2.0.6"
+// Firmware 2.0.7: add LCD OTA status coordination and input draining.
+#define VERSION2 "2.0.7"
 
 void setup()
 {

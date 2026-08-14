@@ -24,6 +24,12 @@ constexpr uint32_t OTA_INACTIVITY_TIMEOUT_MS = 90000;
 constexpr uint32_t OTA_SESSION_TIMEOUT_MS = 20UL * 60UL * 1000UL;
 constexpr uint32_t OTA_REQUEST_SETTLE_MS = 250;
 constexpr uint32_t OTA_WRITE_IDLE_GAP_MS = 20;
+constexpr uint32_t LCD_OTA_ACK_TIMEOUT_MS = 2000;
+constexpr uint32_t LCD_OTA_FAILED_DISPLAY_MS = 3000;
+constexpr uint32_t LCD_OTA_NORMAL_REPEAT_MS = 500;
+constexpr uint8_t LCD_OTA_PROTOCOL_VERSION = 1;
+constexpr uint8_t LCD_OTA_PROGRESS_STEP = 5;
+constexpr size_t LCD_OTA_MESSAGE_SIZE = 256;
 
 // Firmware 2.0.6: this is the only OTA task. It is created during startup,
 // before the long-running workload fragments the heap, and performs both
@@ -33,6 +39,12 @@ constexpr uint32_t OTA_TASK_STACK_SIZE = 6 * 1024;
 uint8_t otaDataBuffer[OTA_BUFFER_SIZE];
 
 std::atomic<bool> otaActive(false);
+std::atomic<uint8_t> lcdMode(
+    static_cast<uint8_t>(RemoteOtaManager::LcdInputMode::Normal));
+std::atomic<uint32_t> lcdModeEpoch(1);
+std::atomic<uint32_t> lcdSessionCounter(0);
+std::atomic<uint32_t> currentLcdSession(0);
+std::atomic<uint32_t> acknowledgedLcdSession(0);
 bool businessPauseRequested = false;
 uint32_t activeBusinessOperations = 0;
 portMUX_TYPE businessStateMux = portMUX_INITIALIZER_UNLOCKED;
@@ -102,6 +114,154 @@ void drainInput(Stream *port)
     }
 }
 
+void setLcdInputMode(RemoteOtaManager::LcdInputMode mode)
+{
+    lcdMode.store(static_cast<uint8_t>(mode), std::memory_order_release);
+    lcdModeEpoch.fetch_add(1, std::memory_order_acq_rel);
+}
+
+bool sendLcdOtaStatus(uint32_t session,
+                      const char *state,
+                      uint8_t progress,
+                      size_t total = 0,
+                      const char *reason = nullptr,
+                      const char *version = nullptr)
+{
+    char message[LCD_OTA_MESSAGE_SIZE] = {};
+    int length = 0;
+    if (reason != nullptr)
+    {
+        length = snprintf(
+            message, sizeof(message),
+            "{\"operation\":\"ota_status\",\"protocol\":%u,\"session\":%u,"
+            "\"state\":\"%s\",\"progress\":%u,\"reason\":\"%s\"}",
+            static_cast<unsigned>(LCD_OTA_PROTOCOL_VERSION),
+            static_cast<unsigned>(session), state,
+            static_cast<unsigned>(progress), reason);
+    }
+    else if (version != nullptr)
+    {
+        length = snprintf(
+            message, sizeof(message),
+            "{\"operation\":\"ota_status\",\"protocol\":%u,\"session\":%u,"
+            "\"state\":\"%s\",\"progress\":%u,\"version\":\"%s\"}",
+            static_cast<unsigned>(LCD_OTA_PROTOCOL_VERSION),
+            static_cast<unsigned>(session), state,
+            static_cast<unsigned>(progress), version);
+    }
+    else if (total > 0)
+    {
+        length = snprintf(
+            message, sizeof(message),
+            "{\"operation\":\"ota_status\",\"protocol\":%u,\"session\":%u,"
+            "\"state\":\"%s\",\"progress\":%u,\"total\":%u}",
+            static_cast<unsigned>(LCD_OTA_PROTOCOL_VERSION),
+            static_cast<unsigned>(session), state,
+            static_cast<unsigned>(progress),
+            static_cast<unsigned>(total));
+    }
+    else
+    {
+        length = snprintf(
+            message, sizeof(message),
+            "{\"operation\":\"ota_status\",\"protocol\":%u,\"session\":%u,"
+            "\"state\":\"%s\",\"progress\":%u}",
+            static_cast<unsigned>(LCD_OTA_PROTOCOL_VERSION),
+            static_cast<unsigned>(session), state,
+            static_cast<unsigned>(progress));
+    }
+
+    if (length <= 0 || static_cast<size_t>(length) >= sizeof(message))
+    {
+        LOG_ERROR("[DIAG] LCD_OTA_STATUS_BUILD_FAILED state=%s session=%u",
+                  state, static_cast<unsigned>(session));
+        return false;
+    }
+
+    size_t written =
+        SerialManager::getInstance().println(SERIAL_LCD, message);
+    bool sent = written == static_cast<size_t>(length) + 2;
+    if (sent)
+    {
+        LOG_INFO("[DIAG] LCD_OTA_STATUS state=%s session=%u progress=%u sent=1",
+                 state, static_cast<unsigned>(session),
+                 static_cast<unsigned>(progress));
+    }
+    else
+    {
+        LOG_WARNING(
+            "[DIAG] LCD_OTA_STATUS_SEND_FAILED state=%s session=%u progress=%u written=%u expected=%u",
+            state, static_cast<unsigned>(session),
+            static_cast<unsigned>(progress),
+            static_cast<unsigned>(written),
+            static_cast<unsigned>(length + 2));
+    }
+    return sent;
+}
+
+uint32_t beginLcdOtaSession(size_t otaTotalSize)
+{
+    uint32_t session =
+        lcdSessionCounter.fetch_add(1, std::memory_order_acq_rel) + 1;
+    if (session == 0)
+    {
+        session =
+            lcdSessionCounter.fetch_add(1, std::memory_order_acq_rel) + 1;
+    }
+
+    currentLcdSession.store(session, std::memory_order_release);
+    acknowledgedLcdSession.store(0, std::memory_order_release);
+    setLcdInputMode(RemoteOtaManager::LcdInputMode::WaitAck);
+    sendLcdOtaStatus(session, "preparing", 0, otaTotalSize);
+
+    const uint32_t startedAt = millis();
+    while (millis() - startedAt < LCD_OTA_ACK_TIMEOUT_MS)
+    {
+        if (acknowledgedLcdSession.load(std::memory_order_acquire) == session)
+        {
+            LOG_INFO("[DIAG] LCD_OTA_ACK session=%u result=ok",
+                     static_cast<unsigned>(session));
+            setLcdInputMode(RemoteOtaManager::LcdInputMode::Drain);
+            return session;
+        }
+        vTaskDelay(pdMS_TO_TICKS(20));
+    }
+
+    LOG_WARNING("[DIAG] LCD_OTA_ACK session=%u result=lcd_ack_timeout",
+                static_cast<unsigned>(session));
+    setLcdInputMode(RemoteOtaManager::LcdInputMode::Drain);
+    return session;
+}
+
+void finishLcdFailedSession(const char *reason, uint8_t progress)
+{
+    uint32_t session =
+        currentLcdSession.load(std::memory_order_acquire);
+    if (session == 0)
+    {
+        return;
+    }
+
+    sendLcdOtaStatus(session, "failed", progress, 0, reason);
+    vTaskDelay(pdMS_TO_TICKS(LCD_OTA_FAILED_DISPLAY_MS));
+    currentLcdSession.store(0, std::memory_order_release);
+    acknowledgedLcdSession.store(0, std::memory_order_release);
+    setLcdInputMode(RemoteOtaManager::LcdInputMode::Normal);
+    sendLcdOtaStatus(0, "normal", 0, 0, nullptr, VERSION2);
+    vTaskDelay(pdMS_TO_TICKS(LCD_OTA_NORMAL_REPEAT_MS));
+    sendLcdOtaStatus(0, "normal", 0, 0, nullptr, VERSION2);
+}
+
+uint8_t calculateOtaProgress(size_t bytesWritten, size_t otaTotalSize)
+{
+    if (otaTotalSize == 0)
+    {
+        return 0;
+    }
+    size_t progress = (bytesWritten * 100U) / otaTotalSize;
+    return static_cast<uint8_t>(progress > 100U ? 100U : progress);
+}
+
 bool finishFailedSession(esp_ota_handle_t otaHandle,
                          bool otaHandleOpen,
                          SemaphoreHandle_t dtuMutex,
@@ -140,6 +300,8 @@ bool finishFailedSession(esp_ota_handle_t otaHandle,
               static_cast<unsigned>(bytesWritten),
               static_cast<unsigned>(otaTotalSize));
     logOtaMemory("failed", sessionMinimumFree);
+    finishLcdFailedSession(
+        reason, calculateOtaProgress(bytesWritten, otaTotalSize));
     return false;
 }
 
@@ -174,6 +336,8 @@ bool runOtaSession(size_t otaTotalSize)
         return false;
     }
 
+    const uint32_t lcdSession = beginLcdOtaSession(otaTotalSize);
+
     // Allow the request parser to publish UPLOAD_RES, return from processLine
     // and leave its guarded business region before requesting quiescence.
     vTaskDelay(pdMS_TO_TICKS(OTA_REQUEST_SETTLE_MS));
@@ -185,6 +349,7 @@ bool runOtaSession(size_t otaTotalSize)
             OTA_BUSINESS_QUIESCE_TIMEOUT_MS))
     {
         LOG_ERROR("Remote OTA stopped: business quiesce timeout");
+        finishLcdFailedSession("business_quiesce_timeout", 0);
         return false;
     }
     bool businessPaused = true;
@@ -193,7 +358,7 @@ bool runOtaSession(size_t otaTotalSize)
                        pdMS_TO_TICKS(OTA_SERIAL_LOCK_TIMEOUT_MS)) != pdTRUE)
     {
         return finishFailedSession(0, false, dtuMutex, false, dtuPort,
-                                   businessPaused, "DTU mutex timeout",
+                                   businessPaused, "dtu_mutex_timeout",
                                    0, otaTotalSize, freeInternalHeap());
     }
     bool dtuMutexHeld = true;
@@ -206,7 +371,7 @@ bool runOtaSession(size_t otaTotalSize)
         LOG_ERROR("Remote OTA begin failed: %s", esp_err_to_name(beginResult));
         return finishFailedSession(otaHandle, false, dtuMutex, dtuMutexHeld,
                                    dtuPort, businessPaused,
-                                   "flash begin failed", 0, otaTotalSize,
+                                   "flash_begin_failed", 0, otaTotalSize,
                                    freeInternalHeap());
     }
     bool otaHandleOpen = true;
@@ -222,12 +387,14 @@ bool runOtaSession(size_t otaTotalSize)
     LOG_INFO("Remote OTA ready: size=%u business_pause=confirmed",
              static_cast<unsigned>(otaTotalSize));
     logOtaMemory("ready", sessionMinimumFree);
+    sendLcdOtaStatus(lcdSession, "transferring", 0, otaTotalSize);
 
     size_t bytesWritten = 0;
     size_t localBufferLength = 0;
     uint32_t lastDataTime = millis();
     const uint32_t sessionStartTime = lastDataTime;
     const char *failureReason = nullptr;
+    uint8_t nextLcdProgress = LCD_OTA_PROGRESS_STEP;
 
     while (bytesWritten < otaTotalSize)
     {
@@ -257,7 +424,7 @@ bool runOtaSession(size_t otaTotalSize)
             {
                 LOG_ERROR("Remote OTA flash write failed: %s",
                           esp_err_to_name(writeResult));
-                failureReason = "flash write failed";
+                failureReason = "flash_write_failed";
                 break;
             }
 
@@ -270,17 +437,32 @@ bool runOtaSession(size_t otaTotalSize)
                       static_cast<unsigned>(otaTotalSize));
             localBufferLength = 0;
             updateSessionMinimum(sessionMinimumFree);
+
+            uint8_t progress =
+                calculateOtaProgress(bytesWritten, otaTotalSize);
+            if (progress >= nextLcdProgress)
+            {
+                uint8_t reportedProgress = static_cast<uint8_t>(
+                    (progress / LCD_OTA_PROGRESS_STEP) *
+                    LCD_OTA_PROGRESS_STEP);
+                sendLcdOtaStatus(lcdSession, "transferring",
+                                 reportedProgress, otaTotalSize);
+                nextLcdProgress = static_cast<uint8_t>(
+                    reportedProgress >= 100
+                        ? 101
+                        : reportedProgress + LCD_OTA_PROGRESS_STEP);
+            }
         }
 
         now = millis();
         if (now - lastDataTime > OTA_INACTIVITY_TIMEOUT_MS)
         {
-            failureReason = "data inactivity timeout";
+            failureReason = "data_inactivity_timeout";
             break;
         }
         if (now - sessionStartTime > OTA_SESSION_TIMEOUT_MS)
         {
-            failureReason = "20 minute session timeout";
+            failureReason = "session_timeout";
             break;
         }
 
@@ -290,6 +472,7 @@ bool runOtaSession(size_t otaTotalSize)
     if (failureReason == nullptr && bytesWritten == otaTotalSize)
     {
         dtuPort->printf("OTA download complete! Finalizing...\n");
+        sendLcdOtaStatus(lcdSession, "verifying", 100, otaTotalSize);
         esp_err_t endResult = esp_ota_end(otaHandle);
         otaHandleOpen = false;
         updateSessionMinimum(sessionMinimumFree);
@@ -301,6 +484,8 @@ bool runOtaSession(size_t otaTotalSize)
             {
                 dtuPort->printf(
                     "OTA success! System restarting in 3 seconds...\n");
+                sendLcdOtaStatus(lcdSession, "restarting", 100, 0,
+                                 nullptr, VERSION2);
                 LOG_INFO("Remote OTA completed: %u bytes",
                          static_cast<unsigned>(bytesWritten));
                 logOtaMemory("complete", sessionMinimumFree);
@@ -316,18 +501,18 @@ bool runOtaSession(size_t otaTotalSize)
 
             LOG_ERROR("Remote OTA boot partition failed: %s",
                       esp_err_to_name(bootResult));
-            failureReason = "boot partition update failed";
+            failureReason = "boot_partition_failed";
         }
         else
         {
             LOG_ERROR("Remote OTA image validation failed: %s",
                       esp_err_to_name(endResult));
-            failureReason = "image validation failed";
+            failureReason = "image_validation_failed";
         }
     }
     else if (failureReason == nullptr)
     {
-        failureReason = "received size mismatch";
+        failureReason = "received_size_mismatch";
     }
 
     return finishFailedSession(otaHandle, otaHandleOpen, dtuMutex,
@@ -439,6 +624,67 @@ bool begin(UBaseType_t listenerPriority, UBaseType_t activePriority)
 bool isActive()
 {
     return otaActive.load(std::memory_order_acquire);
+}
+
+LcdInputMode lcdInputMode()
+{
+    return static_cast<LcdInputMode>(
+        lcdMode.load(std::memory_order_acquire));
+}
+
+uint32_t lcdParserEpoch()
+{
+    return lcdModeEpoch.load(std::memory_order_acquire);
+}
+
+bool handleLcdOtaControlMessage(const char *json)
+{
+    if (json == nullptr || lcdInputMode() != LcdInputMode::WaitAck)
+    {
+        return false;
+    }
+
+    config_json message(json);
+    if (!message.isValid() ||
+        message.getString("operation", "") != "ota_status_ack")
+    {
+        return false;
+    }
+
+    uint32_t expectedSession =
+        currentLcdSession.load(std::memory_order_acquire);
+    uint32_t receivedSession =
+        static_cast<uint32_t>(message.getInt("session", 0));
+    bool valid =
+        message.getInt("protocol", 0) == LCD_OTA_PROTOCOL_VERSION &&
+        receivedSession == expectedSession &&
+        message.getString("state", "") == "preparing" &&
+        message.getString("code", "") == "OK";
+
+    if (!valid)
+    {
+        LOG_WARNING(
+            "[DIAG] LCD_OTA_ACK_REJECTED expected_session=%u received_session=%u",
+            static_cast<unsigned>(expectedSession),
+            static_cast<unsigned>(receivedSession));
+        return true;
+    }
+
+    acknowledgedLcdSession.store(receivedSession,
+                                 std::memory_order_release);
+    return true;
+}
+
+void notifyLcdNormal(const char *version)
+{
+    currentLcdSession.store(0, std::memory_order_release);
+    acknowledgedLcdSession.store(0, std::memory_order_release);
+    setLcdInputMode(LcdInputMode::Normal);
+    sendLcdOtaStatus(0, "normal", 0, 0, nullptr,
+                     version == nullptr ? VERSION2 : version);
+    vTaskDelay(pdMS_TO_TICKS(LCD_OTA_NORMAL_REPEAT_MS));
+    sendLcdOtaStatus(0, "normal", 0, 0, nullptr,
+                     version == nullptr ? VERSION2 : version);
 }
 
 void beginBusinessActivity()
