@@ -107,7 +107,13 @@ void PermissionSystem::parseUserConfig(String content)
 void PermissionSystem::sendMsg(Stream *stream, const char *msg)
 {
     LOG_DEBUG("Msg: %s", msg);
-    stream->println(msg);
+    if (_Serialmanager != nullptr && stream == _lcdStream) {
+        _Serialmanager->println(_lcdSerialPort, msg);
+    } else if (_Serialmanager != nullptr && stream == _dtuStream) {
+        _Serialmanager->println(_dtuSerialPort, msg);
+    } else if (stream != nullptr) {
+        stream->println(msg);
+    }
     LOG_DEBUG("send ok");
 }
 void PermissionSystem::poll()

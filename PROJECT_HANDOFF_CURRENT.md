@@ -1,13 +1,39 @@
 # TSP ESP32-S3 项目当前交接文档
 
-最后更新：2026-08-12
-当前阶段：Firmware 2.0.6已把动态8KB OTA worker改为开机预创建的6KB单OTA任务并通过完整编译；尚未烧录或进行真实OTA，默认正式发布包仍为2.0.4
+最后更新：2026-08-14
+当前阶段：Firmware 2.0.7已完成一次完整远程OTA实机测试并成功启动；LCD升级页
+准备ACK和5%进度已验证，但重启后的`normal`未使LCD立即返回主页，默认正式发布包
+仍为2.0.4
 
 > 本文件是新会话的首要入口。新会话必须先完整读取本文件及
-> `CHANGELOG_2.0.6.md`、`CHANGELOG_2.0.5.md`及`CHANGELOG_2.0.4.md`，先区分
-> 2.0.6编译状态、2.0.5用户冒烟状态与2.0.4正式实机验证状态，再决定是否烧录。
+> `CHANGELOG_2.0.7.md`、`CHANGELOG_2.0.6.md`、`CHANGELOG_2.0.5.md`及
+> `CHANGELOG_2.0.4.md`，先区分2.0.7部分联调状态、2.0.6 OTA现场测试状态、
+> 2.0.5用户冒烟状态与2.0.4正式实机验证状态，再决定是否烧录。
 
-## 0. 2026-08-12 Firmware 2.0.6单任务OTA状态
+## 0. 2026-08-14 Firmware 2.0.7 LCD OTA交互状态
+
+- 当前唯一源码目录已更新为Firmware 2.0.7；默认硬件验证发布包仍为2.0.4；
+- 主板新增`preparing/transferring/verifying/restarting/failed/normal`状态JSON；
+- `preparing`等待LCD ACK最多2秒，LCD未连接、旧程序或ACK超时都不阻止OTA；
+- OTA期间LCD任务持续读取并丢弃输入，不解析普通命令，避免1024字节RX缓冲积压；
+- LCD解析器在OTA状态切换时清除半包、括号层级和超时状态；
+- 传输进度每跨过5%通知一次，不逐800字节分包通知；
+- LCD/DTU普通响应和OTA状态使用串口互斥保护的完整单行发送；
+- DEBUG已确认开启，小时统计、HJ212 3000ms间隔和SHT30代码未修改；
+- 完整编译：Sketch 626916字节，全局变量26800字节，应用BIN 627072字节；
+- 应用BIN SHA-256：
+  `4F37E77B9F52B0A154CD2F94B20ABB71E1C55D3EB723D9911DB1DECD4B30BB86`；
+- 源码输入指纹：
+  `AF23FBD1DE343752459A6144794599A428C499AC13E5CEAE6316E545E11E1596`；
+- esptool镜像checksum和validation hash均有效；
+- 2026-08-14完成一次627072字节远程OTA：LCD准备ACK成功、进度0～100%、校验、
+  重启和2.0.7启动均已验证；
+- 主板重启后间隔约500ms发送两次`normal`，LCD均未立即恢复，约25分钟后由LCD
+  自身超时机制返回主页；该恢复可靠性仍需后续协议完善；
+- 主板/LCD完整对接见根目录`LCD_OTA_INTERACTION_PROTOCOL.md`；
+- 2.0.7正在独立Git分支整理，默认正式回退版本仍是2.0.4固定四段BIN。
+
+## 0.1 2026-08-12～13 Firmware 2.0.6单任务OTA状态
 
 - 当前唯一源码目录已更新为Firmware 2.0.6；默认硬件验证发布包仍为2.0.4；
 - 2.0.5实机日志连续运行约15小时22分钟，最大连续内部堆块始终为7668字节，
@@ -23,11 +49,12 @@
 - 源码输入指纹为
   `429466118EFA865D58FACE8D56B1E659BCA7C54744C13C046C989BB77E04E9CA`；
 - 两次应用BIN哈希不同但源码输入指纹和容量一致，当前工具链存在非确定构建元数据；
-- 构建状态为`compiled-not-hardware-verified`，没有执行烧录；
+- 2.0.6随后已烧录并完成现场OTA测试：一次镜像校验失败后安全恢复，一次完整
+  OTA成功并重启恢复业务，另一次因上传请求/Ready握手未建立而没有进入OTA；
 - 分包序号、分包CRC、应用层ACK/重传以及升级后自动回滚仍未加入；
 - 完整修改和验证要求见`CHANGELOG_2.0.6.md`。
 
-## 0.1 2026-08-11 Firmware 2.0.5整合状态
+## 0.2 2026-08-11 Firmware 2.0.5整合状态
 
 - 当前唯一源码目录已更新为Firmware 2.0.5，但默认硬件验证发布包仍为2.0.4；
 - 2.0.5以8月10日当前源码为底座，完整保留采集漂移、秒级时间、RTC优先启动、
@@ -83,9 +110,13 @@ D:\ChatGPT-Pro\TSP-ESP32-S3\firmware_workspace
 独立处理和DEBUG开启状态均保持不变。
 
 注意：目录名仍包含 `Firmware_2.0.3_original`，但其中实际源码版本已经是
-Firmware 2.0.6。
+Firmware 2.0.7。
 
-Git 工作树：
+Firmware 2.0.7 LCD OTA交互改动正在GitHub独立分支整理；本地实际源码目录仍是
+后续开发入口。
+Firmware 2.0.6对应GitHub分支为`codex/firmware-2.0.6-single-ota`、草稿PR #2。
+
+以下是早期2.0.4历史Git工作树，不是当前2.0.7开发入口：
 
 ```text
 D:\ChatGPT-Pro\TSP-ESP32-S3\worktrees\firmware-2.0.4-csq-led
@@ -529,6 +560,9 @@ D:\TSP-SD-TestData
 
 ## 8. SHT30 独立问题
 
+2026-08-13用户判断此前问题大概率与GND未同步有关；调整任务优先级后当前表现也已
+自行恢复。本轮不再处理SHT30，不修改其代码。以下内容仅保留为历史诊断记录。
+
 SHT30 读取代码与 `D:\air\TSP` 原始代码完全一致：
 
 - SDA：GPIO8
@@ -585,45 +619,47 @@ Failed to read from SHT30 sensor, error code: -101
 当前 `E:\pending\0\20260805092020.pkt` 是有效且尚未补传完成的正式数据，
 不得删除、移动或改写；装回设备后先观察其是否补传成功消失。
 
-## 10. 新会话工作顺序
+## 10. 当前下一步：完善 LCD OTA 恢复确认
 
-新会话收到本项目后应按以下顺序处理：
+1. 保留已通过实机远程OTA的Firmware 2.0.7作为当前开发基线，不回改本次测试结论。
+2. LCD必须无条件接受`session=0,state=normal`，收到后立即返回主页并恢复查询。
+3. 下一版本建议为`normal`增加LCD ACK，并在未确认时进行有上限、低频率重发，避免
+   只发送两次时因LCD启动时序或页面任务繁忙而漏收。
+4. 修改后重新验证成功OTA、镜像校验失败、传输中断、LCD不回复准备ACK和旧LCD持续
+   发送查询；失败路径必须恢复旧业务。
+5. 同时记录`OTA_MEMORY`的`request/ready/failed/complete`、`session_min_free`和
+   `stack_high_water`，确认LCD状态输出未造成持续内存下降。
+6. 完整对接报文、错误码和LCD行为以根目录`LCD_OTA_INTERACTION_PROTOCOL.md`为准。
 
-1. 完整读取本文件。
-2. 完整读取 `CHANGELOG_2.0.4.md`。
-3. 必要时再读取 `SESSION_HANDOFF_2026-07-31.md`、
-   `CHANGELOG_2.0.3.md` 和 `DEV_LOG_2026-07-31.md`。
-4. 明确回复已经理解当前版本、测试状态和禁止修改项。
-5. 对新日志先建立采集、处理、SD、发送、pending 的时间线。
-6. 区分传感器偶发读取问题、DTU 无 ACK、平台缺数和固件内部丢包。
-7. 在日志、SD 和平台三方证据能够定位问题前，不修改代码。
-8. 如果确实需要修改，先说明修改目标、依据、影响范围和验证方法。
-9. 会话结束前更新本文件中的最新提交、测试结论、遗留问题和下一步。
+## 11. 新会话工作顺序
 
-## 11. 新会话启动提示词
+1. 完整读取根目录`FIRMWARE_START_HERE.md`、`FIRMWARE_VERSION_LOCATIONS.md`和
+   `ARDUINO_IDE_2.0.4_SETTINGS.md`。
+2. 完整读取本文件及`CHANGELOG_2.0.7.md`、`CHANGELOG_2.0.6.md`、
+   `CHANGELOG_2.0.5.md`和`CHANGELOG_2.0.4.md`。
+3. 区分2.0.4正式回退、2.0.6现场OTA基线和2.0.7已成功OTA但LCD恢复待完善状态。
+4. 保持小时统计冻结、HJ212逐包3000ms、SHT30独立和DEBUG开启。
+5. 未经用户明确授权不得烧录MCU。
+6. 对新的LCD/主板串口日志先按`preparing→ACK→transferring→verifying→
+   restarting/failed→normal`建立时间线，再决定是否修改代码。
+7. 会话结束前更新构建哈希、实机结论、遗留问题和下一步。
+
+## 12. 新会话启动提示词
 
 ```text
-请继续处理 TSP ESP32-S3 项目的 Firmware 2.0.4 数据稳定性测试。
+请继续处理TSP ESP32-S3 Firmware项目。
 
 实际源码目录：
 D:\ChatGPT-Pro\TSP-ESP32-S3\tmp\Firmware_2.0.3_original\TSP
 
-请先完整读取：
-PROJECT_HANDOFF_CURRENT.md
-CHANGELOG_2.0.4.md
+当前开发源码为Firmware 2.0.7，主板侧LCD OTA状态、2秒ACK、5%进度通知、
+OTA期间LCD输入排空和失败/重启恢复已实现；一次完整远程OTA已成功并启动2.0.7，
+但重启后的两次normal未使LCD立即返回主页，LCD约25分钟后由自身超时机制恢复。
+默认正式回退仍是固定四段Firmware 2.0.4发布包。
 
-先不要修改代码。读取完成后，请确认当前版本、正式测试状态、已完成修复，
-以及以下要求：
+请先完整读取根目录三份入口文档、PROJECT_HANDOFF_CURRENT.md、
+CHANGELOG_2.0.7.md至CHANGELOG_2.0.4.md，以及LCD_OTA_INTERACTION_PROTOCOL.md。
 
-1. 小时统计逻辑暂时不允许修改。
-2. HJ212逐包间隔保持3000ms。
-3. SHT30问题独立处理。
-4. 当前实际源码和正式运行固件已重新开启DEBUG，不要自行关闭。
-5. 统一称双向交互屏为“大彩HMI屏”，单向设备为“LED灯珠灯箱”。
-
-最新正式运行已经证明采集、处理和SD保存连续，网络ACK存在波动，当前唯一
-遗留 pending 为 `E:\pending\0\20260805092020.pkt`，不得删除。
-
-接下来我会提供新的串口日志、SD卡数据和平台数据。请先按时间线分析
-采集→处理→SD保存→HJ212发送→pending恢复的完整证据，再决定是否需要修改代码。
+小时统计禁止修改；HJ212逐包间隔保持3000ms；SHT30独立处理；DEBUG保持开启；
+未经明确授权不得烧录MCU。
 ```
