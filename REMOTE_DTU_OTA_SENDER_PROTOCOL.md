@@ -3,11 +3,12 @@
 协议版本：1.0
 制定日期：2026-08-14
 适用设备：TSP ESP32-S3 主板与 Remote DTU OTA 发送端
-当前状态：协议已确定，待 MCU 和发送端实现、编译及实机联调
+当前状态：协议已确定；发送端可以开始开发，MCU 计划在 Firmware 2.0.9 单独实现
 
-> 重要：Firmware 2.0.7 当前仍向 Remote DTU 发送英文文本 `Ready`、字节进度和
+> 重要：Firmware 2.0.8 及更早版本仍向 Remote DTU 发送英文文本 `Ready`、字节进度和
 > 成功/失败结果，尚未发送本文定义的 `upload_status` JSON。发送端只有在安装了
-> 实现本文协议的新 MCU 固件后，才能以本文 JSON 作为正式联调依据。
+> 实现本文协议的新 MCU 固件后，才能以本文 JSON 作为正式联调依据。计划中的首个
+> MCU JSON 协议版本为 Firmware 2.0.9。
 
 ## 1. 目标
 
@@ -100,10 +101,10 @@ MCU 返回：
 随后发送升级请求：
 
 ```json
-{"operation":"upload","protocol":1,"size":627072}
+{"operation":"upload","protocol":1,"size":627872}
 ```
 
-`627072` 只是 Firmware 2.0.7 当前测试 BIN 的示例大小。发送端必须读取用户实际
+`627872` 只是 Firmware 2.0.8 当前测试 BIN 的示例大小。发送端必须读取用户实际
 选择文件的长度填入 `size`，不得把示例值写死。
 
 发送 `upload` 后，发送端必须保持等待状态，不得发送任何 BIN 字节。
@@ -128,7 +129,7 @@ MCU 返回：
 ### 7.1 MCU 接受请求
 
 ```json
-{"operation":"upload_status","protocol":1,"session":1,"state":"accepted","size":627072}
+{"operation":"upload_status","protocol":1,"session":1,"state":"accepted","size":627872}
 ```
 
 收到 `accepted` 只能说明请求进入准备阶段。业务静默可能需要数秒到数十秒，发送端
@@ -137,7 +138,7 @@ MCU 返回：
 ### 7.2 MCU 准备完成
 
 ```json
-{"operation":"upload_status","protocol":1,"session":1,"state":"ready","size":627072,"chunk_size":800,"interval_ms":1000,"inactivity_timeout_ms":90000}
+{"operation":"upload_status","protocol":1,"session":1,"state":"ready","size":627872,"chunk_size":800,"interval_ms":1000,"inactivity_timeout_ms":90000}
 ```
 
 发送端收到当前会话的 `ready` 后必须依次执行：
@@ -175,7 +176,7 @@ MCU 返回：
 MCU 每首次跨过 5% 阈值发送一次，不按每个 800 字节包发送：
 
 ```json
-{"operation":"upload_status","protocol":1,"session":1,"state":"transferring","written":313536,"total":627072,"progress":50}
+{"operation":"upload_status","protocol":1,"session":1,"state":"transferring","written":313936,"total":627872,"progress":50}
 ```
 
 正常阈值为：
@@ -190,7 +191,7 @@ MCU 每首次跨过 5% 阈值发送一次，不按每个 800 字节包发送：
 ### 7.5 MCU 校验
 
 ```json
-{"operation":"upload_status","protocol":1,"session":1,"state":"verifying","written":627072,"total":627072,"progress":100}
+{"operation":"upload_status","protocol":1,"session":1,"state":"verifying","written":627872,"total":627872,"progress":100}
 ```
 
 收到 `verifying` 后，发送端必须关闭 BIN 发送定时器，不能重复发送最后一包。
@@ -198,7 +199,7 @@ MCU 每首次跨过 5% 阈值发送一次，不按每个 800 字节包发送：
 ### 7.6 MCU 成功
 
 ```json
-{"operation":"upload_status","protocol":1,"session":1,"state":"success","written":627072,"total":627072,"progress":100,"restarting_in_ms":3000}
+{"operation":"upload_status","protocol":1,"session":1,"state":"success","written":627872,"total":627872,"progress":100,"restarting_in_ms":3000}
 ```
 
 发送端收到 `success` 后应：
@@ -214,7 +215,7 @@ MCU 每首次跨过 5% 阈值发送一次，不按每个 800 字节包发送：
 ### 8.1 已建立会话失败
 
 ```json
-{"operation":"upload_status","protocol":1,"session":1,"state":"failed","reason":"image_validation_failed","written":627072,"total":627072,"progress":100}
+{"operation":"upload_status","protocol":1,"session":1,"state":"failed","reason":"image_validation_failed","written":627872,"total":627872,"progress":100}
 ```
 
 收到 `failed` 后，发送端必须立即：
@@ -319,45 +320,45 @@ TSP.ino.bin
 - `boot_app0.bin`；
 - `.7z`、`.zip` 或其他压缩包。
 
-当前 Firmware 2.0.7 测试应用 BIN：
+当前 Firmware 2.0.8 测试应用 BIN：
 
-- 文件大小：627072 字节；
+- 文件大小：627872 字节；
 - 首字节：`0xE9`；
 - SHA-256：
-  `4F37E77B9F52B0A154CD2F94B20ABB71E1C55D3EB723D9911DB1DECD4B30BB86`。
+  `90E066D25798BBB76752F74E156CAF18E2EE4F58A441D31D9343FD7020FD8DB1`。
 
-以上数值只用于 2.0.7 当前测试包。后续版本必须使用对应发布清单中的大小和哈希。
+以上数值只用于 2.0.8 当前测试包。后续版本必须使用对应发布清单中的大小和哈希。
 
 ## 12. 性能和 DTU 负担
 
 本协议不会明显增加 DTU 负担：
 
-- 627072 字节、800 字节一包约为 784 个发送包；
-- 旧方案对每次写入返回文本，最多产生约 784 行进度；
+- 627872 字节、800 字节一包约为 785 个发送包；
+- 旧方案对每次写入返回文本，最多产生约 785 行进度；
 - 本协议按 5% 返回进度，整个会话约 21 条进度，加少量状态，通常不超过 25 条；
 - 所有控制 JSON 均不超过 256 字节，总控制流量约 3～5KB；
-- 控制流量相对 627072 字节固件不足 1%；
+- 控制流量相对 627872 字节固件不足 1%；
 - Remote DTU 串口为 115200，分散在约 13 分钟会话中，带宽占用可忽略。
 
 MCU 应使用固定 256 字节缓冲和 `snprintf()` 构造状态，不因发送 JSON 动态建立大型
 对象。进度不得改回每个 800 字节包发送。
 
-## 13. Firmware 2.0.7 旧文本兼容说明
+## 13. Firmware 2.0.8 及更早版本旧文本兼容说明
 
-Firmware 2.0.7 当前 Remote DTU 实际返回：
+Firmware 2.0.8 当前 Remote DTU 实际返回：
 
 ```text
-Ready to start OTA, size: 627072 byte, inactivity timeout: 90 seconds
+Ready to start OTA, size: 627872 byte, inactivity timeout: 90 seconds
 The single packet sent is 800 bytes, with a sending interval of 1000ms
 ```
 
 传输期间返回：
 
 ```text
-800/627072
-1600/627072
+800/627872
+1600/627872
 ...
-627072/627072
+627872/627872
 ```
 
 完成和结果：
@@ -370,7 +371,7 @@ OTA success! System restarting in 3 seconds...
 或：
 
 ```text
-OTA failed: image_validation_failed. Written 627072/627072 bytes.
+OTA failed: image_validation_failed. Written 627872/627872 bytes.
 ```
 
 在 MCU 和发送端同时切换到本文 JSON 协议前，现有发送端仍应按旧文本工作。不得在

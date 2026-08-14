@@ -19,12 +19,12 @@
 优先阅读其中的 `README.md`。根目录旧 `TSP`、`worktrees` 以及
 `firmware_workspace\archive` 中的内容都不是日常源码或烧录入口。
 
-当前源码版本是Firmware 2.0.7，主板侧LCD OTA交互已实现，并完成一次完整远程OTA
-实机测试：准备ACK、5%进度、校验、重启和2.0.7启动均成功。主板重启后发送了两次
-`normal`，LCD未立即返回主页，约25分钟后由LCD自身超时机制恢复；该恢复确认仍待
-后续完善。最新构建位于：
+当前源码版本是Firmware 2.0.8，已增加LCD `normal` ACK、2秒非阻塞重发和30秒
+确认上限，并于2026-08-14完成627872字节远程OTA及LCD V1.0.12实机联调。
+主板成功校验、重启并启动2.0.8；首条`normal`未获ACK后按2秒机制重发，第二条
+收到ACK，LCD约3秒后恢复`get_data`。最新构建位于：
 
-`firmware_workspace\build\current`
+`firmware_workspace\build\firmware-2.0.8-normal-ack`
 
 默认可烧录版本仍是2026-08-10已验证的Firmware 2.0.4：
 
@@ -38,7 +38,7 @@
 
 `6CE8B44EA4BF509815A7CE57470B1CC79CA84F85355BF6E4F2D1CB6EA13A4773`
 
-Firmware 2.0.7主板与LCD对接协议：
+Firmware 2.0.8主板与LCD对接协议：
 
 `D:\ChatGPT-Pro\TSP-ESP32-S3\LCD_OTA_INTERACTION_PROTOCOL.md`
 

@@ -26,7 +26,8 @@ constexpr uint32_t OTA_REQUEST_SETTLE_MS = 250;
 constexpr uint32_t OTA_WRITE_IDLE_GAP_MS = 20;
 constexpr uint32_t LCD_OTA_ACK_TIMEOUT_MS = 2000;
 constexpr uint32_t LCD_OTA_FAILED_DISPLAY_MS = 3000;
-constexpr uint32_t LCD_OTA_NORMAL_REPEAT_MS = 500;
+constexpr uint32_t LCD_OTA_NORMAL_RETRY_INTERVAL_MS = 2000;
+constexpr uint32_t LCD_OTA_NORMAL_RETRY_TIMEOUT_MS = 30000;
 constexpr uint8_t LCD_OTA_PROTOCOL_VERSION = 1;
 constexpr uint8_t LCD_OTA_PROGRESS_STEP = 5;
 constexpr size_t LCD_OTA_MESSAGE_SIZE = 256;
@@ -45,6 +46,11 @@ std::atomic<uint32_t> lcdModeEpoch(1);
 std::atomic<uint32_t> lcdSessionCounter(0);
 std::atomic<uint32_t> currentLcdSession(0);
 std::atomic<uint32_t> acknowledgedLcdSession(0);
+std::atomic<bool> lcdNormalRetryActive(false);
+std::atomic<bool> lcdNormalAckReceived(false);
+std::atomic<bool> lcdNormalSendInProgress(false);
+std::atomic<uint32_t> lcdNormalRetryStartedAt(0);
+std::atomic<uint32_t> lcdNormalNextSendAt(0);
 bool businessPauseRequested = false;
 uint32_t activeBusinessOperations = 0;
 portMUX_TYPE businessStateMux = portMUX_INITIALIZER_UNLOCKED;
@@ -199,6 +205,27 @@ bool sendLcdOtaStatus(uint32_t session,
     return sent;
 }
 
+bool sendLcdNormalIfCurrent()
+{
+    bool expected = false;
+    if (!lcdNormalSendInProgress.compare_exchange_strong(
+            expected, true, std::memory_order_acq_rel))
+    {
+        return false;
+    }
+
+    bool shouldSend =
+        lcdNormalRetryActive.load(std::memory_order_acquire) &&
+        !lcdNormalAckReceived.load(std::memory_order_acquire) &&
+        static_cast<RemoteOtaManager::LcdInputMode>(
+            lcdMode.load(std::memory_order_acquire)) ==
+            RemoteOtaManager::LcdInputMode::Normal;
+    bool sent = shouldSend &&
+                sendLcdOtaStatus(0, "normal", 0, 0, nullptr, VERSION2);
+    lcdNormalSendInProgress.store(false, std::memory_order_release);
+    return sent;
+}
+
 uint32_t beginLcdOtaSession(size_t otaTotalSize)
 {
     uint32_t session =
@@ -209,6 +236,15 @@ uint32_t beginLcdOtaSession(size_t otaTotalSize)
             lcdSessionCounter.fetch_add(1, std::memory_order_acq_rel) + 1;
     }
 
+    // A new OTA session supersedes any boot/failure normal recovery retry.
+    // Otherwise a scheduled normal frame could incorrectly unlock the LCD
+    // after preparing has already started.
+    lcdNormalRetryActive.store(false, std::memory_order_release);
+    lcdNormalAckReceived.store(false, std::memory_order_release);
+    while (lcdNormalSendInProgress.load(std::memory_order_acquire))
+    {
+        vTaskDelay(pdMS_TO_TICKS(1));
+    }
     currentLcdSession.store(session, std::memory_order_release);
     acknowledgedLcdSession.store(0, std::memory_order_release);
     setLcdInputMode(RemoteOtaManager::LcdInputMode::WaitAck);
@@ -244,12 +280,7 @@ void finishLcdFailedSession(const char *reason, uint8_t progress)
 
     sendLcdOtaStatus(session, "failed", progress, 0, reason);
     vTaskDelay(pdMS_TO_TICKS(LCD_OTA_FAILED_DISPLAY_MS));
-    currentLcdSession.store(0, std::memory_order_release);
-    acknowledgedLcdSession.store(0, std::memory_order_release);
-    setLcdInputMode(RemoteOtaManager::LcdInputMode::Normal);
-    sendLcdOtaStatus(0, "normal", 0, 0, nullptr, VERSION2);
-    vTaskDelay(pdMS_TO_TICKS(LCD_OTA_NORMAL_REPEAT_MS));
-    sendLcdOtaStatus(0, "normal", 0, 0, nullptr, VERSION2);
+    RemoteOtaManager::notifyLcdNormal();
 }
 
 uint8_t calculateOtaProgress(size_t bytesWritten, size_t otaTotalSize)
@@ -639,7 +670,7 @@ uint32_t lcdParserEpoch()
 
 bool handleLcdOtaControlMessage(const char *json)
 {
-    if (json == nullptr || lcdInputMode() != LcdInputMode::WaitAck)
+    if (json == nullptr)
     {
         return false;
     }
@@ -651,15 +682,58 @@ bool handleLcdOtaControlMessage(const char *json)
         return false;
     }
 
-    uint32_t expectedSession =
-        currentLcdSession.load(std::memory_order_acquire);
     uint32_t receivedSession =
         static_cast<uint32_t>(message.getInt("session", 0));
+    String state = message.getString("state", "");
+    String code = message.getString("code", "");
+    int protocol = message.getInt("protocol", 0);
+
+    // Firmware 2.0.8: normal recovery ACK is accepted in normal input mode,
+    // independently of an OTA session number. Duplicate ACKs are harmless.
+    if (state == "normal")
+    {
+        bool validNormalAck =
+            protocol == LCD_OTA_PROTOCOL_VERSION &&
+            receivedSession == 0 &&
+            code == "OK";
+        if (!validNormalAck)
+        {
+            LOG_WARNING(
+                "[DIAG] LCD_OTA_NORMAL_ACK result=rejected protocol=%d session=%u code=%s",
+                protocol, static_cast<unsigned>(receivedSession),
+                code.c_str());
+            return true;
+        }
+
+        bool firstAck =
+            !lcdNormalAckReceived.exchange(true, std::memory_order_acq_rel);
+        lcdNormalRetryActive.store(false, std::memory_order_release);
+        if (firstAck)
+        {
+            LOG_INFO("[DIAG] LCD_OTA_NORMAL_ACK result=ok");
+        }
+        else
+        {
+            LOG_DEBUG("[DIAG] LCD_OTA_NORMAL_ACK result=duplicate");
+        }
+        return true;
+    }
+
+    if (lcdInputMode() != LcdInputMode::WaitAck)
+    {
+        LOG_WARNING(
+            "[DIAG] LCD_OTA_ACK_REJECTED reason=not_waiting state=%s session=%u",
+            state.c_str(), static_cast<unsigned>(receivedSession));
+        return true;
+    }
+
+    uint32_t expectedSession =
+        currentLcdSession.load(std::memory_order_acquire);
     bool valid =
-        message.getInt("protocol", 0) == LCD_OTA_PROTOCOL_VERSION &&
+        protocol == LCD_OTA_PROTOCOL_VERSION &&
         receivedSession == expectedSession &&
-        message.getString("state", "") == "preparing" &&
-        message.getString("code", "") == "OK";
+        state == "preparing" &&
+        code == "OK";
 
     if (!valid)
     {
@@ -675,16 +749,61 @@ bool handleLcdOtaControlMessage(const char *json)
     return true;
 }
 
-void notifyLcdNormal(const char *version)
+void notifyLcdNormal()
 {
     currentLcdSession.store(0, std::memory_order_release);
     acknowledgedLcdSession.store(0, std::memory_order_release);
     setLcdInputMode(LcdInputMode::Normal);
-    sendLcdOtaStatus(0, "normal", 0, 0, nullptr,
-                     version == nullptr ? VERSION2 : version);
-    vTaskDelay(pdMS_TO_TICKS(LCD_OTA_NORMAL_REPEAT_MS));
-    sendLcdOtaStatus(0, "normal", 0, 0, nullptr,
-                     version == nullptr ? VERSION2 : version);
+
+    const uint32_t now = millis();
+    lcdNormalAckReceived.store(false, std::memory_order_release);
+    lcdNormalRetryStartedAt.store(now, std::memory_order_release);
+    lcdNormalNextSendAt.store(
+        now + LCD_OTA_NORMAL_RETRY_INTERVAL_MS,
+        std::memory_order_release);
+    lcdNormalRetryActive.store(true, std::memory_order_release);
+
+    // Send the first frame immediately. Further retries are serviced by the
+    // existing LCD receive task so startup and business work are not blocked.
+    sendLcdNormalIfCurrent();
+}
+
+void serviceLcdNormalRetry()
+{
+    if (!lcdNormalRetryActive.load(std::memory_order_acquire) ||
+        lcdNormalAckReceived.load(std::memory_order_acquire) ||
+        lcdInputMode() != LcdInputMode::Normal)
+    {
+        return;
+    }
+
+    const uint32_t now = millis();
+    const uint32_t startedAt =
+        lcdNormalRetryStartedAt.load(std::memory_order_acquire);
+    if (now - startedAt >= LCD_OTA_NORMAL_RETRY_TIMEOUT_MS)
+    {
+        bool expected = true;
+        if (lcdNormalRetryActive.compare_exchange_strong(
+                expected, false, std::memory_order_acq_rel))
+        {
+            LOG_WARNING(
+                "[DIAG] LCD_OTA_NORMAL_ACK result=timeout elapsed_ms=%u",
+                static_cast<unsigned>(now - startedAt));
+        }
+        return;
+    }
+
+    const uint32_t nextSendAt =
+        lcdNormalNextSendAt.load(std::memory_order_acquire);
+    if (static_cast<int32_t>(now - nextSendAt) < 0)
+    {
+        return;
+    }
+
+    lcdNormalNextSendAt.store(
+        now + LCD_OTA_NORMAL_RETRY_INTERVAL_MS,
+        std::memory_order_release);
+    sendLcdNormalIfCurrent();
 }
 
 void beginBusinessActivity()

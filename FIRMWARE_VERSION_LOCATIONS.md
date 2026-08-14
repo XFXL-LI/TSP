@@ -81,17 +81,15 @@ Firmware 2.0.6 已完成现场 OTA 测试：
 
 GitHub 开发分支：`codex/firmware-2.0.6-single-ota`；草稿 PR #2。
 
-## Firmware 2.0.7：当前开发源码
+## Firmware 2.0.7：LCD OTA 主流程实机测试基线
 
-当前继续开发的源码目录：
-
-`D:\ChatGPT-Pro\TSP-ESP32-S3\tmp\Firmware_2.0.3_original\TSP`
+2.0.7 精确源码已保存在下述 GitHub 分支；本地当前开发目录已继续升级到2.0.8，
+不能再把该目录当作2.0.7源码快照。
 
 状态：主板侧 LCD OTA 交互已实现，并于 2026-08-14 完成一次完整远程 OTA 实机
 测试。准备 ACK、5% 进度、校验、重启和 2.0.7 启动均成功；主板重启后发送了两次
-`normal`，LCD 未立即返回主页，约 25 分钟后由 LCD 自身超时机制恢复，因此 LCD
-恢复确认仍待后续完善。它完整保留 2.0.4 的 8 月 10 日修复、2.0.5 业务优先级
-保护和 2.0.6 单任务 OTA，并新增：
+`normal`，LCD 未立即返回主页，约 25 分钟后由 LCD 自身超时机制恢复。它完整保留
+2.0.4 的 8 月 10 日修复、2.0.5 业务优先级保护和 2.0.6 单任务 OTA，并新增：
 
 - `preparing/transferring/verifying/restarting/failed/normal` 状态 JSON；
 - 2 秒非阻塞 LCD 准备 ACK；
@@ -113,13 +111,45 @@ LCD 对接协议：
 
 `D:\ChatGPT-Pro\TSP-ESP32-S3\LCD_OTA_INTERACTION_PROTOCOL.md`
 
-Firmware 2.0.7 改动在独立分支 `codex/firmware-2.0.7-lcd-ota` 中整理；默认正式
-回退版本仍是 2.0.4 固定四段发布包。
+GitHub 分支：`codex/firmware-2.0.7-lcd-ota`；提交：`e2c079f`；草稿 PR #4。
+
+## Firmware 2.0.8：当前实机联调开发基线
+
+当前继续开发的源码目录仍为：
+
+`D:\ChatGPT-Pro\TSP-ESP32-S3\tmp\Firmware_2.0.3_original\TSP`
+
+Firmware 2.0.8 在 2.0.7 实机测试基线上增加 LCD 恢复确认：
+
+- 初始化完成后立即发送第一条 `session=0,state=normal`；
+- 未收到 ACK 时每 2 秒非阻塞重发，最多 30 秒；
+- 接受 LCD V1.0.12 的 `state=normal,session=0,code=OK` ACK 后立即停止；
+- 超时只记录警告，不判定为 OTA 失败；
+- OTA 失败恢复也使用同一套 `normal` ACK；
+- 新 OTA 开始时取消旧的 `normal` 重试。
+
+完整编译通过：应用 BIN 627872 字节；SHA-256：
+`90E066D25798BBB76752F74E156CAF18E2EE4F58A441D31D9343FD7020FD8DB1`。
+
+源码输入指纹：
+`AEB27CA06DEF242E68B1C191F0D8A8CC75CA630AC64D6C9512AED8717396EE7D`。
+
+构建目录：
+
+`D:\ChatGPT-Pro\TSP-ESP32-S3\firmware_workspace\build\firmware-2.0.8-normal-ack`
+
+2026-08-14 实机结果：627872 字节远程 OTA 完成、镜像校验成功、自动重启并启动
+Firmware 2.0.8。重启后的第一条 `normal` 未获 ACK，第二条按 2 秒机制重发后收到
+LCD V1.0.12 ACK；约 3.09 秒后恢复 `get_data`。日志中无 normal ACK timeout、
+UART overflow、JSON 接收错误或 OTA 失败。
+
+状态：远程 OTA 与 LCD normal ACK 成功路径已完成实机联调；默认正式回退版本仍为
+固定四段 Firmware 2.0.4 发布包。
 
 ## 使用规则
 
 1. 需要恢复已验证固件：使用2.0.4固定四段发布包。
 2. 需要查看或重新编译2.0.4：打开独立2.0.4源码目录中的 `TSP.ino`。
-3. 需要继续开发：只修改当前2.0.7开发源码目录。
+3. 需要继续开发：只修改当前2.0.8开发源码目录。
 4. 不在2.0.4独立源码目录中继续开发；需要改动时先复制或建立新的Git分支。
 5. 构建目录和归档目录均不作为日常源码入口。

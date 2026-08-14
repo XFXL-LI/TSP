@@ -25,7 +25,8 @@ bool isActive();
 LcdInputMode lcdInputMode();
 uint32_t lcdParserEpoch();
 bool handleLcdOtaControlMessage(const char *json);
-void notifyLcdNormal(const char *version);
+void notifyLcdNormal();
+void serviceLcdNormalRetry();
 
 // Business code enters a guarded region only while it is actively using
 // sensors, storage, serial ports, queues or outputs. A pending OTA blocks new

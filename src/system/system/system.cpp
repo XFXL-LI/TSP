@@ -230,9 +230,9 @@ void System::SystemTaskInit(void)
 
     xTaskCreatePinnedToCore(CollectGalTask, "CollectGalTask", 4 * 1024, NULL, TASK_PRIORITY_CALIBRATION, NULL, 0);
 
+    RemoteOtaManager::notifyLcdNormal();
     RemoteOtaManager::begin(TASK_PRIORITY_OTA_LISTENER,
                             TASK_PRIORITY_OTA_ACTIVE);
-    RemoteOtaManager::notifyLcdNormal(VERSION2);
 }
 
 static void updateConfigTask(void *pvParameters)
@@ -958,6 +958,7 @@ static void SerialControlTask_lcd(void *pvParameters)
             bracketLevel = 0;
         }
         SerialManager::getInstance().checkAndReportOverflow(SERIAL_LCD);
+        RemoteOtaManager::serviceLcdNormalRetry();
         vTaskDelay(pdMS_TO_TICKS(1));
     }
     vTaskDelete(NULL);

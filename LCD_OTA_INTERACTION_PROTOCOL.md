@@ -1,28 +1,26 @@
 # TSP 主板 OTA 与 LCD 屏幕交互协议
 
-协议版本：1.0
-制定日期：2026-08-13
+文档版本：1.1
+报文字段 `protocol`：1
+更新日期：2026-08-14
 适用设备：TSP ESP32-S3 主板与大彩 HMI LCD 屏幕
-当前状态：Firmware 2.0.7 主板侧已实现；远程 OTA 主流程和 LCD 升级阶段已实机
-验证，LCD 重启后恢复主页的确认机制待完善
+当前状态：Firmware 2.0.8 主板侧 normal ACK 已实现，并已与 LCD V1.0.12 完成
+一次成功远程 OTA、重启和恢复实机联调
 
 > 重要：Firmware 2.0.6 尚未发送本文定义的 `ota_status` JSON。主板侧功能从
-> Firmware 2.0.7 开始提供。2026-08-14 实测已验证 `preparing` ACK、5% 进度、
-> `verifying`、`restarting` 和 2.0.7 成功启动；LCD 没有响应重启后的两次
-> `normal`，约 25 分钟后由自身超时机制恢复。因此该版本是部分联调通过，默认
-> 正式回退版本仍为 Firmware 2.0.4。
+> Firmware 2.0.7 开始提供 OTA 状态，并已完成一次成功远程 OTA；但 LCD 没有
+> 响应重启后的两次 `normal`。Firmware 2.0.8 增加 `normal` ACK、2 秒重试和
+> 30 秒上限；2026-08-14 实测首条 `normal` 未获 ACK，第二条重发后收到 ACK，
+> LCD 约 3 秒后恢复普通查询。默认正式回退版本仍为 Firmware 2.0.4。
 
 ## 0. 2026-08-14 实机联调结论
 
-- 主板收到 627072 字节固件并成功校验、切换分区、重启，启动版本为 2.0.7；
-- LCD 正确接收 `preparing`、回复当前会话 ACK，并按 5% 粒度显示进度；
-- 主板启动完成后间隔约 500ms 发送两次 `session=0,state=normal`；
-- LCD 未立即返回主页，约 25 分钟后触发自身超时恢复。
-
-因此第 13.1 节中“LCD 收到 `normal` 后立即恢复”的验收项尚未通过。LCD 端应先
-确认无条件接受 `session=0,state=normal`；后续协议版本建议增加 `normal` ACK，
-主板在未确认时以低频、有上限方式重发。Firmware 2.0.7 保留当前两次发送行为，
-不把尚未实机验证的新恢复策略混入已测试基线。
+- 627872 字节固件完整接收、校验、重启并启动 Firmware 2.0.8；
+- `preparing` ACK、5% 进度、`verifying` 和 `restarting` 状态均正常；
+- 重启后 16:12:06.375 发送首条 `normal`，LCD 未回复；
+- 16:12:08.365 主板按 2 秒机制重发，16:12:08.524 记录 normal ACK 成功；
+- 16:12:11.613 LCD 恢复 `get_data`，normal ACK 后约 3.09 秒恢复业务；
+- 无 normal ACK timeout、UART overflow、JSON 接收错误或 OTA 失败日志。
 
 ## 1. 目标
 
@@ -105,7 +103,7 @@ LCD 在任意时刻收到 `preparing`、`transferring`、`verifying` 或 `restar
 LCD 收到未知 `state` 时不得崩溃或恢复普通查询，应显示“主板升级状态未知”，
 并等待下一条有效状态。
 
-## 5. 准备阶段 ACK
+## 5. ACK 规则
 
 ### 5.1 主板通知 LCD
 
@@ -145,6 +143,23 @@ LCD 回复：
 
 LCD ACK 只用于确认页面切换，不是主板 OTA 成功条件。进度状态不要求 ACK。
 
+### 5.3 normal 恢复 ACK
+
+LCD 收到任意合法 `state=normal` 时，必须先于会话和页面锁定判断无条件处理，
+然后回复：
+
+```json
+{"operation":"ota_status_ack","protocol":1,"session":0,"state":"normal","code":"OK"}
+```
+
+- 首条 `normal`：立即清除 OTA 锁定、返回主页并启动一次 3 秒恢复定时器；
+- 重复 `normal`：每次补发 ACK，但不重复跳页、不重新锁定、不重启或延长定时器；
+- 未收到 `normal`：不得凭空发送恢复 ACK；
+- 主板收到合法 ACK 后立即停止重发并记录
+  `LCD_OTA_NORMAL_ACK result=ok`；
+- 主板 30 秒内未收到 ACK：停止重发并记录 `result=timeout`，但不得把它判定为
+  OTA 失败或暂停普通业务。
+
 ## 6. 完整交互时序
 
 ### 6.1 正常成功流程
@@ -161,8 +176,9 @@ LCD ACK 只用于确认页面切换，不是主板 OTA 成功条件。进度状�
 10. 固件接收完成后，主板向 LCD 发送 `verifying`；
 11. 镜像校验和启动分区设置成功后，主板发送 `restarting`；
 12. 主板约 3 秒后重启；
-13. 主板完成配置、SD 和主要任务初始化后发送 `normal`；
-14. LCD 返回正常页面，延迟约 1 秒后恢复普通查询。
+13. 主板完成配置、SD 和主要任务初始化后立即发送 `normal`；
+14. LCD 返回正常页面并回复 normal ACK；
+15. 主板收到 ACK 后停止重发；LCD 首次 `normal` 后约 3 秒恢复普通查询。
 
 ### 6.2 传输进度
 
@@ -192,17 +208,18 @@ LCD ACK 只用于确认页面切换，不是主板 OTA 成功条件。进度状�
 校验成功并设置启动分区后：
 
 ```json
-{"operation":"ota_status","protocol":1,"session":123456,"state":"restarting","progress":100,"version":"2.0.7"}
+{"operation":"ota_status","protocol":1,"session":123456,"state":"restarting","progress":100,"version":"2.0.8"}
 ```
 
 主板重启并完成初始化后：
 
 ```json
-{"operation":"ota_status","protocol":1,"session":0,"state":"normal","progress":0,"version":"2.0.7"}
+{"operation":"ota_status","protocol":1,"session":0,"state":"normal","progress":0,"version":"2.0.8"}
 ```
 
-为减少 LCD 偶发漏收导致一直停留在升级页面的风险，主板应在初始化完成后间隔
-约 500 毫秒重复发送一次 `normal`。
+主板立即发送第一条 `normal`；未收到 ACK 时在 2、4、6……28 秒继续发送，达到
+30 秒时停止并记录超时，不在 30 秒边界再发送。重试由现有 LCD 接收任务调度，
+不得阻塞主板初始化或普通业务。
 
 ## 7. 失败流程
 
@@ -221,15 +238,16 @@ LCD ACK 只用于确认页面切换，不是主板 OTA 成功条件。进度状�
 5. 向 LCD 发送 `failed`；
 6. 保留失败页面约 3 秒；
 7. 向 LCD 发送 `normal`；
-8. LCD 返回正常页面并恢复普通查询。
+8. LCD 返回正常页面并回复 normal ACK；
+9. 主板收到 ACK 后停止重发，LCD 按首次 `normal` 的3秒定时恢复普通查询。
 
 LCD 收到 `failed` 后不得自行立即恢复 `get_data`，必须等待主板发送 `normal`。
 
 ## 8. 错误码定义
 
-### 8.1 Firmware 2.0.7 会向 LCD 发送的失败码
+### 8.1 Firmware 2.0.8 会向 LCD 发送的失败码
 
-以下错误发生在主板已经发送 `preparing`、建立 LCD 会话之后。Firmware 2.0.7
+以下错误发生在主板已经发送 `preparing`、建立 LCD 会话之后。Firmware 2.0.8
 会通过 `state=failed` 和 `reason` 发送给 LCD：
 
 | `reason` | 含义 | LCD 建议显示 | 是否可重试 |
@@ -269,6 +287,8 @@ LCD 收到 `failed` 后不得自行立即恢复 `get_data`，必须等待主板�
 | `lcd_ack_timeout` | 主板发送 `preparing` 后 2 秒内未收到 LCD ACK | 主板继续 OTA，并进入 LCD 输入排空模式 |
 | `lcd_ack_session_mismatch` | LCD ACK 的 `session` 与当前 OTA 不一致 | 忽略该 ACK，继续等待或超时后继续 OTA |
 | `lcd_status_send_failed` | 主板无法完整发送某条 LCD 状态 | 记录日志并继续 OTA，LCD 不得成为升级阻塞条件 |
+| `LCD_OTA_NORMAL_ACK result=timeout` | 30 秒未收到 normal ACK | 停止重发；只记录恢复确认失败，不判定 OTA 失败 |
+| `LCD_OTA_NORMAL_ACK result=rejected` | normal ACK 的协议、session 或 code 无效 | 消费该控制报文并继续有限重试 |
 
 ### 8.4 为后续完整性和安全校验预留的错误码
 
@@ -325,14 +345,15 @@ OTA 成功重启或失败恢复前，主板应：
 2. 收到任何非 `normal` OTA 状态，都要停止普通查询；
 3. 只有收到 `normal` 才恢复 `get_data`；
 4. `preparing` ACK 必须在完成停止定时器和切换页面后发送；
-5. ACK 只发送一次，不循环重发；
+5. `preparing` ACK 同一会话只发送一次；每收到一条合法 `normal` 都回复 normal ACK；
 6. 进度只接受 0～100，异常值按边界显示，但不得导致程序崩溃；
 7. 新 `session` 的 `preparing` 可覆盖旧的失败或升级页面；
 8. 非零且与当前会话不一致的旧进度消息应忽略；
 9. `session=0,state=normal` 必须始终接受；
 10. 未知状态或错误码必须显示原始值，不能直接恢复普通业务；
 11. LCD 升级页面不得继续发送心跳式 `get_data`；
-12. LCD 自身重启后若收到 `transferring` 或其他 OTA 状态，应直接进入升级页面。
+12. LCD 自身重启后若收到 `transferring` 或其他 OTA 状态，应直接进入升级页面；
+13. 重复 `normal` 不得重启或延长3秒恢复定时器。
 
 ## 11. 固定超时和频率
 
@@ -346,7 +367,9 @@ OTA 成功重启或失败恢复前，主板应：
 | OTA 总会话上限 | 20 分钟 |
 | 成功后重启等待 | 3 秒 |
 | 失败页面建议保留 | 3 秒 |
-| 重启后 `normal` 重发间隔 | 约 500 ms |
+| `normal` 重发间隔 | 2000 ms |
+| `normal` ACK 等待总上限 | 30000 ms |
+| LCD 首条 `normal` 后普通查询恢复 | 约 3 秒 |
 
 ## 12. 兼容性原则
 
@@ -354,7 +377,7 @@ OTA 成功重启或失败恢复前，主板应：
 - LCD 是旧程序：主板继续排空其输入，不处理旧 LCD 请求；
 - LCD 在 OTA 中途重启：收到下一条 OTA 状态后重新进入升级页面；
 - LCD 丢失进度消息：下一次 5% 更新会覆盖显示，不影响主板 OTA；
-- LCD 丢失 `normal`：主板启动完成后重复发送一次；
+- LCD 丢失 `normal` 或 normal ACK：主板每2秒重发，收到ACK或达到30秒后停止；
 - LCD 串口异常：只记录警告，不得中止主板 OTA；
 - 主板 OTA 失败：继续运行旧固件，并通过 `failed`、`normal` 恢复 LCD；
 - 未实现本文协议的 Firmware 2.0.6：LCD 不应假设能够收到 `ota_status`。
@@ -368,7 +391,8 @@ OTA 成功重启或失败恢复前，主板应：
 - 进度从 0 更新到 100；
 - LCD 显示 `verifying` 和 `restarting`；
 - 主板成功重启；
-- LCD 收到 `normal` 后返回主页并恢复查询；
+- LCD 收到 `normal` 后返回主页、回复 ACK，并在约3秒后恢复查询；
+- 主板记录 `LCD_OTA_NORMAL_ACK result=ok`并停止重发；
 - 主板无 LCD `UART_OVERFLOW` 或损坏 JSON。
 
 ### 13.2 LCD 不回复 ACK
@@ -405,3 +429,12 @@ OTA 成功重启或失败恢复前，主板应：
 - LCD 错过 `preparing` 后，收到下一条 `transferring` 仍进入升级页面；
 - LCD 不恢复普通查询；
 - 最终收到 `normal` 后正常恢复。
+
+### 13.7 normal 恢复确认
+
+- 丢弃第一条 `normal`：下一条应在约2秒后到达；
+- 丢弃第一个 normal ACK：主板再次发送 `normal`，LCD再次ACK，但3秒恢复定时器
+  不重新开始；
+- LCD完全不回复：主板约30秒后记录`result=timeout`，业务继续运行；
+- LCD在超时后回复迟到ACK：主板可记录确认，但不得恢复已结束的重发计时；
+- OTA失败恢复同样完成`failed → normal → ACK`。
