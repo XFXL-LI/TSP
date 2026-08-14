@@ -142,7 +142,7 @@ DataPacket *TspCollect::collect()
         if (valid_count > 0) {
             float average = total_f_value / (float)valid_count;
             float c = 1.0f;
-            // -------------------------------------------------------
+            // -------------------------------------------------------,ÉØ¸Ö×¨ÓÃ£¬¶¶¶¯
             if (average > 900.0f && average < 1500.0f) {
                 c = 0.5f;
             } else if (average >= 1500.0f && average < 2000.0f) {
@@ -170,7 +170,6 @@ DataPacket *TspCollect::collect()
         }
     } else {
         packet->value = 0.0f;
-        packet->is_valid = false;
         LOG_ERROR("Failed to get TTL Mutex for %s", _id.c_str());
     }
     

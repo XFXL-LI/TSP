@@ -40,19 +40,30 @@ String DTUDriver::sendCommand(const char* cmd, uint32_t timeout) {
     return "";
 }
 String DTUDriver::sendData(String data){
+    // Firmware 2.0.1 (2026-07-30): M100M-B2 sends one transparent frame at
+    // a time. Treat 600 ms without another byte as the end of its response.
+    static constexpr uint32_t M100M_B2_RESPONSE_IDLE_MS = 600;
     const char *buf = data.c_str();
     size_t len = data.length();
     _stream->write((const uint8_t *)buf, len);
     _stream->flush();
     String res = "";
     uint64_t startTime = millis();
-     while (millis() - startTime < 5000)
+    uint64_t lastByteTime = startTime;
+    bool receivedAny = false;
+    while (millis() - startTime < 5000)
     {
         while (_stream->available() > 0)
         {
             char c = _stream->read();
             res += c;
-            startTime = millis();
+            receivedAny = true;
+            lastByteTime = millis();
+        }
+        // Keep the 5-second overall timeout, but do not hold SERIAL_HJ212 for
+        // the full timeout after a complete ACK has already arrived.
+        if (receivedAny && millis() - lastByteTime >= M100M_B2_RESPONSE_IDLE_MS) {
+            break;
         }
         vTaskDelay(pdMS_TO_TICKS(10));
     }

@@ -1,6 +1,8 @@
 #include "dataManager.h"
+#include "../../system/ota/remote_ota_manager.h"
 #include "../../system/event/eventBus.h"
 #include "../../inc/sys_init.h"
+#include <new>
 
 DataManager::DataManager() {
     _last_min_time = 0;
@@ -13,7 +15,7 @@ DataManager::DataManager() {
     _lastRealDataMutex = xSemaphoreCreateMutex();
 }
 void DataManager::begin() {
-    _queryQueue = EventBus::getInstance().createReceiverQueue(10);
+    _queryQueue = EventBus::getInstance().createReceiverQueue(10, "DATA_MANAGER");
     EventBus::getInstance().subscribe(EventID::DATA_QUERY_REQ, _queryQueue);
     EventBus::getInstance().subscribe(EventID::RAW_DATA_COLLECTED, _queryQueue);
 }
@@ -21,6 +23,7 @@ void DataManager::begin() {
 void DataManager::poll() {
     EventMsg msg;
     if (EventBus::waitEvent(_queryQueue, msg)) {
+        RemoteOtaManager::BusinessActivityGuard businessActivity;
         if (msg.id == EventID::DATA_QUERY_REQ) {
             JSONCmdData* req = (JSONCmdData*)msg.data;
             processQuery(req);
@@ -43,8 +46,38 @@ void DataManager::processAllData(AllDataPacket* pkg) {
     checkAndDispatch(pkg);
 }
 
+bool DataManager::readLatestValues(const char* const* ids, size_t idCount,
+                                   float* values, uint64_t& timestamp) {
+    if (ids == nullptr || values == nullptr) return false;
+    for (size_t i = 0; i < idCount; ++i) values[i] = 0.0f;
+
+    if (xSemaphoreTake(_lastRealDataMutex, pdMS_TO_TICKS(100)) != pdTRUE) {
+        LOG_WARNING("[DIAG] GET_DATA_SNAPSHOT_BUSY");
+        return false;
+    }
+    timestamp = _last_real_timestamp;
+    for (size_t i = 0; i < idCount; ++i) {
+        if (ids[i] == nullptr) continue;
+        for (const auto& item : _last_real_snapshot) {
+            if (item.first.equals(ids[i])) {
+                if (item.second.is_valid) values[i] = item.second.value;
+                break;
+            }
+        }
+    }
+    xSemaphoreGive(_lastRealDataMutex);
+    return true;
+}
+
 void DataManager::processQuery(JSONCmdData* req) {
-    AllProcessedDataPacket* pkg = new AllProcessedDataPacket();
+    // Kept for compatibility with other internal callers. LCD get_data uses
+    // readLatestValues() directly and no longer reaches this allocation path.
+    AllProcessedDataPacket* pkg = new (std::nothrow) AllProcessedDataPacket();
+    if (pkg == nullptr) {
+        LOG_ERROR("[DIAG] DATA_QUERY_OOM free=%u largest=%u",
+                  ESP.getFreeHeap(), ESP.getMaxAllocHeap());
+        return;
+    }
     if (xSemaphoreTake(_lastRealDataMutex, pdMS_TO_TICKS(100)) == pdTRUE) {
         pkg->processed_data_map = _last_real_snapshot;
         pkg->last_update = _last_real_timestamp;

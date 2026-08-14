@@ -3,6 +3,8 @@
 #include "SerialManager.h"
 #include <SoftwareSerial.h>
 
+static constexpr size_t REMOTE_DTU_RX_BUFFER_SIZE = 2048;
+
 SerialManager& SerialManager::getInstance() {
     static SerialManager instance;
     return instance;
@@ -27,6 +29,14 @@ void SerialManager::begin(void){
 
 void SerialManager::HardwarePortInit(const String& name, HardwareSerial* serial, uint32_t baud, int rxPin, int txPin) {
    if (_serials.find(name) != _serials.end()) return;
+    if (name == SERIAL_DTU) {
+        size_t configuredSize = serial->setRxBufferSize(REMOTE_DTU_RX_BUFFER_SIZE);
+        if (configuredSize < REMOTE_DTU_RX_BUFFER_SIZE) {
+            LOG_ERROR("DTU UART RX buffer setup failed: requested=%u actual=%u",
+                      (unsigned)REMOTE_DTU_RX_BUFFER_SIZE,
+                      (unsigned)configuredSize);
+        }
+    }
     serial->begin(baud, SERIAL_8N1, rxPin, txPin);
     SerialPortWrapper* wrapper = new SerialPortWrapper();
     wrapper->stream = serial;
@@ -66,14 +76,23 @@ size_t SerialManager::write(const String& name, const uint8_t* buf, size_t len) 
     return written;
 }
 
-void SerialManager::println(const String& name, const char* msg) {
-    if (msg == nullptr) return;
+size_t SerialManager::println(const String& name, const char* msg) {
+    if (msg == nullptr) return 0;
 
-    write(name, (const uint8_t*)msg, strlen(msg));
-    
-    uint8_t newline[] = {"\r\n"};
-    write(name, newline, 2);
-    
+    auto it = _serials.find(name);
+    if (it == _serials.end()) return 0;
+
+    const size_t messageLength = strlen(msg);
+    size_t written = 0;
+    if (xSemaphoreTake(it->second->mutex, pdMS_TO_TICKS(1000)) == pdTRUE) {
+        written += it->second->stream->write(
+            reinterpret_cast<const uint8_t*>(msg), messageLength);
+        static const uint8_t newline[] = {'\r', '\n'};
+        written += it->second->stream->write(newline, sizeof(newline));
+        it->second->stream->flush();
+        xSemaphoreGive(it->second->mutex);
+    }
+    return written;
 }
 Stream* SerialManager::getStream(const String& name) {
     auto it = _serials.find(name);

@@ -72,6 +72,7 @@ class EventBus {
 private:
     // 核心存储：EventID 对应 一组订阅者的队列句柄
     std::map<EventID, std::vector<QueueHandle_t>> subscribers;
+    std::map<QueueHandle_t, String> queueNames;
     SemaphoreHandle_t busMutex;
     std::atomic<uint32_t> droppedMessages;
 
@@ -84,7 +85,10 @@ public:
     EventBus(const EventBus&) = delete;
     EventBus& operator=(const EventBus&) = delete;
 
-    QueueHandle_t createReceiverQueue(uint32_t queueDepth = 10);
+    // Firmware 2.0.2 (2026-07-30): unnamed queues are usually short-lived
+    // request/response queues. Do not retain metadata for them.
+    QueueHandle_t createReceiverQueue(uint32_t queueDepth = 10,
+                                      const char* queueName = nullptr);
 
     int getSubscriberCount(EventID id);
     uint32_t getDroppedMessageCount() const;

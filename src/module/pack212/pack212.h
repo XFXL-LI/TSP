@@ -11,9 +11,10 @@ public:
     HJ212_DataCenter();
     String build2017Hj212Packet(const AllProcessedDataPacket* allData, const HJ212CONFIG& sysCfg);
     String build2025Hj212Packet(const AllProcessedDataPacket* allData, const HJ212CONFIG& sysCfg);
+    static bool isValidPacket(const String& packet);
 
 private:
-    unsigned int calculateCRC(const char* data, int len);
+    static unsigned int calculateCRC(const char* data, int len);
     String getCnCode(DataTime type);
     String getCurrentQn();
 };

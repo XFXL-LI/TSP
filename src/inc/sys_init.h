@@ -10,7 +10,8 @@
 #include "../module/log/log_manager.h"
 
 //新版本
-#define VERSION2 "2.0.0"
+// Firmware 2.0.8: add LCD normal-state ACK and bounded retry recovery.
+#define VERSION2 "2.0.8"
 
 struct SYSINFO {
     int csq;

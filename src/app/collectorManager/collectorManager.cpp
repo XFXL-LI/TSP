@@ -1,4 +1,5 @@
 #include "collectorManager.h"
+#include "../../system/ota/remote_ota_manager.h"
 #include "../../system/event/eventBus.h"
 #include "../../module/log/log_manager.h"
 #include "../../module/Serial/SerialManager.h"
@@ -72,6 +73,7 @@ void collectorManager::galpoll()
     EventMsg msg;
     if (EventBus::waitEvent(_queryQueue, msg))
     {
+        RemoteOtaManager::BusinessActivityGuard businessActivity;
         if (msg.id == EventID::GAL_REQ)
         {
             JSONCmdData *req = (JSONCmdData *)msg.data;
@@ -244,12 +246,23 @@ void collectorManager::poll()
                 auto alarmData = new SystemRuntimeStatus();
                 alarmData->systemErrorInfo = CHECK_RESULT::COLLECT_ERROR;
                 alarmData->errorInfo = "Data collection error for sensor ID: " + String(collector->getID().c_str());
+                int alarmSubscriberCount = EventBus::getInstance().getSubscriberCount(
+                    EventID::ALARM_TRIGGERED);
+                for (int i = 0; i < alarmSubscriberCount; ++i)
+                {
+                    alarmData->retain();
+                }
                 EventBus::getInstance().publish(EventID::ALARM_TRIGGERED, (void *)alarmData);
+                // The publisher owns the initial reference. Each subscriber
+                // owns one retained reference and releases it after handling.
+                alarmData->release();
                 data->release();
             }
         }
         vTaskDelay(pdMS_TO_TICKS(100));
     }
+
+    
     allData->last_update = time;
     for (int i = 0; i < subCount; i++)
     {

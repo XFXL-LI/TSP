@@ -3,8 +3,9 @@
 #define LOG_MANAGER_H
 
 #include <Arduino.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/semphr.h>
 
-// 日志级别枚举
 enum LogLevel
 {
     LOG_LEVEL_DEBUG = 0,
@@ -14,7 +15,6 @@ enum LogLevel
     LOG_LEVEL_CRITICAL
 };
 
-// 日志输出目标枚举
 enum LogTarget
 {
     LOG_TARGET_SERIAL0 = 0,
@@ -38,7 +38,6 @@ public:
     LogLevel getLevel() const { return _currentLevel; }
 
     void log(LogLevel level, const char *message);
-
     void printf(LogLevel level, const char *format, ...);
 
 private:
@@ -47,6 +46,7 @@ private:
 
     LogLevel _currentLevel;
     LogTarget _currentTarget;
+    SemaphoreHandle_t _outputMutex;
 
     const char *_levelToString(LogLevel level);
     void _output(const char *formattedMessage);

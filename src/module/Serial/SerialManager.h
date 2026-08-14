@@ -68,7 +68,7 @@ public:
         return write(name, v.data(), v.size());
     }
 
-    void println(const String& name, const char* msg);
+    size_t println(const String& name, const char* msg);
     
     Stream* getStream(const String& name);
     SemaphoreHandle_t getMutex(const String& name);

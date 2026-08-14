@@ -7,15 +7,15 @@ const char *MODEL_JSON = R"({
   "a34005": {"name": "PM1","alarmLimit": 500,"unit": "ug/m3"},
   "a34004": {"name": "PM2.5","alarmLimit": 500,"unit": "ug/m3"},
   "a34002": {"name": "PM10","alarmLimit": 500,"unit": "ug/m3"},
-  "a01007": {"name": "WINDSPEED","alarmLimit": 200,"unit": "m/s"},
-  "a01008": {"name": "WINDDIRECTION","alarmLimit": 500,"unit": "degree"},
+  "a01007": {"name": "WINDSPEED","alarmLimit": 999,"unit": "m/s"},
+  "a01008": {"name": "WINDDIRECTION","alarmLimit": 999,"unit": "degree"},
   "w34011": {"name": "O3","alarmLimit": 20,"unit": "ppb"},
   "a21004": {"name": "NO2","alarmLimit": 20,"unit": "ppb"},
   "a21005": {"name": "CO","alarmLimit": 20,"unit": "ppb"},
   "a21026": {"name": "SO2","alarmLimit": 20,"unit": "ppb"},
   "a01001": {"name": "TEMP","alarmLimit": 40,"unit": "celsius"},
   "a01002": {"name": "HUMI","alarmLimit": 90,"unit": "%"},
-  "a01006": {"name": "PRESSURE","alarmLimit": 60,"unit": "dB"},
+  "a01006": {"name": "PRESSURE","alarmLimit": 999,"unit": "kPa"},
   "L90": {"name": "NOISE","alarmLimit": 60,"unit": "dB"}
 })";
 

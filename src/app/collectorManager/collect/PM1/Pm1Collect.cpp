@@ -128,6 +128,9 @@ DataPacket *Pm1Collect::collect()
         uint16_t raw[2] = {0};
         uint32_t valid_count = 0;
         float total_f_value = 0.0f;
+        uint8_t readFailureCount = 0;
+        uint8_t zeroCount = 0;
+        uint8_t invalidRegisterCount = 0;
         for (int i = 0; i < 2; i++)
         {
             if (_mb_manager->readModbusRegs(_slaveId, _regAddr, _regCount, raw))
@@ -139,6 +142,18 @@ DataPacket *Pm1Collect::collect()
                     total_f_value += current_f;
                     valid_count++;
                 }
+                else if (current_val == 0)
+                {
+                    zeroCount++;
+                }
+                else
+                {
+                    invalidRegisterCount++;
+                }
+            }
+            else
+            {
+                readFailureCount++;
             }
             vTaskDelay(pdMS_TO_TICKS(10));
         }
@@ -150,6 +165,12 @@ DataPacket *Pm1Collect::collect()
             packet->value = (float)((int)(average * 100 + 0.5)) / 100.0f * unitFactor;
             packet->is_valid = true;
             // LOG_DEBUG("%s average value: %.2f (based on %d samples)", _id.c_str(), packet->value, valid_count);
+        }
+        else
+        {
+            LOG_WARNING("[DIAG] PM_COLLECT_INVALID id=%s read_failed=%u zero=%u invalid_register=%u",
+                        _id.c_str(), (unsigned)readFailureCount,
+                        (unsigned)zeroCount, (unsigned)invalidRegisterCount);
         }
     }
     else

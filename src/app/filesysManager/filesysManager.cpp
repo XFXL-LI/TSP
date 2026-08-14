@@ -1,12 +1,25 @@
 #include "filesysManager.h"
+#include "../../system/ota/remote_ota_manager.h"
 #include "../../module/log/log_manager.h"
+#include "../../module/pack212/pack212.h"
 #include "../../system/event/eventBus.h"
 #include "../../module/json/config_json.h"
 #include <sys/dirent.h>
 #include <sys/types.h>
 #include <time.h>
 #include <utility>
+#include <new>
 
+class ScopedSdLock {
+public:
+    explicit ScopedSdLock(SemaphoreHandle_t mutex, TickType_t timeout = pdMS_TO_TICKS(3000))
+        : _mutex(mutex), _locked(mutex != nullptr && xSemaphoreTake(mutex, timeout) == pdTRUE) {}
+    ~ScopedSdLock() { if (_locked) xSemaphoreGive(_mutex); }
+    bool locked() const { return _locked; }
+private:
+    SemaphoreHandle_t _mutex;
+    bool _locked;
+};
 
 filesysManager& filesysManager::getInstance() {
     static filesysManager instance;
@@ -14,9 +27,10 @@ filesysManager& filesysManager::getInstance() {
 }
 
 filesysManager::filesysManager() {
+    _sdMutex = xSemaphoreCreateMutex();
     file_storage::getInstance().makeDirs("/sdcard/history");
     if (SaveDataFileTaskQueue == nullptr) {
-        SaveDataFileTaskQueue = EventBus::getInstance().createReceiverQueue(10);
+        SaveDataFileTaskQueue = EventBus::getInstance().createReceiverQueue(20, "STORAGE");
     }
     EventBus::getInstance().subscribe(EventID::PROCESSED_DATA_COLLECTED, SaveDataFileTaskQueue);
     EventBus::getInstance().subscribe(EventID::RECORD_QUERY_REQ, SaveDataFileTaskQueue);
@@ -60,6 +74,13 @@ String filesysManager::getFilePath(int type, uint64_t ts) {
 
 void filesysManager::storeProcessedPacket(AllProcessedDataPacket* pkg) {
     if (!pkg) return;
+    // Firmware 2.0.3: serialize FAT access across storage, LCD history reads,
+    // and pending recovery. Concurrent stdio calls produced zero-filled files.
+    ScopedSdLock sdLock(_sdMutex);
+    if (!sdLock.locked()) {
+        LOG_WARNING("[DIAG] SD_LOCK_BUSY operation=store");
+        return;
+    }
     if (!file_storage::getInstance().isSDcardReady()) {
         LOG_ERROR("[DIAG] STORE trace=%u type=%u timestamp=%llu skipped=sd_not_ready",
                   (unsigned)pkg->trace_id,
@@ -132,6 +153,19 @@ bool filesysManager::savePendingPacket(const AllProcessedDataPacket* data, const
         !file_storage::getInstance().isSDcardReady()) {
         return false;
     }
+    ScopedSdLock sdLock(_sdMutex);
+    if (!sdLock.locked()) {
+        LOG_WARNING("[DIAG] SD_LOCK_BUSY operation=save_pending");
+        return false;
+    }
+    // Firmware 2.0.2 (2026-07-30): never persist truncated/OOM packets such
+    // as the observed 14-byte "##0002&&..." frame.
+    if (!HJ212_DataCenter::isValidPacket(packet)) {
+        LOG_ERROR("[DIAG] PENDING_REJECT type=%u timestamp=%llu bytes=%u reason=invalid_hj212",
+                  (unsigned)data->dataTime, data->last_update,
+                  (unsigned)packet.length());
+        return false;
+    }
 
     String path = getPendingFilePath(data->dataTime, data->last_update);
     int lastSlash = path.lastIndexOf('/');
@@ -147,8 +181,31 @@ bool filesysManager::savePendingPacket(const AllProcessedDataPacket* data, const
             size_t written = fwrite(packet.c_str(), 1, packet.length(), f);
             fclose(f);
             if (written == packet.length()) {
-                LOG_INFO("Saved pending HJ212 packet: %s", path.c_str());
-                return true;
+                // Read back the complete marker before reporting success.
+                // This catches media/FAT corruption immediately.
+                FILE* verify = fopen(path.c_str(), "rb");
+                bool matches = verify != nullptr;
+                size_t offset = 0;
+                uint8_t buffer[128];
+                while (matches && offset < packet.length()) {
+                    size_t expected = min(sizeof(buffer), packet.length() - offset);
+                    size_t got = fread(buffer, 1, expected, verify);
+                    if (got != expected ||
+                        memcmp(buffer, packet.c_str() + offset, expected) != 0) {
+                        matches = false;
+                        break;
+                    }
+                    offset += got;
+                }
+                if (verify != nullptr) fclose(verify);
+                if (matches && offset == packet.length()) {
+                    LOG_INFO("Saved and verified pending HJ212 packet: %s", path.c_str());
+                    return true;
+                }
+                remove(path.c_str());
+                LOG_ERROR("[DIAG] PENDING_WRITE_VERIFY_FAIL path=%s bytes=%u",
+                          path.c_str(), (unsigned)packet.length());
+                return false;
             }
             LOG_ERROR("Pending packet write size mismatch: %s", path.c_str());
         } else {
@@ -158,7 +215,59 @@ bool filesysManager::savePendingPacket(const AllProcessedDataPacket* data, const
     return false;
 }
 
+bool filesysManager::savePendingRebuildMarker(const AllProcessedDataPacket* data) {
+    if (data == nullptr || !file_storage::getInstance().isSDcardReady()) {
+        return false;
+    }
+    ScopedSdLock sdLock(_sdMutex);
+    if (!sdLock.locked()) {
+        LOG_WARNING("[DIAG] SD_LOCK_BUSY operation=save_rebuild_marker");
+        return false;
+    }
+
+    String path = getPendingFilePath(data->dataTime, data->last_update);
+    int lastSlash = path.lastIndexOf('/');
+    if (lastSlash == -1) return false;
+
+    String dirPath = path.substring(0, lastSlash);
+    if (file_storage::getInstance().makeDirs(dirPath.c_str()) != 0) {
+        LOG_ERROR("Failed to create pending rebuild directory: %s", dirPath.c_str());
+        return false;
+    }
+
+    // Never overwrite a complete pending HJ212 packet for the same timestamp.
+    FILE* existing = fopen(path.c_str(), "rb");
+    if (existing != nullptr) {
+        fclose(existing);
+        LOG_INFO("[DIAG] PENDING_MARKER_EXISTS type=%u timestamp=%llu path=%s",
+                 (unsigned)data->dataTime, data->last_update, path.c_str());
+        return true;
+    }
+
+    static const char marker[] = "REBUILD_FROM_SD";
+    FILE* f = fopen(path.c_str(), "wb");
+    if (f == nullptr) {
+        LOG_ERROR("Failed to create pending rebuild marker: %s", path.c_str());
+        return false;
+    }
+    size_t written = fwrite(marker, 1, sizeof(marker) - 1, f);
+    fclose(f);
+    if (written != sizeof(marker) - 1) {
+        remove(path.c_str());
+        LOG_ERROR("Pending rebuild marker write size mismatch: %s", path.c_str());
+        return false;
+    }
+    LOG_INFO("[DIAG] PENDING_REBUILD_MARKER type=%u timestamp=%llu path=%s",
+             (unsigned)data->dataTime, data->last_update, path.c_str());
+    return true;
+}
+
 AllProcessedDataPacket* filesysManager::readPendingPacket(int type, uint64_t timestamp) {
+    ScopedSdLock sdLock(_sdMutex);
+    if (!sdLock.locked()) {
+        LOG_WARNING("[DIAG] SD_LOCK_BUSY operation=read_record");
+        return nullptr;
+    }
     if (!file_storage::getInstance().isSDcardReady()) {
         LOG_ERROR("SD card not ready");
         return nullptr;
@@ -171,7 +280,7 @@ AllProcessedDataPacket* filesysManager::readPendingPacket(int type, uint64_t tim
         return nullptr;
     }
     LOG_DEBUG("Found file for pending packet: %s", path.c_str());
-    AllProcessedDataPacket* pkg = new AllProcessedDataPacket();
+    AllProcessedDataPacket* pkg = new (std::nothrow) AllProcessedDataPacket();
     if (pkg == nullptr) {
         LOG_ERROR("Failed to allocate AllProcessedDataPacket");
         fclose(f);
@@ -277,6 +386,11 @@ void filesysManager::traversePendingDirectory(
 std::vector<PendingPacketInfo> filesysManager::scanPendingPackets(size_t maxPackets) {
     std::vector<PendingPacketInfo> result;
     if (maxPackets == 0) return result;
+    ScopedSdLock sdLock(_sdMutex);
+    if (!sdLock.locked()) {
+        LOG_WARNING("[DIAG] SD_LOCK_BUSY operation=scan_pending");
+        return result;
+    }
 
     if (!file_storage::getInstance().isSDcardReady()) {
         LOG_ERROR("SD card not ready for scanning");
@@ -295,6 +409,11 @@ std::vector<PendingPacketInfo> filesysManager::scanPendingPackets(size_t maxPack
 
 String filesysManager::loadPendingPacketContent(const PendingPacketInfo& pending) {
     if (!pending.filePath.endsWith(".pkt")) return String();
+    ScopedSdLock sdLock(_sdMutex);
+    if (!sdLock.locked()) {
+        LOG_WARNING("[DIAG] SD_LOCK_BUSY operation=load_pending");
+        return String();
+    }
 
     FILE* f = fopen(pending.filePath.c_str(), "rb");
     if (!f) {
@@ -333,6 +452,8 @@ String filesysManager::loadPendingPacketContent(const PendingPacketInfo& pending
 }
 
 bool filesysManager::quarantinePendingPacket(const PendingPacketInfo& pending) {
+    ScopedSdLock sdLock(_sdMutex);
+    if (!sdLock.locked()) return false;
     String invalidPath = pending.filePath + ".invalid";
     if (rename(pending.filePath.c_str(), invalidPath.c_str()) == 0) {
         LOG_WARNING("Quarantined unrecoverable pending packet: %s",
@@ -346,6 +467,11 @@ bool filesysManager::quarantinePendingPacket(const PendingPacketInfo& pending) {
 
 bool filesysManager::deletePendingPacket(const PendingPacketInfo& pending) {
     if (!file_storage::getInstance().isSDcardReady()) return false;
+    ScopedSdLock sdLock(_sdMutex);
+    if (!sdLock.locked()) {
+        LOG_WARNING("[DIAG] SD_LOCK_BUSY operation=delete_pending");
+        return false;
+    }
 
     int ret = remove(pending.filePath.c_str());
     
@@ -596,6 +722,7 @@ void filesysManager::poll() {
     EventMsg msg;
     if (EventBus::waitEvent(SaveDataFileTaskQueue, msg))
     {
+        RemoteOtaManager::BusinessActivityGuard businessActivity;
         if (msg.id == EventID::PROCESSED_DATA_COLLECTED)
         {
             AllProcessedDataPacket *allData = (AllProcessedDataPacket *)msg.data;

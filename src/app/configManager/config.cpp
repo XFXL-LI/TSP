@@ -1,4 +1,5 @@
 #include "config.h"
+#include "../../system/ota/remote_ota_manager.h"
 #include "config_json.h"
 #include "system_json.h"
 #include "model_json.h"
@@ -47,7 +48,7 @@ void ConfigManager::begin(){
     }
     LOG_INFO("======== Global Configuration Dump ========");
 
-    // 1. ´òÓ¡ System ÅäÖÃ
+    // 1. ï¿½ï¿½Ó¡ System ï¿½ï¿½ï¿½ï¿½
     LOG_INFO("[System Config]");
     LOG_INFO("  Collect Time: %d s", globalCfg.system.collect_time);
     LOG_INFO("  Upload Interval: %d s", globalCfg.system.upload_interval);
@@ -57,25 +58,25 @@ void ConfigManager::begin(){
              globalCfg.systemSwitch.save_raw_data, globalCfg.systemSwitch.save_min_data,
              globalCfg.systemSwitch.enable_hj212, globalCfg.systemSwitch.enable_remote_dtu);
 
-    // 2. ´òÓ¡ ÎÂ¿Ø ÅäÖÃ
+    // 2. ï¿½ï¿½Ó¡ ï¿½Â¿ï¿½ ï¿½ï¿½ï¿½ï¿½
     LOG_INFO("[TempControl Config]");
     LOG_INFO("  Switch: %s", globalCfg.systemSwitch.tempConSwitch ? "ON" : "OFF");
     LOG_INFO("  Temp Range: [%d - %d]", globalCfg.tempControl.tempLowerLimit, globalCfg.tempControl.tempUpperLimit);
     LOG_INFO("  Humi Range: [%d - %d]", globalCfg.tempControl.wetnLowerLimit, globalCfg.tempControl.wetnUpperLimit);
 
-    // 3. ´òÓ¡ HJ212 ÅäÖÃ
+    // 3. ï¿½ï¿½Ó¡ HJ212 ï¿½ï¿½ï¿½ï¿½
     LOG_INFO("[HJ212 Config]");
     LOG_INFO("  Server: %s", globalCfg.hj212.ip.c_str());
     LOG_INFO("  MN: %s, PW: %s", globalCfg.hj212.mn.c_str(), globalCfg.hj212.pw.c_str());
 
-    // 4. ´òÓ¡ ´«¸ÐÆ÷ (Map ±éÀú)
+    // 4. ï¿½ï¿½Ó¡ ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ (Map ï¿½ï¿½ï¿½ï¿½)
     LOG_INFO("[Sensor Collections] Total: %d", globalCfg.collectConfig.size());
     for (auto const& [id, cfg] : globalCfg.collectConfig) {
         LOG_INFO("  - ID: %s | Name: %s | Unit: %s",
                  id.c_str(), cfg.name.c_str(), cfg.unit.c_str());
     }
 
-    // 5. ´òÓ¡ ±¨¾¯ ÅäÖÃ
+    // 5. ï¿½ï¿½Ó¡ ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½
     LOG_INFO("[Alarm Config]");
     LOG_INFO("  Sensor: %s | Upper Limit: %.2f | Lower Limit: %.2f | Switch: %s",
              globalCfg.alarmConfig.alarm_sensor.c_str(),
@@ -133,12 +134,12 @@ void ConfigManager::_parseSensors(cJSON *objectNode, COLLECTMAP &target_map)
         LOG_ERROR("Sensors node is NOT an object!");
         return;
     }
-    char *rawJson = cJSON_Print(objectNode); // ¸ñÊ½»¯´òÓ¡£¨´øËõ½ø£©
+    char *rawJson = cJSON_Print(objectNode); // ï¿½ï¿½Ê½ï¿½ï¿½ï¿½ï¿½Ó¡ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½
     if (rawJson) {
         LOG_INFO("--- [Debug] Sensors JSON Node Content ---");
         LOG_INFO("\n%s", rawJson);
         LOG_INFO("-----------------------------------------");
-        cJSON_free(rawJson); // ±ØÐëÊÖ¶¯ÊÍ·Å cJSON_Print ·ÖÅäµÄÄÚ´æ
+        cJSON_free(rawJson); // ï¿½ï¿½ï¿½ï¿½ï¿½Ö¶ï¿½ï¿½Í·ï¿½ cJSON_Print ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ú´ï¿½
     } else {
         LOG_ERROR("Failed to print sensors JSON node.");
     }
@@ -221,7 +222,7 @@ bool ConfigManager::loadFromFile(const char *path)
         else if (strcmp(path, SWITCH_PATH) == 0) defaultTemplate = SWITCH_JSON;
         else if (strcmp(path, ALARM_PATH) == 0) defaultTemplate = ALARM_JSON;
 
-        if (defaultTemplate && fs.writeFFAT(path, defaultTemplate) == 3) {
+        if (defaultTemplate && fs.writeFFAT(path, defaultTemplate) == 0) {
             content = String(defaultTemplate);
             ret = 0;
         } else {
@@ -344,7 +345,7 @@ bool ConfigManager::saveConfig(const char *path, const String &content)
 {    
     if (path == nullptr || strlen(path) == 0) return false;
 
-    return fs.writeFFAT(path, content.c_str()) == 3;
+    return fs.writeFFAT(path, content.c_str()) == 0;
 }
 bool ConfigManager::removeConfig(const char *path)
 {
@@ -397,6 +398,7 @@ bool ConfigManager::removeConfig(const char *path)
 void ConfigManager::poll(){
     EventMsg msg;
     if (EventBus::waitEvent(_queryQueue, msg)) {
+        RemoteOtaManager::BusinessActivityGuard businessActivity;
         if (msg.id == EventID::CONFIG_QUERY_REQ) {
             JSONCmdData* req = (JSONCmdData*)msg.data;
             LOG_DEBUG("ConfigManager received CONFIG_QUERY_REQ: %s", req->arguments.c_str());
@@ -507,25 +509,13 @@ void ConfigManager::updateTimeAuto(void) {
     {
         last_second = now.second;
 
-        Serial.print("20");
-        Serial.print(now.year);    // 00-99
-        Serial.print('-');
-        if (now.month < 10) Serial.print('0');
-        Serial.print(now.month);   // 01-12
-        Serial.print('-');
-        if (now.day < 10) Serial.print('0');
-        Serial.print(now.day);     // 01-31
-        Serial.print(' ');
-        Serial.print(WeekDays[now.dow - 1]); // 1-7
-        Serial.print(' ');
-        if (now.hour < 10) Serial.print('0');
-        Serial.print(now.hour);    // 00-23
-        Serial.print(':');
-        if (now.minute < 10) Serial.print('0');
-        Serial.print(now.minute);  // 00-59
-        Serial.print(':');
-        if (now.second < 10) Serial.print('0');
-        Serial.print(now.second);  // 00-59
-        Serial.println();
+        LOG_DEBUG("RTC time: 20%02u-%02u-%02u %s %02u:%02u:%02u",
+                  (unsigned)now.year,
+                  (unsigned)now.month,
+                  (unsigned)now.day,
+                  WeekDays[now.dow - 1],
+                  (unsigned)now.hour,
+                  (unsigned)now.minute,
+                  (unsigned)now.second);
     }
 }
