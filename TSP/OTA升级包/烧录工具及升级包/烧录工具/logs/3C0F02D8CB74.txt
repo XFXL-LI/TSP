@@ -1,56 +1,0 @@
-*************************** START ****************************
-START TIME: 202605281049
-CONNECT BAUD: 115200
-set state: ESP_DL_SYNC
-serial port opened
------------
-baud:115200
-root baud:115200
--------------
-===============BAUD : 115200===============CALL DEVICE SYNC
-connecting...
-mac l: 0x2d8cb74
-mac h: 0x3c0f
-get mac res: 1
-get flash id : 0x00184068
-manufacturer_id: 0x68
-device_id: 0x4018
-Wrote 8192 bytes (47 compressed) at 0x00001000 in 0.1 seconds (effective 1060.9 kbit/s)...
-Hash of data verified.Wrote 19984 bytes (13030 compressed) at 0x00008000 in 0.2 seconds (effective 716.3 kbit/s)...
-Hash of data verified.Wrote 3072 bytes (144 compressed) at 0x0000e000 in 0.0 seconds (effective 2149.5 kbit/s)...
-Hash of data verified.Wrote 536064 bytes (299024 compressed) at 0x00010000 in 4.3 seconds (effective 998.8 kbit/s)...
-Hash of data verified.
-Leaving...
-com closed
-Use time: 8 s
-Download result: PASS
-*************************** END ****************************
-
-*************************** START ****************************
-START TIME: 202605281050
-CONNECT BAUD: 115200
-set state: ESP_DL_SYNC
-serial port opened
------------
-baud:115200
-root baud:115200
--------------
-===============BAUD : 115200===============CALL DEVICE SYNC
-connecting...
-mac l: 0x2d8cb74
-mac h: 0x3c0f
-get mac res: 1
-get flash id : 0x00184068
-manufacturer_id: 0x68
-device_id: 0x4018
-Wrote 8192 bytes (47 compressed) at 0x00001000 in 0.1 seconds (effective 1078.8 kbit/s)...
-Hash of data verified.Wrote 19984 bytes (13030 compressed) at 0x00008000 in 0.3 seconds (effective 530.2 kbit/s)...
-Hash of data verified.Wrote 3072 bytes (144 compressed) at 0x0000e000 in 0.0 seconds (effective 820.2 kbit/s)...
-Hash of data verified.Wrote 536064 bytes (299024 compressed) at 0x00010000 in 4.3 seconds (effective 998.0 kbit/s)...
-Hash of data verified.
-Leaving...
-com closed
-Use time: 8 s
-Download result: PASS
-*************************** END ****************************
-

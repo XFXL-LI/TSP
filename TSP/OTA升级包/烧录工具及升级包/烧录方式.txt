@@ -1,5 +1,0 @@
-1.解压文件夹后，cmd打开本文件夹
-2.查找设备管理器，连接esp32 后的COM口
-3.替换指令--port后的COM口，“COM42"
-4.cmd粘贴运行指令
-"5.1.0/esptool.exe" --chip esp32s3 --port "COM42" --baud 921600  --before default-reset --after hard-reset write-flash  -z --flash-mode keep --flash-freq keep --flash-size keep 0x0 "TSP.ino.bootloader.bin" 0x8000 "TSP.ino.partitions.bin" 0xe000 "boot_app0.bin" 0x10000 "TSP.ino.bin"
