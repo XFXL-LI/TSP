@@ -1,0 +1,100 @@
+{
+  "firmwareVersion": "2.0.22",
+  "variant": "standard",
+  "label": "20260907-gas-pacing-diagnostics",
+  "status": "packaged-not-hardware-verified",
+  "packagedAt": "2026-09-10T10:11:06+08:00",
+  "buildPath": "D:\\ChatGPT-Pro\\TSP-ESP32-S3\\firmware_workspace\\build\\firmware-2.0.22-gas-pacing-diagnostics-20260907",
+  "buildCompiledAt": "2026-09-07T17:56:38+08:00",
+  "buildManifest": {
+    "file": "build-manifest.json",
+    "sha256": "FC4F88E0B0A27460C101FEA2833640437D250792E8D22F290D4C3E4FC3577ACC"
+  },
+  "sourcePath": "D:\\ChatGPT-Pro\\TSP-ESP32-S3\\tmp\\Firmware_2.0.3_original\\TSP",
+  "sourceFingerprintSha256": "84CD14958E077AE1FE4294C4C566F8CF39FE89952C5CB929301AF2CF4C553213",
+  "sourceFilesManifest": {
+    "file": "source-files.sha256",
+    "sha256": "5B6A08A91D8880077CF168BC9680C40F865D56D1B641096598819F2613EC6189"
+  },
+  "esp32Core": "3.3.7",
+  "partitionScheme": "app3M_fat9M_16MB",
+  "partitionTable": {
+    "file": "partitions.csv",
+    "sha256": "7E9C47A69C32D377EA06CE01C26293AA92B1B244D3E16CCE3B5BC4DA9E28CBE7",
+    "entries": [
+      {
+        "name": "nvs",
+        "type": "data",
+        "subtype": "nvs",
+        "offset": "0x9000",
+        "size": "0x5000",
+        "flags": ""
+      },
+      {
+        "name": "otadata",
+        "type": "data",
+        "subtype": "ota",
+        "offset": "0xe000",
+        "size": "0x2000",
+        "flags": ""
+      },
+      {
+        "name": "app0",
+        "type": "app",
+        "subtype": "ota_0",
+        "offset": "0x10000",
+        "size": "0x300000",
+        "flags": ""
+      },
+      {
+        "name": "app1",
+        "type": "app",
+        "subtype": "ota_1",
+        "offset": "0x310000",
+        "size": "0x300000",
+        "flags": ""
+      },
+      {
+        "name": "ffat",
+        "type": "data",
+        "subtype": "fat",
+        "offset": "0x610000",
+        "size": "0x9E0000",
+        "flags": ""
+      },
+      {
+        "name": "coredump",
+        "type": "data",
+        "subtype": "coredump",
+        "offset": "0xFF0000",
+        "size": "0x10000",
+        "flags": ""
+      }
+    ]
+  },
+  "flashLayout": {
+    "0x0": "bootloader.bin",
+    "0x8000": "partitions.bin",
+    "0xe000": "boot_app0.bin",
+    "0x10000": "firmware.bin"
+  },
+  "preservesFFat": true,
+  "files": {
+    "bootloader.bin": {
+      "bytes": 19984,
+      "sha256": "5403BA8CDF81CBB47F2DEBE13C0F5FF5903540075CCAF3FAC65F0EE68213CB7D"
+    },
+    "partitions.bin": {
+      "bytes": 3072,
+      "sha256": "ACE02503447D0F470692E65FA76002F2D77A92DC81CD3813D8AA66718D716DA9"
+    },
+    "boot_app0.bin": {
+      "bytes": 8192,
+      "sha256": "F94C5D786A7A8FAB06AC5D10E33BF37711A6697636DC037559EA19CC410A17F0"
+    },
+    "firmware.bin": {
+      "bytes": 678640,
+      "sha256": "A8ECE4A080D82D944468C601513B15D26FBB835A7EC554B4F235081BC1DA6A60"
+    }
+  }
+}

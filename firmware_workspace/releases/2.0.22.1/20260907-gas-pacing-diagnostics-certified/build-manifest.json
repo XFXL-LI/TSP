@@ -1,0 +1,17 @@
+{
+  "firmwareVersion": "2.0.22.1",
+  "status": "compiled-not-hardware-verified",
+  "compiledAt": "2026-09-07T17:56:38+08:00",
+  "sourcePath": "D:\\ChatGPT-Pro\\TSP-ESP32-S3\\tmp\\Firmware_2.0.21.1_certified\\TSP",
+  "sourceFingerprintSha256": "540EE286955E50B552882A8F7639E858DBC724DFECFC9B0571E0AC5D0A128779",
+  "esp32Core": "3.3.7",
+  "fqbn": "esp32:esp32:esp32s3:UploadSpeed=921600,USBMode=hwcdc,CDCOnBoot=default,MSCOnBoot=default,DFUOnBoot=default,UploadMode=default,CPUFreq=240,FlashMode=qio,FlashSize=16M,PartitionScheme=app3M_fat9M_16MB,DebugLevel=none,PSRAM=disabled,LoopCore=1,EventsCore=1,EraseFlash=none,JTAGAdapter=default,ZigbeeMode=default",
+  "applicationBytes": 679136,
+  "applicationSha256": "D9300FCCB31B5A0C44BEFEC3A37E0F6411C97F8C870429E184BECFE3A52E9EFE",
+  "constraints": [
+    "hourly statistics unchanged",
+    "HJ212 packet gap 3000ms",
+    "SHT30 handled independently",
+    "DEBUG enabled (LOG_LEVEL_DEBUG)"
+  ]
+}

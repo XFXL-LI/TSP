@@ -1,0 +1,53 @@
+{
+  "firmwareVersion": "2.0.4",
+  "label": "2026-08-10_hw-verified",
+  "status": "hardware-smoke-tested",
+  "compiledAt": "2026-08-10T16:33:31+08:00",
+  "flashedAt": "2026-08-10T16:47:00+08:00",
+  "sourcePath": "D:\\ChatGPT-Pro\\TSP-ESP32-S3\\tmp\\Firmware_2.0.3_original\\TSP",
+  "sourceFingerprintSha256": "E865F3230771490A9CA3E41AC1DD2AD2DF4865026F154A79D903D510F20358B5",
+  "esp32Core": "3.3.7",
+  "target": "ESP32-S3",
+  "verifiedDeviceMac": "e0:72:a1:d2:55:c4",
+  "verifiedPort": "COM9",
+  "flashLayout": {
+    "0x0": "bootloader.bin",
+    "0x8000": "partitions.bin",
+    "0xe000": "boot_app0.bin",
+    "0x10000": "firmware.bin"
+  },
+  "preservesFFat": true,
+  "files": {
+    "bootloader.bin": {
+      "bytes": 19984,
+      "sha256": "5403BA8CDF81CBB47F2DEBE13C0F5FF5903540075CCAF3FAC65F0EE68213CB7D"
+    },
+    "partitions.bin": {
+      "bytes": 3072,
+      "sha256": "ACE02503447D0F470692E65FA76002F2D77A92DC81CD3813D8AA66718D716DA9"
+    },
+    "boot_app0.bin": {
+      "bytes": 8192,
+      "sha256": "F94C5D786A7A8FAB06AC5D10E33BF37711A6697636DC037559EA19CC410A17F0"
+    },
+    "firmware.bin": {
+      "bytes": 623440,
+      "sha256": "6CE8B44EA4BF509815A7CE57470B1CC79CA84F85355BF6E4F2D1CB6EA13A4773"
+    }
+  },
+  "verification": {
+    "writeHashVerified": true,
+    "bootRtcSecondsPreserved": true,
+    "collectionPeriodSeconds": 60,
+    "rawStorePassed": true,
+    "timeSyncPriorityAvoidanceObserved": true,
+    "pendingRecoveryObserved": true,
+    "longRun24HourVerificationComplete": false
+  },
+  "constraints": [
+    "hourly statistics unchanged",
+    "HJ212 packet gap 3000ms",
+    "SHT30 handled independently",
+    "DEBUG enabled"
+  ]
+}

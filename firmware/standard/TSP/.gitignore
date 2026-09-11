@@ -1,0 +1,83 @@
+# Arduino / ESP32 build outputs
+/build/
+/.build*/
+*.bin
+*.bin_rep
+*.elf
+*.map
+*.hex
+*.eep
+*.lst
+*.o
+*.obj
+*.a
+*.d
+*.su
+*.dSYM/
+sdkconfig
+sdkconfig.old
+
+# Packaged releases and bundled third-party binaries
+*.7z
+*.zip
+*.rar
+*.tar
+*.tar.gz
+*.exe
+*.dll
+*.lib
+
+# Generated/vendor runtime folders bundled with release tools
+/OTA升级包/mosquitto/
+/OTA升级包/**/logs/
+/OTA升级包/**/dl_temp/
+/OTA升级包/**/dist/
+
+# Arduino IDE / CLI local state
+*.ino.with_bootloader.bin
+*.ino.bootloader.bin
+*.ino.partitions.bin
+*.ino.merged.bin
+.arduinoIDE/
+.arduino15/
+
+# Editors and IDEs
+/.vscode/
+/.idea/
+*.code-workspace
+*.sublime-project
+*.sublime-workspace
+*.swp
+*.swo
+*~
+
+# OS metadata
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Logs, caches, and temporary files
+*.log
+*.tmp
+*.temp
+*.bak
+*.cache
+*.lock
+*.orig
+*.rej
+~$*
+.cache/
+.tmp/
+/tmp/
+/temp/
+
+# Local environment and credentials
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+secrets.*
+credentials.*

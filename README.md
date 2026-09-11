@@ -2,7 +2,20 @@
 
 本项目是基于 ESP32-S3 的空气微站/TSP 环境监测终端固件，用于采集颗粒物、气态污染物、气象和噪声数据，并通过 HJ 212 协议上传到监控平台。项目同时提供本地显示、历史存储、断点续传、远程配置、传感器标定、告警和 OTA 升级等功能。
 
-当前固件版本：`2.0.0`
+当前正式开发版本：standard `2.0.22`，certified `2.0.22.1`。
+
+正式源码分别位于 `firmware/standard/TSP` 和 `firmware/certified/TSP`。两版均已完成
+源码迁移构建验证，结论为
+`MIGRATION BUILD VERIFIED - EXPECTED NONDETERMINISTIC METADATA ONLY`，不是
+bit-identical结论。
+
+2026-09-07正式打包Release：
+
+- standard：`firmware_workspace/releases/2.0.22/20260907-gas-pacing-diagnostics`
+- certified：`firmware_workspace/releases/2.0.22.1/20260907-gas-pacing-diagnostics-certified`
+
+两包状态均为 `packaged-not-hardware-verified`，不能描述为已通过现场硬件验证。固件操作
+入口见 [FIRMWARE_START_HERE](FIRMWARE_START_HERE.md)。
 
 ## 主要功能
 
@@ -86,7 +99,9 @@ DataManager
 | 小时数据 | `HOUR_DATA` | 2061 | 跨小时后发送上一小时数据 |
 | 日数据 | `DAY_DATA` | 2031 | 跨日后发送上一日数据 |
 
-HJ 212 报文由 `TSP/src/module/pack212` 生成。发送端需要检查：
+HJ 212 报文由两套正式源码中的 `src/module/pack212` 生成。通用版对应
+`firmware/standard/TSP/src/module/pack212`，认证版对应
+`firmware/certified/TSP/src/module/pack212`。发送端需要检查：
 
 - 包头、数据段长度和 CRC 是否正确；
 - `QN`、`ST`、`CN`、`PW`、`MN` 和 `Flag` 是否与平台一致；
@@ -186,27 +201,37 @@ struct fileStorage {
 
 `param` 支持 `real`/`raw`、`min`、`hour` 和 `day`。时间必须使用十进制 `YYYYMMDDHHMMSS`，不得将 `14` 误作为数字进制。
 
-完整命令和响应格式见 [远程接口文档](开发文档/远程接口文档.pdf)。
+完整命令和响应格式见 [远程接口文档](开发文档/接口文档/远程接口文档.pdf)。
 
 ## 编译与烧录
 
-### Arduino IDE
+正式构建统一从 `firmware_workspace/` 进入：
 
-1. 使用 Arduino IDE 打开 `TSP/TSP.ino`。
-2. 安装 ESP32 Arduino Core 及工程所需库。
-3. 选择 `ESP32S3 Dev Module`。
-4. 设置 `FlashSize=16M`、`PartitionScheme=app3M_fat9M_16MB`、`CPUFreq=240`、`FlashMode=qio`、`PSRAM=disabled`。
-5. 编译并烧录，现场端口通常为 COM29，实际以设备管理器为准。
-
-### arduino-cli
-
-在仓库根目录执行：
-
-```powershell
-arduino-cli compile --fqbn "esp32:esp32:esp32s3:UploadSpeed=921600,USBMode=hwcdc,CDCOnBoot=default,MSCOnBoot=default,DFUOnBoot=default,UploadMode=default,CPUFreq=240,FlashMode=qio,FlashSize=16M,PartitionScheme=app3M_fat9M_16MB,DebugLevel=none,PSRAM=disabled,LoopCore=1,EventsCore=1,EraseFlash=none,JTAGAdapter=default,ZigbeeMode=default" --build-path ".build2" "TSP"
+```text
+build-standard.cmd       构建 firmware/standard/TSP
+build-certified.cmd      构建 firmware/certified/TSP
+build-current.cmd        兼容入口，等价于 standard
+status-standard.cmd      查看 standard 状态
+status-certified.cmd     查看 certified 状态
+status.cmd               默认查看 standard 状态
 ```
 
-烧录更新前应备份现场配置。仅更新应用程序时，避免擦除整片 Flash，否则可能清除配置、历史或其他现场数据。
+如需使用Arduino IDE，standard应打开 `firmware/standard/TSP/TSP.ino`，certified应打开
+`firmware/certified/TSP/TSP.ino`。当前正式构建参数以 `firmware_workspace/scripts/` 为准；
+[Arduino IDE 2.0.4阶段设置记录](docs/archive/guides/ARDUINO_IDE_2.0.4_SETTINGS.md)
+只用于历史比对，不能替代当前构建入口。
+
+正式四段烧录布局为：
+
+```text
+0x000000  bootloader.bin
+0x008000  partitions.bin
+0x00E000  boot_app0.bin
+0x010000  firmware.bin
+```
+
+烧录更新前应备份现场配置。不得使用历史merged BIN说明替代当前四段布局；未经明确
+授权不得烧录或擦除整片Flash，否则可能清除配置、历史或其他现场数据。
 
 ## 启动验证
 
@@ -240,23 +265,20 @@ python tools/export_sd_history_to_excel.py D:\sdcard_backup -o output\history_ra
 ## 项目目录
 
 ```text
-TSP/
-├─ TSP.ino                         Arduino 工程入口
-├─ src/system/system/              系统初始化、任务、HJ212发送和网络恢复
-├─ src/system/event/               EventBus 事件总线
-├─ src/app/collectorManager/       传感器注册与采集
-├─ src/app/dataManager/            实时/分钟/小时/日统计
-├─ src/app/filesysManager/         历史记录与断点续传
-├─ src/app/configManager/          配置文件管理
-├─ src/app/dtuManager/             M100M-B2 DTU 命令与透明传输
-├─ src/app/ledManager/             LED 动态数据显示
-├─ src/module/pack212/             HJ212-2017/2025 报文
-└─ src/module/Serial/              串口资源与互斥锁
+firmware/
+├─ standard/TSP/                   Firmware 2.0.22正式通用源码
+└─ certified/TSP/                  Firmware 2.0.22.1正式认证源码
 
-开发文档/                         原理图、协议和传感器说明书
+firmware_workspace/
+├─ build/                          可再生构建产物
+├─ releases/                       正式发布资产
+├─ scripts/                        构建、验证和烧录逻辑
+└─ archive/                        历史构建及快照
+
+docs/                              当前协议、硬件资料、标准及历史归档
 output/project_docs/               项目设计、开发和测试文档
 output/sensor_test_docs/           单设备装配前测试规程
-tools/                             历史数据导出等辅助工具
+tools/                             导出、诊断和厂商工具资料
 ```
 
 ## 相关文档
@@ -265,9 +287,9 @@ tools/                             历史数据导出等辅助工具
 - [项目开发文档](output/project_docs/空气微站_TSP开发文档_V1.0.docx)
 - [项目测试文档](output/project_docs/空气微站_TSP测试文档_V1.0.docx)
 - [RJGF 008-2021 项目测试方案](output/docs/RJGF008-2021_网格化环境空气质量监测仪_项目测试方案.docx)
-- [HJ 212-2017](开发文档/hj212-2017.pdf)
-- [HJ 212-2025](开发文档/hj212-2025.pdf)
-- [传感器与设备说明书](开发文档/传感器说明书/)
+- [HJ 212-2017](docs/protocols/hj212/hj212-2017.pdf)
+- [HJ 212-2025](docs/protocols/hj212/hj212-2025.pdf)
+- [传感器与设备说明书](docs/hardware/sensors/)
 - [装配前单设备测试文档](output/sensor_test_docs/)
 
 ## 当前注意事项
@@ -277,7 +299,8 @@ tools/                             历史数据导出等辅助工具
 - CO 的项目模型当前使用 `ppb`，而部分认证或平台数据可能使用 `μmol/mol`/`ppm`，上线前必须确认换算规则。
 - LED 控制卡采用项目专用 485 协议，不是 Modbus RTU；动态模板必须预先配置索引 41 和 42。
 - M100M-B2 的供电、电平和接口以实物铭牌及原厂资料为准，不能套用相近型号参数。
-- 根目录 README 作为当前项目入口；`TSP/README.md` 保留旧版 Modbus/JSON 接口记录，仅用于历史追溯。
+- 根目录 README 作为当前项目入口；旧版 Modbus/JSON 接口记录统一归档在
+  [legacy-TSP-README](docs/archive/firmware-interface/legacy-TSP-README.md)，仅用于历史追溯。
 
 ## 开发约束
 

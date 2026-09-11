@@ -1,0 +1,34 @@
+{
+  "firmwareVersion": "2.0.22",
+  "label": "2026-09-04_hj212-live-priority-final_compiled-not-hardware-verified",
+  "status": "packaged-not-hardware-verified",
+  "packagedAt": "2026-09-04T12:18:06+08:00",
+  "sourcePath": "D:\\ChatGPT-Pro\\TSP-ESP32-S3\\tmp\\Firmware_2.0.3_original\\TSP",
+  "sourceFingerprintSha256": "9C075B0A7370D87EFF2AAFE84342CFEFC6A2F386D7B434649282E3F57AE68192",
+  "esp32Core": "3.3.7",
+  "flashLayout": {
+    "0x0": "bootloader.bin",
+    "0x8000": "partitions.bin",
+    "0xe000": "boot_app0.bin",
+    "0x10000": "firmware.bin"
+  },
+  "preservesFFat": true,
+  "files": {
+    "bootloader.bin": {
+      "bytes": 19984,
+      "sha256": "5403BA8CDF81CBB47F2DEBE13C0F5FF5903540075CCAF3FAC65F0EE68213CB7D"
+    },
+    "partitions.bin": {
+      "bytes": 3072,
+      "sha256": "ACE02503447D0F470692E65FA76002F2D77A92DC81CD3813D8AA66718D716DA9"
+    },
+    "boot_app0.bin": {
+      "bytes": 8192,
+      "sha256": "F94C5D786A7A8FAB06AC5D10E33BF37711A6697636DC037559EA19CC410A17F0"
+    },
+    "firmware.bin": {
+      "bytes": 676112,
+      "sha256": "CA036D98F3210103FF35FD43BE1495E48F92F29CAB02B309417E39A9C7BBE182"
+    }
+  }
+}

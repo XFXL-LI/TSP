@@ -1,0 +1,830 @@
+#include "permissionManager.h"
+#include "../../inc/sys_init.h"
+#include "../../module/log/log_manager.h"
+#include "../../module/file/file_storage.h"
+#include "../../module/json/config_json.h"
+#include "../../module/gas/GasUnitConverter.h"
+#include "../../module/gas/GasCalibrationManager.h"
+#include "../../module/diagnostics/RuntimeMemoryDiagnostics.h"
+#include "../../system/event/eventBus.h"
+#include "../dataManager/dataManager.h"
+#include "../configManager/config.h"
+#include <stdarg.h>
+#include <utility>
+
+const char *USER_DB_PATH = "/users.db";
+
+const PermissionSystem::CommandRoute PermissionSystem::ROUTE_TABLE[] = {
+    {"get_data", EventID::DATA_QUERY_REQ, EventID::DATA_QUERY_RES, PermissionSystem::onDataQueryRes, 3000},
+    {"get_config", EventID::CONFIG_QUERY_REQ, EventID::CONFIG_QUERY_RES, PermissionSystem::onConfigRes, 5000},
+    {"set_config", EventID::CONFIG_SET_REQ, EventID::CONFIG_SET_RES, PermissionSystem::onSetConfigRes, 2000},
+    {"get_records", EventID::RECORD_QUERY_REQ, EventID::RECORD_QUERY_RES, PermissionSystem::onGetRecordsRes, 15000},
+    {"gal_data", EventID::GAL_REQ, EventID::GAL_RES, PermissionSystem::onGALRes, 60000},
+    {"upload", EventID::UPLOAD_REQ, EventID::UPLOAD_RES, PermissionSystem::onUpload, 60000},
+    {"dtu_command", EventID::DTU_COMMAND_REQ, EventID::DTU_COMMAND_RES, PermissionSystem::onDTUCommand, 60000}
+};
+const size_t PermissionSystem::ROUTE_COUNT = sizeof(PermissionSystem::ROUTE_TABLE) / sizeof(PermissionSystem::CommandRoute);
+
+PermissionSystem &PermissionSystem::getInstance()
+{
+    static PermissionSystem instance;
+    return instance;
+}
+
+PermissionSystem::PermissionSystem()
+{
+}
+
+void PermissionSystem::begin(const String &lcdPortName, const String &dtuPortName)
+{
+    _lcdSerialPort = lcdPortName;
+    _dtuSerialPort = dtuPortName;
+    _Serialmanager = &SerialManager::getInstance();
+
+    _lcdStream = _Serialmanager->getStream(_lcdSerialPort);
+    _dtuStream = _Serialmanager->getStream(_dtuSerialPort);
+    loadUsersFromStorage();
+    LOG_INFO("--- ESP32 Secure Console Ready ---");
+}
+
+void PermissionSystem::loadUsersFromStorage()
+{
+    file_storage &storage = file_storage::getInstance();
+    if (!storage.isFFATReady())
+    {
+        storage.FFatInit();
+    }
+    String content;
+    if (storage.readFFAT(USER_DB_PATH, content) == 0 && content.length() > 0)
+    {
+        parseUserConfig(content);
+        LOG_DEBUG("[Auth] Users loaded from FFat.");
+    }
+    else
+    {
+        LOG_DEBUG("[Auth] No config found, creating default users...");
+        _userDB["zhouwei"] = {"123456", PermissionLevel::ADMIN};
+        _userDB["lizuolang"] = {"123456", PermissionLevel::ADMIN};
+        _userDB["admin"] = {"jckj", PermissionLevel::ADMIN};
+        _userDB["user"] = {"123456", PermissionLevel::USER};
+        _userDB["guest"] = {"123", PermissionLevel::GUEST};
+        saveUsersToStorage();
+    }
+}
+
+void PermissionSystem::saveUsersToStorage()
+{
+    String data = "";
+    for (auto const &[name, user] : _userDB)
+    {
+        data += name + "," + user.password + "," + String((int)user.level) + "\n";
+    }
+    file_storage::getInstance().writeFFAT(USER_DB_PATH, data);
+}
+void PermissionSystem::parseUserConfig(String content)
+{
+    _userDB.clear();
+    int start = 0;
+    int end = content.indexOf('\n');
+
+    while (end != -1)
+    {
+        String line = content.substring(start, end);
+        line.trim();
+        if (line.length() > 0)
+        {
+            int firstComma = line.indexOf(',');
+            int lastComma = line.lastIndexOf(',');
+
+            if (firstComma != -1 && lastComma != -1 && firstComma != lastComma)
+            {
+                String name = line.substring(0, firstComma);
+                String pass = line.substring(firstComma + 1, lastComma);
+                int level = line.substring(lastComma + 1).toInt();
+                _userDB[name] = {pass, static_cast<PermissionLevel>(level)};
+            }
+        }
+        start = end + 1;
+        end = content.indexOf('\n', start);
+    }
+}
+
+void PermissionSystem::sendMsg(Stream *stream, const char *msg)
+{
+    LOG_DEBUG("Msg: %s", msg);
+    if (_Serialmanager != nullptr && stream == _lcdStream) {
+        _Serialmanager->println(_lcdSerialPort, msg);
+    } else if (_Serialmanager != nullptr && stream == _dtuStream) {
+        _Serialmanager->println(_dtuSerialPort, msg);
+    } else if (stream != nullptr) {
+        stream->println(msg);
+    }
+    LOG_DEBUG("send ok");
+}
+void PermissionSystem::poll()
+{
+    if (_isLoggedIn && ((millis() - _lastActivity) > TIMEOUT_MS))
+    {
+        handleLogout();
+    }
+}
+void PermissionSystem::handleStreamInput(Stream *stream, String &buf)
+{
+    unsigned long now = millis();
+    bool isReceiving = false;
+    unsigned long lastByteTime = now;
+    String test = "";
+    int bracketLevel = 0;
+    while (stream->available() > 0)
+    {
+        while(stream && stream->available() > 0)
+        {
+            char c = stream->read();
+            lastByteTime = millis();
+
+            if (!isReceiving) {
+                if (c == '{') {
+                    isReceiving = true;
+                    test = "{";
+                    bracketLevel = 1;
+                }
+                continue; 
+            }
+            test += c;
+            if (c == '{') bracketLevel++;
+            else if (c == '}') bracketLevel--;
+            if (isReceiving && bracketLevel == 0) {
+                LOG_DEBUG("Received TRUE Full JSON: %s", test.c_str());
+                // 这里调用你的 processLine(test);
+                isReceiving = false;
+                test = "";
+                break;
+            }
+
+            if (test.length() > 2000) {
+                isReceiving = false; test = ""; bracketLevel = 0;
+                break;
+            }
+        }
+        if (isReceiving && (millis() - lastByteTime > 500)) {
+            LOG_WARNING("JSON reception timeout, resetting...");
+            isReceiving = false;
+            test = "";
+            bracketLevel = 0;
+        }
+    }
+}
+
+void PermissionSystem::processLine(String line, Stream *stream)
+{
+    LOG_DEBUG("Auth Receive len=%u: %s", (unsigned)line.length(), line.c_str());
+
+    // 使用你封装的 cJSON 工具类解析
+    config_json json(line.c_str());
+
+    // 1. 如果是合法的 JSON 格式
+    if (json.isValid())
+    {
+        LOG_DEBUG("json is valid");
+        String op = json.getString("operation", "");
+
+        // --- 处理登录 ---
+        if (op == "login")
+        {
+            LOG_DEBUG("Start login");
+            // 支持 JSON 格式登录: {"operation":"login","user":"admin","pass":"123456"}
+            String u = json.getString("user", "");
+            String p = json.getString("pass", "");
+            handleLogin(u, p, stream);
+        }
+        else if (op == "logout")
+        {
+            handleLogout();
+            sendResponse(stream, "logout", "OK", "logout success");
+        }
+        else if (op == "get_data")
+        {
+            // Firmware 2.0.3: answer LCD polling directly from the protected
+            // snapshot. The previous asynchronous route copied a complete
+            // std::map and fragmented the heap on every screen operation.
+            sendRealtimeDataDirect(json.getJsonObject(), stream);
+        }
+        else if (op == "get_records"){
+            JSONCmdData *data = new JSONCmdData();
+            data->command = "get_records";
+            data->arguments = line;
+            dispatchBusiness(data, stream);
+        }
+        else if (op == "restart")
+        {
+            sendResponse(stream, "restart", "OK", "Device restarting...");
+            ESP.restart();
+        }
+        else if (op != "")
+        {
+            // The asynchronous business handler reparses the original text.
+            // Release this first cJSON tree before dispatch to reduce the peak
+            // heap requirement of large LCD set_config requests.
+            json.clear();
+            executeCommand(op, std::move(line), stream);
+        }
+    }
+    else
+    {
+        sendResponse(stream, "ERROR", "NG", "Not parse json, json is error");
+    }
+}
+
+static bool appendJson(char *buffer, size_t capacity, size_t &used,
+                       const char *format, ...)
+{
+    if (used >= capacity) return false;
+    va_list args;
+    va_start(args, format);
+    int written = vsnprintf(buffer + used, capacity - used, format, args);
+    va_end(args);
+    if (written < 0 || static_cast<size_t>(written) >= capacity - used) {
+        buffer[capacity - 1] = '\0';
+        return false;
+    }
+    used += static_cast<size_t>(written);
+    return true;
+}
+
+static String configuredGasUnit(const String &sensorId)
+{
+    if (!GasUnitConverter::isGasSensor(sensorId)) return String();
+
+    const COLLECTMAP &collectMap = ConfigManager::getInstance().getCollectConfigs();
+    const auto it = collectMap.find(sensorId);
+    const String requested = it != collectMap.end()
+        ? it->second.unit
+        : String(GasUnitConverter::defaultUnit(sensorId));
+    return GasUnitConverter::normalizeUnit(sensorId, requested);
+}
+
+static float valueForConfiguredUnit(const String &sensorId, float rawValue)
+{
+    if (!GasUnitConverter::isGasSensor(sensorId)) return rawValue;
+    const String unit = configuredGasUnit(sensorId);
+    return GasUnitConverter::convertFromPpb(sensorId, rawValue, unit);
+}
+
+static bool legacyCalibrationContainsGas(const String &args)
+{
+    cJSON *root = cJSON_Parse(args.c_str());
+    if (root == nullptr) return false;
+    cJSON *ids = cJSON_GetObjectItemCaseSensitive(root, "ids");
+    bool containsGas = false;
+    if (cJSON_IsArray(ids)) {
+        cJSON *item = nullptr;
+        cJSON_ArrayForEach(item, ids) {
+            cJSON *id = cJSON_IsObject(item)
+                ? cJSON_GetObjectItemCaseSensitive(item, "id") : nullptr;
+            if (cJSON_IsString(id) &&
+                GasUnitConverter::isGasSensor(String(id->valuestring))) {
+                containsGas = true;
+                break;
+            }
+        }
+    }
+    cJSON_Delete(root);
+    return containsGas;
+}
+
+static uint8_t decimalsForSensor(const String &sensorId)
+{
+    if (!GasUnitConverter::isGasSensor(sensorId)) return 2;
+    return GasUnitConverter::decimalsForUnit(configuredGasUnit(sensorId));
+}
+
+static void appendRecordValues(String &json, const String &sensorId,
+                               const ProcessedDataPacket &packet)
+{
+    char buffer[128] = {};
+    if (GasUnitConverter::isGasSensor(sensorId))
+    {
+        const uint8_t decimals = decimalsForSensor(sensorId);
+        snprintf(buffer, sizeof(buffer),
+                 "\"value\":%.*f,\"cou\":%.*f,\"max\":%.*f,\"min\":%.*f",
+                 decimals, valueForConfiguredUnit(sensorId, packet.value),
+                 decimals, valueForConfiguredUnit(sensorId, packet.cou_val),
+                 decimals, valueForConfiguredUnit(sensorId, packet.max_val),
+                 decimals, valueForConfiguredUnit(sensorId, packet.min_val));
+    }
+    else
+    {
+        snprintf(buffer, sizeof(buffer),
+                 "\"value\":%.2f,\"cou\":%.0f,\"max\":%.2f,\"min\":%.2f",
+                 packet.value, packet.cou_val, packet.max_val, packet.min_val);
+    }
+    json += String(buffer);
+}
+
+void PermissionSystem::sendRealtimeDataDirect(cJSON *request, Stream *stream)
+{
+    constexpr size_t MAX_LCD_IDS = 16;
+    constexpr size_t RESPONSE_CAPACITY = 1024;
+    const char *ids[MAX_LCD_IDS] = {};
+    float values[MAX_LCD_IDS] = {};
+    size_t idCount = 0;
+
+    cJSON *idsArray = request ? cJSON_GetObjectItemCaseSensitive(request, "ids") : nullptr;
+    if (cJSON_IsArray(idsArray)) {
+        cJSON *item = nullptr;
+        cJSON_ArrayForEach(item, idsArray) {
+            if (idCount >= MAX_LCD_IDS) break;
+            if (cJSON_IsString(item) && item->valuestring != nullptr) {
+                ids[idCount++] = item->valuestring;
+            }
+        }
+    }
+
+    uint64_t timestamp = 0;
+    if (!DataManager::getInstance().readLatestValues(ids, idCount, values, timestamp)) {
+        sendResponse(stream, "get_data", "NG", "Data snapshot busy");
+        return;
+    }
+
+    int csq = 99;
+    float temp = 0.0f;
+    float mete = 0.0f;
+    if (systemInfo.mutex != nullptr &&
+        xSemaphoreTake(systemInfo.mutex, pdMS_TO_TICKS(100)) == pdTRUE) {
+        csq = systemInfo.csq;
+        temp = systemInfo.temp;
+        mete = systemInfo.mete;
+        xSemaphoreGive(systemInfo.mutex);
+    }
+
+    char response[RESPONSE_CAPACITY] = {};
+    size_t used = 0;
+    bool ok = appendJson(response, sizeof(response), used,
+        "{\"operation\":\"get_data\",\"code\":\"OK\","
+        "\"message\":\"get data success\",\"timestamp\":%llu,"
+        "\"csq\":%d,\"temp\":%.2f,\"mete\":%.2f,\"params\":[",
+        timestamp, csq, temp, mete);
+    for (size_t i = 0; ok && i < idCount; ++i) {
+        ok = appendJson(response, sizeof(response), used, "%s\"%s\"",
+                        i == 0 ? "" : ",", ids[i]);
+    }
+    ok = ok && appendJson(response, sizeof(response), used, "],\"values\":[");
+    for (size_t i = 0; ok && i < idCount; ++i) {
+        const String sensorId(ids[i]);
+        const uint8_t decimals = decimalsForSensor(sensorId);
+        const float outputValue = valueForConfiguredUnit(sensorId, values[i]);
+        ok = appendJson(response, sizeof(response), used, "%s%.*f",
+                        i == 0 ? "" : ",", decimals, outputValue);
+    }
+    ok = ok && appendJson(response, sizeof(response), used, "]}");
+    if (!ok) {
+        LOG_ERROR("[DIAG] GET_DATA_RESPONSE_OVERFLOW ids=%u capacity=%u",
+                  (unsigned)idCount, (unsigned)sizeof(response));
+        sendResponse(stream, "get_data", "NG", "Too many requested ids");
+        return;
+    }
+    sendMsg(stream, response);
+    const RuntimeMemorySnapshot memory = observeRuntimeMemory();
+    LOG_DEBUG("[DIAG] GET_DATA_DIRECT ids=%u bytes=%u free=%u largest=%u min_free=%u min_largest=%u",
+              (unsigned)idCount, (unsigned)used,
+              (unsigned)memory.freeHeap, (unsigned)memory.largestBlock,
+              (unsigned)memory.minimumFreeHeap,
+              (unsigned)memory.minimumLargestBlock);
+}
+
+void PermissionSystem::handleLogin(String user, String pass, Stream *stream)
+{
+    if (_userDB.count(user) && _userDB[user].password == pass)
+    {
+        _isLoggedIn = true;
+        _currentUser = user;
+        _currentLevel = _userDB[user].level;
+        _lastActivity = millis();
+        LOG_INFO("[Auth] %s logged", user.c_str());
+        if ((int)_currentLevel == 0){
+            sendResponse(stream, "login", "OK", "guest");
+        } else if ((int)_currentLevel == 1) {
+            sendResponse(stream, "login", "OK", "user");
+        } else if ((int)_currentLevel == 2) {
+            sendResponse(stream, "login", "OK", "admin");
+        } else {
+            sendResponse(stream, "login", "OK", "guest");
+        }
+    }
+    else
+    {
+        LOG_ERROR("[Auth] Login failed for user: %s", user.c_str());
+        vTaskDelay(pdMS_TO_TICKS(500));
+        sendResponse(stream, "login", "NG", "login fail, user or pass error");
+    }
+}
+
+void PermissionSystem::handleLogout()
+{
+    _isLoggedIn = false;
+    _currentUser = "Guest";
+    _currentLevel = PermissionLevel::GUEST;
+}
+
+bool PermissionSystem::hasAccess(PermissionLevel required)
+{
+    return static_cast<int>(_currentLevel) >= static_cast<int>(required);
+}
+
+void PermissionSystem::executeCommand(const String &cmd, String args, Stream *stream)
+{
+    if (!_isLoggedIn)
+    {
+        sendResponse(stream, cmd, "NG", "Account not logged in");
+        return;
+    }
+    PermissionLevel requiredLevel = PermissionLevel::ADMIN;
+    bool found = false;
+    for (const auto &entry : PERMISSION_TABLE)
+    {
+        if (cmd == entry.cmd)
+        {
+            requiredLevel = entry.level;
+            found = true;
+            break;
+        }
+    }
+    if (!hasAccess(requiredLevel))
+    {
+        String msg = "Permission denied: " + String(requiredLevel == PermissionLevel::ADMIN ? "ADMIN" : "USER") + " required";
+        sendResponse(stream, cmd, "NG", msg);
+        return;
+    }
+    _lastActivity = millis();
+
+    if (cmd == "gas_calibration")
+    {
+        char response[384] = {};
+        if (!GasCalibrationManager::getInstance().handleRequest(
+                args.c_str(), response, sizeof(response))) {
+            sendResponse(stream, cmd, "NG", "Response build failed");
+        } else {
+            sendMsg(stream, response);
+        }
+        return;
+    }
+
+    if (cmd == "gal_data" && legacyCalibrationContainsGas(args))
+    {
+        sendMsg(stream,
+            "{\"operation\":\"gal_data\",\"code\":\"NG\","
+            "\"reason\":\"legacy_gas_calibration_disabled\"}");
+        return;
+    }
+    JSONCmdData *data = new JSONCmdData();
+    data->command = cmd;
+    data->arguments = std::move(args);
+    dispatchBusiness(data, stream);
+}
+void PermissionSystem::dispatchBusiness(JSONCmdData *data, Stream *stream)
+{
+    const CommandRoute *route = nullptr;
+    for (int i = 0; i < ROUTE_COUNT; i++)
+    {
+        if (data->command == ROUTE_TABLE[i].cmd)
+        {
+            route = &ROUTE_TABLE[i];
+            break;
+        }
+    }
+    if (!route)
+    {
+        sendResponse(stream, data->command, "NG", "Unknown operation");
+        data->release();
+        return;
+    }
+    executeAsyncRoute(data, stream, route);
+}
+void PermissionSystem::executeAsyncRoute(JSONCmdData *data, Stream *stream, const CommandRoute *route)
+{
+    QueueHandle_t resQueue = EventBus::getInstance().createReceiverQueue(1);
+    EventBus::getInstance().subscribe(route->resID, resQueue);
+    sendEventData(data, route->reqID);
+    EventMsg msg;
+    if (EventBus::waitEvent(resQueue, msg, route->timeout))
+    {
+        if (msg.id == route->resID && route->handler != nullptr)
+        {
+            route->handler(msg.data, stream, data->command, data->arguments);
+        }
+    }
+    else
+    {
+        sendResponse(stream, data->command, "NG", "Response timeout");
+    }
+    EventBus::getInstance().unsubscribe(route->resID, resQueue);
+    vQueueDelete(resQueue);
+    data->release();
+}
+
+void PermissionSystem::sendEventData(JSONCmdData *data, EventID id)
+{
+    int subCount = EventBus::getInstance().getSubscriberCount(id);
+    for (int i = 0; i < subCount; i++)
+    {
+        data->retain();
+    }
+    EventBus::getInstance().publish(id, (void *)data);
+}
+
+void PermissionSystem::sendResponse(Stream *stream, String op, String code, String msg)
+{
+    config_json res;
+    res.buildResponse(op.c_str(), code.c_str(), msg.c_str());
+
+    char *resChar = res.serialize(false);
+    if (resChar)
+    {
+        sendMsg(stream, resChar);
+        free(resChar);
+    }
+}
+
+// ***************************************    回调函数    ***************************************
+void PermissionSystem::onDataQueryRes(void *eventData, Stream *stream,
+                                      const String &cmd, const String &args)
+{
+    auto *packet = static_cast<AllProcessedDataPacket *>(eventData);
+    if (packet)
+    {
+        getInstance().getData(packet, stream, cmd, args);
+        packet->release();
+    }
+}
+
+void PermissionSystem::onConfigRes(void *eventData, Stream *stream,
+                                   const String &cmd, const String &args)
+{
+    LOG_DEBUG("Handling Config Response");
+    auto *resData = static_cast<configData *>(eventData);
+    if (resData)    {
+        if (resData->rawResponse.length() > 0) {
+            getInstance().sendMsg(stream, resData->rawResponse.c_str());
+            resData->release();
+            return;
+        }
+        String jsonRes = "{";
+        jsonRes += "\"operation\":\"" + resData->cmd + "\",";
+        jsonRes += "\"code\":\"OK\",";
+        jsonRes += "\"config\":\"" + resData->fileName + "\",";
+        jsonRes += "\"content\":" + resData->content;
+        jsonRes += "}";
+        getInstance().sendMsg(stream, jsonRes.c_str());
+        resData->release();
+    }
+}
+
+void PermissionSystem::onSetConfigRes(void *eventData, Stream *stream,
+                                      const String &cmd, const String &args)
+{
+    LOG_DEBUG("Handling SetConfig Response");
+    auto *resData = static_cast<configData *>(eventData);
+    if (resData)    {
+        if (resData->rawResponse.length() > 0) {
+            getInstance().sendMsg(stream, resData->rawResponse.c_str());
+            resData->release();
+            return;
+        }
+        String jsonRes = "{";
+        jsonRes += "\"operation\":\"" + resData->cmd + "\",";
+        jsonRes += "\"code\":\"" + String(resData->success ? "OK" : "NG") + "\",";
+        jsonRes += "\"config\":\"" + resData->fileName + "\",";
+        if (resData->message.length() > 0) {
+            jsonRes += "\"message\":\"" + resData->message + "\",";
+        }
+        jsonRes += "\"content\":";
+        jsonRes += resData->content.length() > 0 ? resData->content : "null";
+        jsonRes += "}";
+        getInstance().sendMsg(stream, jsonRes.c_str());
+        resData->release();
+    }
+}
+
+void PermissionSystem::onGetRecordsRes(void *eventData, Stream *stream,
+                                       const String &cmd, const String &args){
+    auto *packet = static_cast<AllProcessedDataPacket *>(eventData);
+    if (packet == nullptr) {
+        getInstance().sendResponse(stream, "get_records", "NG", "Read records data is null");
+        return;
+    } else {
+        if (packet->processed_data_map.empty()) {
+            getInstance().sendResponse(stream, "get_records", "NG", "No records data available");
+            packet->release();
+            return;
+        }
+        getInstance().getRecordsData(packet, stream, cmd, args);
+        packet->release();
+    }
+    LOG_DEBUG("TEST OK onGetRecordsRes callback");
+}
+
+void PermissionSystem::onGALRes(void *eventData, Stream *stream,
+                                const String &cmd, const String &args){
+    LOG_DEBUG("TEST OK onGALRes callback");
+    auto *resData = static_cast<galDataRes *>(eventData);
+    if (!resData) {
+        return;
+    }
+    bool isAllSuccess = !resData->results.empty(); 
+    for (const auto& result : resData->results) {
+        if (!result.galRes) {
+            isAllSuccess = false;
+            break;
+        }
+    }
+    String codeStr = isAllSuccess ? "OK" : "NG";
+    String jsonRes;
+    jsonRes.reserve(256);
+    jsonRes += "{";
+    jsonRes += "\"operation\":\"" + resData->cmd + "\",";
+    jsonRes += "\"code\":\"" + codeStr + "\",";
+    jsonRes += "\"params\":\"gal_data\",";
+    jsonRes += "\"values\":[";
+    for (size_t i = 0; i < resData->results.size(); i++) {
+        const auto& result = resData->results[i];
+        jsonRes += "{";
+        jsonRes += "\"id\":\"" + result.sensor_id + "\",";
+        jsonRes += "\"galRes\":" + String(result.galRes ? "true" : "false");
+        jsonRes += "}";
+        if (i < resData->results.size() - 1) {
+            jsonRes += ",";
+        }
+    }
+    jsonRes += "]}";
+    getInstance().sendMsg(stream, jsonRes.c_str());
+    resData->release();
+}
+void PermissionSystem::onUpload(void *eventData, Stream *stream,
+                                const String &cmd, const String &args){
+    (void)stream;
+    (void)cmd;
+    (void)args;
+
+    // The OTA listener retains the request while publishing UPLOAD_RES. This
+    // handler owns that response reference and releases it after unblocking
+    // the synchronous permission route.
+    auto *request = static_cast<JSONCmdData *>(eventData);
+    if (request != nullptr) {
+        request->release();
+    }
+}
+void PermissionSystem::onDTUCommand(void *eventData, Stream *stream,
+                                    const String &cmd, const String &args){
+    LOG_DEBUG("Handling Config Response");
+    auto *resData = static_cast<configData *>(eventData);
+    if (resData)    {
+        String jsonRes = "{";
+        jsonRes += "\"operation\":\"" + resData->cmd + "\",";
+        jsonRes += "\"code\":\"OK\",";
+        jsonRes += "\"content\":" + resData->content;
+        jsonRes += "}";
+        getInstance().sendMsg(stream, jsonRes.c_str());
+        resData->release();
+    }
+}
+
+// ***************************************    回调函数    ***************************************
+
+// ***************************************    打包处理    ***************************************
+void PermissionSystem::getData(AllProcessedDataPacket *allData, Stream *stream, const String &cmd, const String &args)
+{
+    config_json request(args.c_str());
+    cJSON *idsArray = request.getArray("ids");
+    int csq = 99;
+    float temp = 0.0f;
+    float mete = 0.0f;
+    if (systemInfo.mutex == NULL)    {
+        LOG_ERROR("Failed to create mutex for CSQ info");
+    } else if (xSemaphoreTake(systemInfo.mutex, pdMS_TO_TICKS(3000)) == pdTRUE) {
+        csq = systemInfo.csq;
+        temp = systemInfo.temp;
+        mete = systemInfo.mete;
+        xSemaphoreGive(systemInfo.mutex);
+    }
+    uint64_t time = allData->last_update;
+    String jsonRes = "{";
+    jsonRes += "\"operation\":\"" + cmd + "\",";
+    jsonRes += "\"code\":\"OK\",";
+    jsonRes += "\"message\":\"get data success\",";
+    jsonRes += "\"timestamp\":" + String(time) + ",";
+    jsonRes += "\"csq\":" + String(csq) + ",";
+    jsonRes += "\"temp\":" + String(temp, 2) + ",";
+    jsonRes += "\"mete\":" + String(mete, 2) + ",";
+    jsonRes += "\"params\":[";
+    if (idsArray != nullptr)
+    {
+        int arraySize = cJSON_GetArraySize(idsArray);
+        for (int i = 0; i < arraySize; i++)
+        {
+            cJSON *idItem = cJSON_GetArrayItem(idsArray, i);
+            if (cJSON_IsString(idItem))
+            {
+                jsonRes += "\"" + String(idItem->valuestring) + "\"";
+                if (i < arraySize - 1)
+                    jsonRes += ",";
+            }
+        }
+    }
+    jsonRes += "],";
+    jsonRes += "\"values\":[";
+    if (idsArray != nullptr && allData != nullptr)
+    {
+        int arraySize = cJSON_GetArraySize(idsArray);
+        for (int i = 0; i < arraySize; i++)
+        {
+            cJSON *idItem = cJSON_GetArrayItem(idsArray, i);
+            if (cJSON_IsString(idItem))
+            {
+                const char *targetId = idItem->valuestring;
+                float val = 0.00;
+
+                if (allData->processed_data_map.count(targetId))
+                {
+                    auto &packet = allData->processed_data_map[targetId];
+                    if (packet.is_valid)
+                        val = packet.value;
+                }
+                char buf[16];
+                const String sensorId(targetId);
+                snprintf(buf, sizeof(buf), "%.*f", decimalsForSensor(sensorId),
+                         valueForConfiguredUnit(sensorId, val));
+                jsonRes += String(buf);
+                if (i < arraySize - 1)
+                    jsonRes += ",";
+            }
+        }
+    }
+    jsonRes += "]}";
+    sendMsg(stream, jsonRes.c_str());
+}
+
+void PermissionSystem::getRecordsData(AllProcessedDataPacket *allData, Stream *stream, const String &cmd, const String &args)
+{
+    config_json request(args.c_str());
+    cJSON *idsArray = request.getArray("ids");
+    uint64_t time = allData ? allData->last_update : 0;
+
+    String jsonRes;
+    jsonRes.reserve(512);
+    jsonRes += "{";
+    jsonRes += "\"operation\":\"" + cmd + "\",";
+    jsonRes += "\"code\":\"OK\",";
+    jsonRes += "\"message\":\"get records success\",";
+    jsonRes += "\"timestamp\":" + String(time) + ",";
+    jsonRes += "\"data\":{";
+
+    bool firstEntry = true;
+
+    if (allData != nullptr)
+    {
+        // If idsArray provided, use that order; otherwise iterate all keys
+        if (idsArray != nullptr)
+        {
+            int arraySize = cJSON_GetArraySize(idsArray);
+            for (int i = 0; i < arraySize; i++)
+            {
+                cJSON *idItem = cJSON_GetArrayItem(idsArray, i);
+                if (!cJSON_IsString(idItem)) continue;
+                const char *targetId = idItem->valuestring;
+                if (!firstEntry) jsonRes += ",";
+                firstEntry = false;
+                jsonRes += "\"" + String(targetId) + "\":{";
+
+                if (allData->processed_data_map.count(targetId))
+                {
+                    auto &packet = allData->processed_data_map[targetId];
+                    appendRecordValues(jsonRes, String(targetId), packet);
+                }
+                else
+                {
+                    jsonRes += "\"value\":0,\"cou\":0,\"max\":0,\"min\":0";
+                }
+                jsonRes += "}";
+            }
+        }
+        else
+        {
+            // iterate all entries
+            for (const auto &entry : allData->processed_data_map)
+            {
+                const String &targetId = entry.first;
+                const ProcessedDataPacket &packet = entry.second;
+                if (!firstEntry) jsonRes += ",";
+                firstEntry = false;
+                jsonRes += "\"" + targetId + "\":{";
+                appendRecordValues(jsonRes, targetId, packet);
+                jsonRes += "}";
+            }
+        }
+    }
+
+    jsonRes += "}}";
+    sendMsg(stream, jsonRes.c_str());
+}
+
+// ***************************************    打包处理    ***************************************

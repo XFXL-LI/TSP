@@ -1,0 +1,47 @@
+# Reproducible firmware build output
+/TSP/build/
+/firmware_workspace/build/
+/tmp/**/TSP/build/
+/firmware/standard/TSP/build/
+/firmware/certified/TSP/build/
+
+# Local firmware workspace content
+/firmware_workspace/toolchain/*.exe
+/firmware_workspace/toolchain/*.zip
+/firmware_workspace/archive/
+
+# Compiler output and development caches
+*.o
+*.d
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.vscode/
+
+# Logs and temporary analysis/render output
+*.log
+/firmware_workspace/logs/2026-08-10/TSP_ESP32-S3项目工作日志_2026-08-01至2026-08-10.docx
+/tmp/log-analysis/
+/tmp/pdfs/**/*.png
+/output/
+
+# Flash Download Tool runtime caches
+**/烧录工具/dl_temp/
+**/烧录工具/logs/
+
+# Confirmed machine-local configuration
+/TSP/OTA升级包/netassist.cfg
+/tmp/**/TSP/OTA升级包/netassist.cfg
+**/烧录工具/configure/**/spi_download.conf
+**/烧录工具/configure/**/hspi_download.conf
+
+# Local agent/runtime state
+/.agents/
+/worktrees/
+
+# Editor/OS temporary files
+~$*
+._*
+Thumbs.db
+Desktop.ini

@@ -1,0 +1,228 @@
+{
+    "operation": "get_config",
+    "config": "systemConfig"
+}
+{
+    "operation": "get_config",
+    "code": "OK",
+    "config": "systemConfig",
+    "content": {
+        "collect_time": 60,
+        "upload_interval": 60,
+        "dtu_server": "39.101.67.255:111"
+    }
+}
+{
+    "operation": "get_config",
+    "config": "tempControlConfig"
+}
+{
+    "operation": "get_config",
+    "code": "OK",
+    "config": " tempControlConfig",
+    "content": {
+        "tempUpperLimit": 50,
+        "tempLowerLimit": 0,
+        "wetnUpperLimit": 50,
+        "wetnLowerLimit": 0
+    }
+}
+{
+    "operation": "get_config",
+    "config": "hj212Config"
+}
+{
+    "operation": "get_config",
+    "code": "OK",
+    "config": " hj212Config",
+    "content": {
+        "ip": "39.101.67.255:8002",
+        "port": 8002,
+        "mn": "qqqqqq12345678",
+        "pw": "123456",
+        "st": "31",
+        "flag": "9",
+        "pv": "2017",
+        "timeout": 5,
+        "retry_times": 3
+    }
+}
+
+{
+    "operation": "get_config",
+    "config": "sensors"
+}
+{
+    "operation": "get_config",
+    "code": "OK",
+    "config": " sensors",
+    "content": {
+        "a34005": {
+            "name": "TSP",
+            "alarmLimit": 200,
+            "unit": "ng/m3"
+        },
+        "a34001": {
+            "name": "PM1",
+            "alarmLimit": 200,
+            "unit": "ng/m3"
+        },
+        "a34004": {
+            "name": "PM2.5",
+            "alarmLimit": 200,
+            "unit": "ng/m3"
+        },
+        "a34002": {
+            "name": "PM10",
+            "alarmLimit": 200,
+            "unit": "ng/m3"
+        },
+        "a01007": {
+            "name": "WINDSPEED",
+            "alarmLimit": 200,
+            "unit": "ng/m3"
+        },
+        "a01008": {
+            "name": "WINDDIRECTION",
+            "alarmLimit": 200,
+            "unit": "ng/m3"
+        },
+        "w34011": {
+            "name": "O3",
+            "alarmLimit": 200,
+            "unit": "ng/m3"
+        },
+        "a21004": {
+            "name": "NO2",
+            "alarmLimit": 200,
+            "unit": "ng/m3"
+        },
+        "a21005": {
+            "name": "CO",
+            "alarmLimit": 200,
+            "unit": "ng/m3"
+        },
+        "a21026": {
+            "name": "SO2",
+            "alarmLimit": 200,
+            "unit": "ng/m3"
+        },
+        "a01001": {
+            "name": "TEMP",
+            "alarmLimit": 200,
+            "unit": "ng/m3"
+        },
+        "a01002": {
+            "name": "HUMI",
+            "alarmLimit": 200,
+            "unit": "ng/m3"
+        },
+        "a01006": {
+            "name": "PRESSURE",
+            "alarmLimit": 200,
+            "unit": "ng/m3"
+        },
+        "L90": {
+            "name": "NOISE",
+            "alarmLimit": 200,
+            "unit": "mg/m3"
+        }
+    }
+}
+// set_config ÇëÇóÊ¾Àý
+{
+    "operation": "set_config",
+    "config": "systemConfig",
+    "content": {
+        "collect_time": 55,
+        "upload_interval": 55,
+        "dtu_server": "39.101.67.255:111"
+    }
+}
+
+{
+    "operation": "set_config",
+    "code": "OK",
+    "config": " systemConfig",
+    "content": {
+        "collect_time": 55,
+        "upload_interval": 55,
+        "dtu_server": "39.101.67.255:111"
+    }
+}
+
+{
+    "operation": "restart"
+}
+
+{
+    "operation": "get_data",
+    "code": "OK",
+    "message": "get records success",
+    "timestamp": 20260527162329,
+    "data": {
+        "a34005": {
+            "value": 100,
+            "cou": 90,
+            "max": 110,
+            "min": 80,
+        },
+        "a34001": {
+            "value": 100,
+            "cou": 90,
+            "max": 110,
+            "min": 80,
+        }
+    }
+}
+
+{
+"operation":"dtu_command",
+"param":"remote",
+"message":"admin"
+}
+
+{
+  "deviceId": "AIR-ESP32S3-000001",
+  "stationId": "ST-000001",
+  "msgId": "AIR-000001-20260527162329001",
+  "timestamp": 20260527162329,
+  "interval": 1,
+  "sequence": 123456,
+  "isResend": false,
+  "quality": "normal",
+  "data": {
+    "a34005": {
+      "value": 100.0,
+      "unit": "ug/m3"
+    },
+    "a34001": {
+      "value": 100.0,
+      "unit": "ug/m3"
+    },
+    "a01001": {
+      "value": 100.0,
+      "unit": "?"
+    },
+    "a01006": {
+      "value": 100.0,
+      "unit": "kPa"
+    },
+    "a01007": {
+      "value": 100.0,
+      "unit": "m/s"
+    },
+    "a01008": {
+      "value": 100.0,
+      "unit": "°"
+    },
+    "w34011": {
+      "value": 100.0,
+      "unit": "ug/m3"
+    },
+    "L90": {
+      "value": 100.0,
+      "unit": "dB"
+    }
+  }
+}
