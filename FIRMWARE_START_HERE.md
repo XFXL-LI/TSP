@@ -6,6 +6,13 @@
 [固件版本与目录说明](FIRMWARE_VERSION_LOCATIONS.md)，仓库整体说明见
 [项目 README](README.md)。
 
+AI辅助开发应同时读取：
+
+- [仓库级AI规则](AGENTS.md)
+- [项目长期技术背景](docs/PROJECT_CONTEXT.md)
+- [当前未解决问题](docs/OPEN_ISSUES.md)
+- [AI长期变更记录](docs/AI_CHANGELOG.md)
+
 ## 当前正式源码
 
 | Variant | 版本 | 正式源码 | 构建输入 | 源码指纹 |

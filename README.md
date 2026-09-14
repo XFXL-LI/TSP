@@ -21,6 +21,13 @@ Git仓库保存Release追溯元数据；当前已发布固件的四段BIN由GitH
 BIN由离线Release归档保存。恢复时应将四段BIN放回对应metadata目录，并在使用前按
 `SHA256SUMS.txt`、`manifest.json`和`flash_args.txt`完成校验。
 
+AI辅助开发入口：
+
+- [仓库级AI规则](AGENTS.md)
+- [项目长期技术背景](docs/PROJECT_CONTEXT.md)
+- [当前未解决问题](docs/OPEN_ISSUES.md)
+- [AI长期变更记录](docs/AI_CHANGELOG.md)
+
 ## 主要功能
 
 - 采集 PM1、PM2.5、PM10、TSP、SO₂、NO₂、CO、O₃、温度、湿度、大气压、风速、风向和噪声。
