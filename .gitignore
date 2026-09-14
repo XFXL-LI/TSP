@@ -10,6 +10,9 @@
 /firmware_workspace/toolchain/*.zip
 /firmware_workspace/archive/
 
+# Firmware release binaries are distributed externally; keep release metadata in Git
+/firmware_workspace/releases/**/*.bin
+
 # Compiler output and development caches
 *.o
 *.d

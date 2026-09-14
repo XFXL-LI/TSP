@@ -22,7 +22,7 @@ Core 3.3.7编译时间和派生镜像元数据，不涉及业务payload变化。
 ## 目录职责
 
 - `build/`：可再生构建产物，不是发布来源，也不应长期作为Git资产保存。
-- `releases/`：正式发布资产；每个可追溯包应包含manifest、SHA256SUMS、flash_args和四段BIN。
+- `releases/`：Git跟踪正式发布的manifest、SHA256SUMS、flash_args等追溯元数据；四段BIN不进入Git工作树。
 - `scripts/`：正式构建、状态检查、Release打包/验证和受保护烧录逻辑。
 - `toolchain/`：工作区使用的便携工具。
 - `sources/`：需要长期保留的旧版本独立源码快照，不用于当前开发。
@@ -50,6 +50,11 @@ status.cmd               默认查看 standard 状态
 
 两者状态均为 `packaged-not-hardware-verified`。它们已完成文件级和静态验证，但未取得
 现场硬件验证状态。
+
+当前已发布的四段BIN由GitHub Releases分发；历史BIN由离线Release归档保存。验证或
+烧录前，应从对应GitHub Release或离线归档恢复四段BIN到同一Release metadata目录，
+再按 `SHA256SUMS.txt`、`manifest.json`和 `flash_args.txt`校验。恢复的BIN由精确
+`.gitignore`规则排除，不作为Git源码或Release metadata提交。
 
 2026-08-10的Firmware 2.0.4四段包继续作为历史硬件验证回退基线保留：
 
