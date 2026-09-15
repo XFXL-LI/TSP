@@ -9,8 +9,8 @@
 
 | Variant | 版本 | 当前正式源码 | 构建输入 | 源码指纹 |
 |---|---:|---|---:|---|
-| standard | 2.0.22 | `firmware/standard/TSP` | 88 | `84CD14958E077AE1FE4294C4C566F8CF39FE89952C5CB929301AF2CF4C553213` |
-| certified | 2.0.22.1 | `firmware/certified/TSP` | 89 | `540EE286955E50B552882A8F7639E858DBC724DFECFC9B0571E0AC5D0A128779` |
+| standard | 2.0.23 | `firmware/standard/TSP` | 88 | `A97AA91FD298EAA31D3ED2051C1A19FAEB210A98284533267508A947D644C3E9` |
+| certified | 2.0.23.1 | `firmware/certified/TSP` | 89 | `090B6AD564ED66941D9DA60EF1ABB1626113E5837A9A77C736A23CAC4A3CAA6B` |
 
 当前构建入口为 `firmware_workspace/build-standard.cmd`、
 `firmware_workspace/build-certified.cmd`和兼容standard的
@@ -23,7 +23,7 @@
 
 该结论不是bit-identical；新旧BIN的差异已由编译时间及其派生镜像元数据完整解释。
 
-2026-09-07正式Release分别为：
+当前最新已发布的2026-09-07正式Release分别为：
 
 - standard：`firmware_workspace/releases/2.0.22/20260907-gas-pacing-diagnostics`
 - certified：`firmware_workspace/releases/2.0.22.1/20260907-gas-pacing-diagnostics-certified`
@@ -532,9 +532,9 @@ FFat`/gasCalibrationCertified.json`；不接触2.0.16的`/gasCalibration.json`�
 
 两个2026-09-03发布包存在QN解析阻断发送的问题，已在包内标记`DO_NOT_USE.md`，不得再用。
 
-## Firmware 2.0.22：当前standard正式源码
+## Firmware 2.0.22：最新已发布standard Release的源码基线
 
-当前正式源码：`firmware/standard/TSP`
+历史源码状态已由当前`firmware/standard/TSP`继续演进。
 
 - 构建输入：88；
 - 源码指纹：`84CD14958E077AE1FE4294C4C566F8CF39FE89952C5CB929301AF2CF4C553213`；
@@ -553,9 +553,9 @@ FFat`/gasCalibrationCertified.json`；不接触2.0.16的`/gasCalibration.json`�
 2.0.22在2.0.21基础上实现HJ212实时队列优先、pending空闲调度及写入保护，并在
 2026-09-07同版本中加入气体200 ms统一节流和轻量运行诊断。
 
-## Firmware 2.0.22.1：当前certified正式源码
+## Firmware 2.0.22.1：最新已发布certified Release的源码基线
 
-当前正式源码：`firmware/certified/TSP`
+历史源码状态已由当前`firmware/certified/TSP`继续演进。
 
 - 构建输入：89；
 - 源码指纹：`540EE286955E50B552882A8F7639E858DBC724DFECFC9B0571E0AC5D0A128779`；
@@ -577,6 +577,37 @@ FFat`/gasCalibrationCertified.json`；不接触2.0.16的`/gasCalibration.json`�
 本轮治理中烧录、擦除MCU或操作设备FFat。详细记录见
 [Firmware 2.0.22变更记录](docs/changelog/CHANGELOG_2.0.22.md)与
 [Firmware 2.0.22.1变更记录](docs/changelog/CHANGELOG_2.0.22.1.md)。
+
+## Firmware 2.0.23：当前standard正式源码
+
+当前正式源码：`firmware/standard/TSP`
+
+- 构建输入：88；
+- 源码指纹：`A97AA91FD298EAA31D3ED2051C1A19FAEB210A98284533267508A947D644C3E9`；
+- 应用BIN：680192字节；
+- 应用BIN SHA-256：`C10B8B98B052A11C90B1CB0E5DD1DCC9C0831E361590712444642B3A749A486A`；
+- 构建目录：`firmware_workspace/build/firmware-2.0.23-pending-sector-write-hardening-20260914`；
+- 状态：`compiled-not-hardware-verified`。
+
+2.0.23只处理pending完整HJ212报文的SD写入加固。首次使用`.tmp1`执行stdio写入并关闭
+重开校验；失败后保留`.tmp1`，使用独立`.tmp2`和256字节POSIX分块写入，再关闭重开
+校验。只有验证成功的临时文件才重命名为最终`.pkt`。两次均失败时继续使用原有rebuild
+marker和raw重建兜底。详细记录见
+[Firmware 2.0.23变更记录](docs/changelog/CHANGELOG_2.0.23.md)。
+
+## Firmware 2.0.23.1：当前certified正式源码
+
+当前正式源码：`firmware/certified/TSP`
+
+- 构建输入：89；
+- 源码指纹：`090B6AD564ED66941D9DA60EF1ABB1626113E5837A9A77C736A23CAC4A3CAA6B`；
+- 应用BIN：680672字节；
+- 应用BIN SHA-256：`58F2506A295B2FB3853321BC80E63028C911BE3AA7E29B9884CB0747425A51C5`；
+- 构建目录：`firmware_workspace/build/firmware-2.0.23.1-certified-pending-sector-write-hardening-20260914`；
+- 状态：`compiled-not-hardware-verified`。
+
+2.0.23.1同步2.0.23的公共pending写入加固，认证专用气体封顶和校准策略未修改。详细
+记录见[Firmware 2.0.23.1变更记录](docs/changelog/CHANGELOG_2.0.23.1.md)。
 
 ## 使用规则
 

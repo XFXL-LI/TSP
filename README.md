@@ -2,14 +2,13 @@
 
 本项目是基于 ESP32-S3 的空气微站/TSP 环境监测终端固件，用于采集颗粒物、气态污染物、气象和噪声数据，并通过 HJ 212 协议上传到监控平台。项目同时提供本地显示、历史存储、断点续传、远程配置、传感器标定、告警和 OTA 升级等功能。
 
-当前正式开发版本：standard `2.0.22`，certified `2.0.22.1`。
+当前正式开发版本：standard `2.0.23`，certified `2.0.23.1`。
 
-正式源码分别位于 `firmware/standard/TSP` 和 `firmware/certified/TSP`。两版均已完成
-源码迁移构建验证，结论为
-`MIGRATION BUILD VERIFIED - EXPECTED NONDETERMINISTIC METADATA ONLY`，不是
-bit-identical结论。
+正式源码分别位于 `firmware/standard/TSP` 和 `firmware/certified/TSP`。2.0.23系列只
+加固pending完整HJ212报文的SD临时写入和失败诊断；两版均已编译通过，但尚未完成硬件
+长跑验证。
 
-2026-09-07正式打包Release：
+当前最新已发布的2026-09-07正式打包Release：
 
 - standard：`firmware_workspace/releases/2.0.22/20260907-gas-pacing-diagnostics`
 - certified：`firmware_workspace/releases/2.0.22.1/20260907-gas-pacing-diagnostics-certified`
@@ -277,8 +276,8 @@ python tools/export_sd_history_to_excel.py D:\sdcard_backup -o output\history_ra
 
 ```text
 firmware/
-├─ standard/TSP/                   Firmware 2.0.22正式通用源码
-└─ certified/TSP/                  Firmware 2.0.22.1正式认证源码
+├─ standard/TSP/                   Firmware 2.0.23正式通用源码
+└─ certified/TSP/                  Firmware 2.0.23.1正式认证源码
 
 firmware_workspace/
 ├─ build/                          可再生构建产物

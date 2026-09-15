@@ -1,6 +1,6 @@
 # TSP ESP32-S3 固件工作区
 
-最后更新：2026-09-10
+最后更新：2026-09-14
 
 本目录是固件状态查看、构建、Release验证和受保护烧录入口。正式业务源码已迁移到
 仓库根目录的 `firmware/`，不再从 `tmp/` 或根目录旧 `TSP/` 构建。
@@ -9,15 +9,14 @@
 
 | Variant | 版本 | 源码路径 | 构建输入 | 源码指纹 |
 |---|---:|---|---:|---|
-| standard | 2.0.22 | `../firmware/standard/TSP` | 88 | `84CD14958E077AE1FE4294C4C566F8CF39FE89952C5CB929301AF2CF4C553213` |
-| certified | 2.0.22.1 | `../firmware/certified/TSP` | 89 | `540EE286955E50B552882A8F7639E858DBC724DFECFC9B0571E0AC5D0A128779` |
+| standard | 2.0.23 | `../firmware/standard/TSP` | 88 | `A97AA91FD298EAA31D3ED2051C1A19FAEB210A98284533267508A947D644C3E9` |
+| certified | 2.0.23.1 | `../firmware/certified/TSP` | 89 | `090B6AD564ED66941D9DA60EF1ABB1626113E5837A9A77C736A23CAC4A3CAA6B` |
 
-两版迁移构建结论均为：
+两版2.0.23系列pending写入加固构建均已通过，状态为
+`compiled-not-hardware-verified`。构建目录分别为：
 
-`MIGRATION BUILD VERIFIED - EXPECTED NONDETERMINISTIC METADATA ONLY`
-
-该结论不表示重新构建BIN与2026-09-07 BIN bit-identical；已解释的差异来自ESP32
-Core 3.3.7编译时间和派生镜像元数据，不涉及业务payload变化。
+- `build/firmware-2.0.23-pending-sector-write-hardening-20260914`
+- `build/firmware-2.0.23.1-certified-pending-sector-write-hardening-20260914`
 
 ## 目录职责
 
@@ -43,7 +42,7 @@ status.cmd               默认查看 standard 状态
 构建脚本会在编译前检查三个版本定义一致性，记录variant、源码路径、输入数量、源码指纹、
 构建参数和应用BIN SHA-256。编译本身不会烧录。
 
-## 当前正式 Release
+## 最新已发布 Release
 
 - standard 2.0.22：`releases/2.0.22/20260907-gas-pacing-diagnostics`
 - certified 2.0.22.1：`releases/2.0.22.1/20260907-gas-pacing-diagnostics-certified`

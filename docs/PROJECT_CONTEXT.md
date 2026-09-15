@@ -20,8 +20,8 @@ a delay. Runtime work is performed by FreeRTOS tasks and event queues.
 
 | Variant | Canonical source | Version | Build inputs | Source fingerprint |
 | --- | --- | ---: | ---: | --- |
-| standard | `firmware/standard/TSP` | 2.0.22 | 88 | `84CD14958E077AE1FE4294C4C566F8CF39FE89952C5CB929301AF2CF4C553213` |
-| certified | `firmware/certified/TSP` | 2.0.22.1 | 89 | `540EE286955E50B552882A8F7639E858DBC724DFECFC9B0571E0AC5D0A128779` |
+| standard | `firmware/standard/TSP` | 2.0.23 | 88 | `A97AA91FD298EAA31D3ED2051C1A19FAEB210A98284533267508A947D644C3E9` |
+| certified | `firmware/certified/TSP` | 2.0.23.1 | 89 | `090B6AD564ED66941D9DA60EF1ABB1626113E5837A9A77C736A23CAC4A3CAA6B` |
 
 The certified variant adds `GasSpecificPolicy.h` and applies a 500 ppb upper
 cap to O3, NO2, and SO2. CO is not capped. Its certified calibration profile is
@@ -195,9 +195,13 @@ Measurement records use:
 - `/sdcard/YYYYMMDD/day/day.dat`
 
 SD operations are serialized by a mutex. HJ212 pending packets are stored under
-`/sdcard/pending/<type>/<timestamp>.pkt`. Writes use temporary-file
-verification, an independent rewrite fallback, all-zero-prefix diagnostics, and
-a rebuild marker. Recovery scans are bounded and yield to live data.
+`/sdcard/pending/<type>/<timestamp>.pkt`. In 2.0.23/2.0.23.1, the first write
+uses a `.tmp1` stdio path and reopens it for CRC and byte-level verification.
+If that fails, `.tmp1` remains allocated while an independent `.tmp2` POSIX
+path writes in 256-byte chunks and is reopened for the same verification. Only
+a verified temporary file is renamed to the final `.pkt`. If both attempts
+fail, the existing rebuild marker and raw-record reconstruction remain the
+fallback. Recovery scans are bounded and yield to live data.
 
 ## HJ212 Upload Flow
 
@@ -298,6 +302,9 @@ Current published packages:
 Both packages remain `packaged-not-hardware-verified`. A Git tag identifies
 the canonical repository state after migration; binary provenance is defined by
 the committed release metadata and recorded source fingerprint.
+
+The 2.0.23 standard and 2.0.23.1 certified pending-write-hardening builds have
+compiled successfully but are not yet packaged or hardware verified.
 
 ## Important Constraints
 

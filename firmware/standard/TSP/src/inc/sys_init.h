@@ -11,7 +11,7 @@
 
 //新版本
 // Firmware 2.0.22: live-priority HJ212 pending recovery scheduling.
-#define VERSION2 "2.0.22"
+#define VERSION2 "2.0.23"
 
 struct SYSINFO {
     int csq;

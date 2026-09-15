@@ -3,7 +3,7 @@
 
 //�°汾
 // Firmware 2.0.22.1: certified gas-limited variant based on 2.0.22.
-#define VERSION2 "2.0.22.1"
+#define VERSION2 "2.0.23.1"
 
 void setup()
 {

@@ -72,8 +72,10 @@ Area: Release qualification
 
 Description:
 
-The current 2.0.22 standard and 2.0.22.1 certified releases are packaged and
-file-level verified, but neither is recorded as hardware verified.
+The latest published 2.0.22 standard and 2.0.22.1 certified releases are
+packaged and file-level verified, but neither is recorded as hardware verified.
+The current 2.0.23 and 2.0.23.1 source builds are compiled but not yet packaged
+or hardware verified.
 
 Evidence:
 
@@ -89,6 +91,43 @@ Suggested next action:
 
 Execute and record a controlled hardware qualification matrix for both variants
 without changing the release status until all required checks pass.
+
+## Pending SD write hardening needs a long-run hardware test
+
+Status: Needs verification
+
+Priority: High
+
+Area: Storage and HJ212 recovery
+
+Description:
+
+Six observed pending-write incidents produced correctly sized files whose first
+512 bytes read back as zero while the in-memory HJ212 packet remained valid.
+Versions 2.0.23 and 2.0.23.1 now keep the failed `.tmp1` allocation in place and
+use an independent `.tmp2` fallback with 256-byte POSIX writes, but this change
+has only passed compilation and static review.
+
+Evidence:
+
+The incident logs consistently reported `mismatch_offset=0`, differing memory
+and file CRC values, a zero-filled first sector, and successful rebuild-marker
+and raw-data recovery. The current code records per-stage I/O results and
+separate memory/file prefixes only when a pending write or verification fails.
+
+Risk:
+
+Without a target-device run, it is not yet proven that the independent path and
+sub-sector fallback prevent the repeated first-sector corruption on the field
+SD/FatFs stack. Existing recovery remains safe, but another failure could still
+require rebuild-marker recovery.
+
+Suggested next action:
+
+Run a controlled long-duration certified build test that forces pending writes
+and retries. Confirm that normal writes remain quiet, `.tmp2` is used only after
+a verified `.tmp1` failure, final `.pkt` files pass CRC/byte comparison, and any
+double failure still rebuilds and retransmits from raw data.
 
 ## Builds contain nondeterministic toolchain metadata
 

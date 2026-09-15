@@ -22,6 +22,11 @@ namespace {
 std::atomic<uint32_t> pendingWriteFailureIncidents{0};
 std::atomic<uint32_t> pendingZeroPrefixIncidents{0};
 
+static constexpr size_t PENDING_DIAG_PREFIX_BYTES = 16;
+static constexpr size_t PENDING_DIRECT_SECTOR_BYTES = 512;
+static constexpr size_t PENDING_POSIX_CHUNK_BYTES = 256;
+static constexpr int PENDING_STAGE_NOT_RUN = -2;
+
 uint32_t pendingCrc32Update(uint32_t crc, const uint8_t* data, size_t length)
 {
     while (length-- > 0) {
@@ -45,11 +50,68 @@ struct PendingVerifyDetails {
     int expectedByte = -1;
     int actualByte = -1;
     size_t zeroCountFirst128 = 0;
+    size_t zeroCountFirst512 = 0;
     uint32_t memoryCrc = 0;
     uint32_t fileCrc = 0;
+    uint32_t memoryFirst512Crc = 0;
+    uint32_t fileFirst512Crc = 0;
+    uint8_t filePrefix[PENDING_DIAG_PREFIX_BYTES] = {0};
+    size_t filePrefixLength = 0;
     int openError = 0;
     int readError = 0;
 };
+
+struct PendingWriteDetails {
+    bool opened = false;
+    size_t written = 0;
+    unsigned writeCalls = 0;
+    int openError = 0;
+    int writeError = 0;
+    int flushResult = PENDING_STAGE_NOT_RUN;
+    int flushError = 0;
+    int syncResult = PENDING_STAGE_NOT_RUN;
+    int syncError = 0;
+    int closeResult = PENDING_STAGE_NOT_RUN;
+    int closeError = 0;
+};
+
+void formatPendingHexPrefix(const uint8_t* data, size_t length,
+                            char output[PENDING_DIAG_PREFIX_BYTES * 2 + 1])
+{
+    static constexpr char HEX_DIGITS[] = "0123456789ABCDEF";
+    const size_t count = length < PENDING_DIAG_PREFIX_BYTES
+        ? length : PENDING_DIAG_PREFIX_BYTES;
+    for (size_t index = 0; index < count; ++index) {
+        output[index * 2] = HEX_DIGITS[(data[index] >> 4U) & 0x0FU];
+        output[index * 2 + 1] = HEX_DIGITS[data[index] & 0x0FU];
+    }
+    output[count * 2] = '\0';
+}
+
+void logPendingWriteDetails(int attempt, const char* method,
+                            const PendingWriteDetails& details,
+                            size_t expectedLength)
+{
+    LOG_ERROR("[DIAG] PENDING_IO attempt=%d method=%s open=%d open_errno=%d written=%u/%u calls=%u write_errno=%d",
+              attempt, method, details.opened ? 1 : 0, details.openError,
+              (unsigned)details.written, (unsigned)expectedLength,
+              details.writeCalls, details.writeError);
+    LOG_ERROR("[DIAG] PENDING_IO_STAGE attempt=%d flush=%d errno=%d fsync=%d errno=%d close=%d errno=%d",
+              attempt, details.flushResult, details.flushError,
+              details.syncResult, details.syncError,
+              details.closeResult, details.closeError);
+}
+
+bool removePendingTempFile(const String& path, const char* phase)
+{
+    errno = 0;
+    if (remove(path.c_str()) == 0) return true;
+    const int removeError = errno;
+    if (removeError == ENOENT) return true;
+    LOG_ERROR("[DIAG] PENDING_TEMP_REMOVE_FAIL phase=%s errno=%d path=%s",
+              phase, removeError, path.c_str());
+    return false;
+}
 
 PendingVerifyDetails verifyPendingFile(const String& path,
                                        const uint8_t* expected,
@@ -57,6 +119,9 @@ PendingVerifyDetails verifyPendingFile(const String& path,
 {
     PendingVerifyDetails details;
     details.memoryCrc = pendingCrc32(expected, expectedLength);
+    const size_t memoryFirst512Length = expectedLength < PENDING_DIRECT_SECTOR_BYTES
+        ? expectedLength : PENDING_DIRECT_SECTOR_BYTES;
+    details.memoryFirst512Crc = pendingCrc32(expected, memoryFirst512Length);
     errno = 0;
     FILE* file = fopen(path.c_str(), "rb");
     if (file == nullptr) {
@@ -65,15 +130,31 @@ PendingVerifyDetails verifyPendingFile(const String& path,
     }
 
     uint32_t fileCrc = 0xFFFFFFFFUL;
+    uint32_t fileFirst512Crc = 0xFFFFFFFFUL;
     uint8_t buffer[128];
     while (true) {
         const size_t got = fread(buffer, 1, sizeof(buffer), file);
         if (got == 0) break;
         fileCrc = pendingCrc32Update(fileCrc, buffer, got);
+        if (details.fileSize < PENDING_DIRECT_SECTOR_BYTES) {
+            const size_t first512Remaining =
+                PENDING_DIRECT_SECTOR_BYTES - details.fileSize;
+            const size_t first512Bytes = got < first512Remaining
+                ? got : first512Remaining;
+            fileFirst512Crc = pendingCrc32Update(
+                fileFirst512Crc, buffer, first512Bytes);
+        }
         for (size_t index = 0; index < got; ++index) {
             const size_t absolute = details.fileSize + index;
+            if (absolute < PENDING_DIAG_PREFIX_BYTES) {
+                details.filePrefix[absolute] = buffer[index];
+                details.filePrefixLength = absolute + 1;
+            }
             if (absolute < 128U && buffer[index] == 0U) {
                 ++details.zeroCountFirst128;
+            }
+            if (absolute < PENDING_DIRECT_SECTOR_BYTES && buffer[index] == 0U) {
+                ++details.zeroCountFirst512;
             }
             if (details.mismatchOffset == static_cast<size_t>(-1) &&
                 (absolute >= expectedLength || buffer[index] != expected[absolute])) {
@@ -88,6 +169,7 @@ PendingVerifyDetails verifyPendingFile(const String& path,
     details.readError = ferror(file) != 0 ? errno : 0;
     fclose(file);
     details.fileCrc = fileCrc ^ 0xFFFFFFFFUL;
+    details.fileFirst512Crc = fileFirst512Crc ^ 0xFFFFFFFFUL;
 
     if (details.mismatchOffset == static_cast<size_t>(-1) &&
         details.fileSize < expectedLength) {
@@ -103,59 +185,76 @@ PendingVerifyDetails verifyPendingFile(const String& path,
 }
 
 bool writePendingStdio(const String& path, const uint8_t* data, size_t length,
-                       size_t& written, int& operationError)
+                       PendingWriteDetails& details)
 {
-    written = 0;
-    operationError = 0;
     errno = 0;
     FILE* file = fopen(path.c_str(), "wb");
     if (file == nullptr) {
-        operationError = errno;
+        details.openError = errno;
         return false;
     }
-    written = fwrite(data, 1, length, file);
-    const bool writeOk = written == length && ferror(file) == 0;
+    details.opened = true;
+    ++details.writeCalls;
     errno = 0;
-    const bool flushOk = writeOk && fflush(file) == 0;
-    if (!flushOk && errno != 0) operationError = errno;
+    details.written = fwrite(data, 1, length, file);
+    const bool writeOk = details.written == length && ferror(file) == 0;
+    if (!writeOk) details.writeError = errno;
+
+    if (writeOk) {
+        errno = 0;
+        details.flushResult = fflush(file);
+        if (details.flushResult != 0) details.flushError = errno;
+    }
+    if (details.flushResult == 0) {
+        errno = 0;
+        const int descriptor = fileno(file);
+        details.syncResult = descriptor >= 0 ? fsync(descriptor) : -1;
+        if (details.syncResult != 0) details.syncError = errno;
+    }
     errno = 0;
-    const bool syncOk = flushOk && fsync(fileno(file)) == 0;
-    if (!syncOk && errno != 0) operationError = errno;
-    errno = 0;
-    const bool closeOk = fclose(file) == 0;
-    if (!closeOk && errno != 0) operationError = errno;
-    return writeOk && flushOk && syncOk && closeOk;
+    details.closeResult = fclose(file);
+    if (details.closeResult != 0) details.closeError = errno;
+    return writeOk && details.flushResult == 0 &&
+           details.syncResult == 0 && details.closeResult == 0;
 }
 
 bool writePendingPosix(const String& path, const uint8_t* data, size_t length,
-                       size_t& written, int& operationError)
+                       PendingWriteDetails& details)
 {
-    written = 0;
-    operationError = 0;
     errno = 0;
-    const int descriptor = open(path.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0666);
+    const int descriptor = open(
+        path.c_str(), O_WRONLY | O_CREAT | O_EXCL, 0666);
     if (descriptor < 0) {
-        operationError = errno;
+        details.openError = errno;
         return false;
     }
-    while (written < length) {
+    details.opened = true;
+    while (details.written < length) {
+        const size_t remaining = length - details.written;
+        const size_t request = remaining < PENDING_POSIX_CHUNK_BYTES
+            ? remaining : PENDING_POSIX_CHUNK_BYTES;
         errno = 0;
-        const ssize_t result = write(descriptor, data + written, length - written);
+        ++details.writeCalls;
+        const ssize_t result = write(
+            descriptor, data + details.written, request);
         if (result > 0) {
-            written += static_cast<size_t>(result);
+            details.written += static_cast<size_t>(result);
             continue;
         }
         if (result < 0 && errno == EINTR) continue;
-        operationError = errno;
+        details.writeError = errno;
         break;
     }
+    if (details.written == length) {
+        errno = 0;
+        details.syncResult = fsync(descriptor);
+        if (details.syncResult != 0) details.syncError = errno;
+    }
     errno = 0;
-    const bool syncOk = written == length && fsync(descriptor) == 0;
-    if (!syncOk && operationError == 0) operationError = errno;
-    errno = 0;
-    const bool closeOk = close(descriptor) == 0;
-    if (!closeOk && operationError == 0) operationError = errno;
-    return written == length && syncOk && closeOk;
+    details.closeResult = close(descriptor);
+    if (details.closeResult != 0) details.closeError = errno;
+    return details.written == length && details.syncResult == 0 &&
+           details.closeResult == 0;
 }
 
 } // namespace
@@ -332,71 +431,104 @@ bool filesysManager::savePendingPacket(const AllProcessedDataPacket* data, const
             return false;
         }
 
-        // Write and verify a temporary file before exposing the final .pkt.
-        // A verification failure gets one independent POSIX rewrite; neither
-        // attempt can overwrite an already-existing final packet.
-        String tempPath = path + ".tmp";
+        // Keep the first failed file allocated while the second path is
+        // written. The POSIX fallback uses sub-sector chunks so that FatFs
+        // assembles the 512-byte sector in its own file cache.
+        String tempPath1 = path + ".tmp1";
+        String tempPath2 = path + ".tmp2";
+        const bool temp1Ready = removePendingTempFile(tempPath1, "startup");
+        const bool temp2Ready = removePendingTempFile(tempPath2, "startup");
+        if (!temp1Ready || !temp2Ready) return false;
+
         bool verified = false;
         bool zeroPrefixObserved = false;
+        int verifiedAttempt = 0;
+        String verifiedTempPath;
         for (int attempt = 1; attempt <= 2 && !verified; ++attempt) {
-            remove(tempPath.c_str());
-            size_t written = 0;
-            int operationError = 0;
+            const String& tempPath = attempt == 1 ? tempPath1 : tempPath2;
+            PendingWriteDetails writeDetails;
             const bool writeOk = attempt == 1
                 ? writePendingStdio(
                     tempPath,
                     reinterpret_cast<const uint8_t*>(packet.c_str()),
-                    packet.length(), written, operationError)
+                    packet.length(), writeDetails)
                 : writePendingPosix(
                     tempPath,
                     reinterpret_cast<const uint8_t*>(packet.c_str()),
-                    packet.length(), written, operationError);
-            const char* method = attempt == 1 ? "stdio" : "posix";
+                    packet.length(), writeDetails);
+            const char* method = attempt == 1 ? "stdio" : "posix_chunked";
             if (!writeOk) {
-                LOG_ERROR("[DIAG] PENDING_WRITE_FAIL attempt=%d method=%s stage=commit path=%s bytes=%u written=%u errno=%d free=%u largest=%u stack=%u",
-                          attempt, method, path.c_str(),
-                          (unsigned)packet.length(), (unsigned)written,
-                          operationError, ESP.getFreeHeap(),
-                          ESP.getMaxAllocHeap(),
-                          (unsigned)uxTaskGetStackHighWaterMark(nullptr));
-                remove(tempPath.c_str());
-                if (attempt == 1) vTaskDelay(pdMS_TO_TICKS(20));
-                continue;
+                LOG_ERROR("[DIAG] PENDING_WRITE_FAIL attempt=%d method=%s stage=commit bytes=%u temp=%s",
+                          attempt, method, (unsigned)packet.length(),
+                          tempPath.c_str());
+                logPendingWriteDetails(
+                    attempt, method, writeDetails, packet.length());
+            } else {
+                const PendingVerifyDetails details = verifyPendingFile(
+                    tempPath,
+                    reinterpret_cast<const uint8_t*>(packet.c_str()),
+                    packet.length());
+                const size_t inspectedPrefix = packet.length() < 128U
+                    ? packet.length() : 128U;
+                if (inspectedPrefix > 0 &&
+                    details.fileSize >= inspectedPrefix &&
+                    details.zeroCountFirst128 == inspectedPrefix) {
+                    zeroPrefixObserved = true;
+                }
+                if (details.ok) {
+                    verified = true;
+                    verifiedAttempt = attempt;
+                    verifiedTempPath = tempPath;
+                    LOG_INFO("[DIAG] PENDING_WRITE_VERIFIED attempt=%d method=%s bytes=%u crc32=%08X",
+                             attempt, method, (unsigned)details.fileSize,
+                             (unsigned)details.fileCrc);
+                    break;
+                }
+
+                const unsigned mismatch =
+                    details.mismatchOffset == static_cast<size_t>(-1)
+                    ? 0xFFFFFFFFU
+                    : static_cast<unsigned>(details.mismatchOffset);
+                char memoryPrefix[PENDING_DIAG_PREFIX_BYTES * 2 + 1];
+                char filePrefix[PENDING_DIAG_PREFIX_BYTES * 2 + 1];
+                formatPendingHexPrefix(
+                    reinterpret_cast<const uint8_t*>(packet.c_str()),
+                    packet.length(), memoryPrefix);
+                formatPendingHexPrefix(
+                    details.filePrefix, details.filePrefixLength, filePrefix);
+                LOG_ERROR("[DIAG] PENDING_VERIFY_FAIL attempt=%d method=%s expected=%u file=%u mismatch=%u expected_byte=%d actual_byte=%d",
+                          attempt, method, (unsigned)packet.length(),
+                          (unsigned)details.fileSize, mismatch,
+                          details.expectedByte, details.actualByte);
+                LOG_ERROR("[DIAG] PENDING_VERIFY_CRC attempt=%d memory=%08X file=%08X first512_memory=%08X first512_file=%08X",
+                          attempt, (unsigned)details.memoryCrc,
+                          (unsigned)details.fileCrc,
+                          (unsigned)details.memoryFirst512Crc,
+                          (unsigned)details.fileFirst512Crc);
+                LOG_ERROR("[DIAG] PENDING_VERIFY_ZERO attempt=%d zero_first128=%u zero_first512=%u open_errno=%d read_errno=%d",
+                          attempt, (unsigned)details.zeroCountFirst128,
+                          (unsigned)details.zeroCountFirst512,
+                          details.openError, details.readError);
+                LOG_ERROR("[DIAG] PENDING_VERIFY_HEAD attempt=%d source=memory hex=%s",
+                          attempt, memoryPrefix);
+                LOG_ERROR("[DIAG] PENDING_VERIFY_HEAD attempt=%d source=file hex=%s",
+                          attempt, filePrefix);
+                LOG_ERROR("[DIAG] PENDING_VERIFY_PATH attempt=%d temp=%s",
+                          attempt, tempPath.c_str());
+                logPendingWriteDetails(
+                    attempt, method, writeDetails, packet.length());
             }
 
-            const PendingVerifyDetails details = verifyPendingFile(
-                tempPath,
-                reinterpret_cast<const uint8_t*>(packet.c_str()),
-                packet.length());
-            const size_t inspectedPrefix = packet.length() < 128U
-                ? packet.length() : 128U;
-            if (inspectedPrefix > 0 && details.fileSize >= inspectedPrefix &&
-                details.zeroCountFirst128 == inspectedPrefix) {
-                zeroPrefixObserved = true;
+            if (attempt == 1) {
+                LOG_WARNING("[DIAG] PENDING_WRITE_FALLBACK from=%s to=%s chunk=%u",
+                            tempPath1.c_str(), tempPath2.c_str(),
+                            (unsigned)PENDING_POSIX_CHUNK_BYTES);
+                vTaskDelay(pdMS_TO_TICKS(20));
             }
-            if (details.ok) {
-                verified = true;
-                LOG_INFO("[DIAG] PENDING_WRITE_VERIFIED attempt=%d method=%s bytes=%u crc32=%08X",
-                         attempt, method, (unsigned)details.fileSize,
-                         (unsigned)details.fileCrc);
-                break;
-            }
-
-            const unsigned mismatch = details.mismatchOffset == static_cast<size_t>(-1)
-                ? 0xFFFFFFFFU : static_cast<unsigned>(details.mismatchOffset);
-            LOG_ERROR("[DIAG] PENDING_WRITE_VERIFY_FAIL attempt=%d method=%s path=%s expected_size=%u file_size=%u mismatch_offset=%u expected_byte=%d actual_byte=%d memory_crc32=%08X file_crc32=%08X zero_first128=%u open_errno=%d read_errno=%d free=%u largest=%u stack=%u",
-                      attempt, method, path.c_str(),
-                      (unsigned)packet.length(), (unsigned)details.fileSize,
-                      mismatch, details.expectedByte, details.actualByte,
-                      (unsigned)details.memoryCrc, (unsigned)details.fileCrc,
-                      (unsigned)details.zeroCountFirst128,
-                      details.openError, details.readError,
-                      ESP.getFreeHeap(), ESP.getMaxAllocHeap(),
-                      (unsigned)uxTaskGetStackHighWaterMark(nullptr));
-            remove(tempPath.c_str());
-            if (attempt == 1) vTaskDelay(pdMS_TO_TICKS(20));
         }
         if (!verified) {
+            removePendingTempFile(tempPath1, "both_failed");
+            removePendingTempFile(tempPath2, "both_failed");
             const uint32_t failures =
                 pendingWriteFailureIncidents.fetch_add(
                     1, std::memory_order_acq_rel) + 1;
@@ -421,20 +553,26 @@ bool filesysManager::savePendingPacket(const AllProcessedDataPacket* data, const
         FILE* existing = fopen(path.c_str(), "rb");
         if (existing != nullptr) {
             fclose(existing);
-            remove(tempPath.c_str());
+            removePendingTempFile(tempPath1, "destination_exists");
+            removePendingTempFile(tempPath2, "destination_exists");
             LOG_WARNING("[DIAG] PENDING_WRITE_FAIL stage=destination_exists path=%s",
                         path.c_str());
             return false;
         }
 
         errno = 0;
-        if (rename(tempPath.c_str(), path.c_str()) != 0) {
+        if (rename(verifiedTempPath.c_str(), path.c_str()) != 0) {
             const int renameError = errno;
-            remove(tempPath.c_str());
+            removePendingTempFile(tempPath1, "rename_failed");
+            removePendingTempFile(tempPath2, "rename_failed");
             LOG_ERROR("[DIAG] PENDING_WRITE_FAIL stage=rename path=%s temp=%s errno=%d",
-                      path.c_str(), tempPath.c_str(), renameError);
+                      path.c_str(), verifiedTempPath.c_str(), renameError);
             return false;
         }
+
+        const String& unusedTempPath = verifiedAttempt == 1
+            ? tempPath2 : tempPath1;
+        removePendingTempFile(unusedTempPath, "post_success");
 
         LOG_INFO("Saved and verified pending HJ212 packet: %s", path.c_str());
         return true;

@@ -1,6 +1,6 @@
 # TSP Firmware 从这里开始
 
-最后更新：2026-09-10
+最后更新：2026-09-14
 
 本文件是当前固件源码、构建和发布入口。详细版本关系见
 [固件版本与目录说明](FIRMWARE_VERSION_LOCATIONS.md)，仓库整体说明见
@@ -17,16 +17,19 @@ AI辅助开发应同时读取：
 
 | Variant | 版本 | 正式源码 | 构建输入 | 源码指纹 |
 |---|---:|---|---:|---|
-| standard | 2.0.22 | `firmware/standard/TSP` | 88 | `84CD14958E077AE1FE4294C4C566F8CF39FE89952C5CB929301AF2CF4C553213` |
-| certified | 2.0.22.1 | `firmware/certified/TSP` | 89 | `540EE286955E50B552882A8F7639E858DBC724DFECFC9B0571E0AC5D0A128779` |
+| standard | 2.0.23 | `firmware/standard/TSP` | 88 | `A97AA91FD298EAA31D3ED2051C1A19FAEB210A98284533267508A947D644C3E9` |
+| certified | 2.0.23.1 | `firmware/certified/TSP` | 89 | `090B6AD564ED66941D9DA60EF1ABB1626113E5837A9A77C736A23CAC4A3CAA6B` |
 
-两套源码均已完成迁移构建验证，结论为：
+两套2.0.23系列源码均已编译通过，状态为
+`compiled-not-hardware-verified`。本次只加固pending完整HJ212报文的SD临时写入：首次
+使用`.tmp1`执行stdio写入和重开校验；失败后保留该文件，改用独立`.tmp2`和256字节
+POSIX分块写入，再重开校验。只有校验通过的临时文件才会重命名为最终`.pkt`；原有CRC、
+逐字节校验、rebuild marker和raw重建机制均保留。
 
-`MIGRATION BUILD VERIFIED - EXPECTED NONDETERMINISTIC METADATA ONLY`
+当前构建产物位于：
 
-重新构建的应用BIN与2026-09-07历史BIN不是bit-identical；已确认差异仅来自ESP32
-Core 3.3.7编译日期/时间、ELF摘要、镜像checksum和validation hash等非确定性元数据，
-不存在无法解释的业务payload差异。
+- standard：`firmware_workspace/build/firmware-2.0.23-pending-sector-write-hardening-20260914`
+- certified：`firmware_workspace/build/firmware-2.0.23.1-certified-pending-sector-write-hardening-20260914`
 
 迁移前的两个 `tmp` 历史源码副本已退出主工作树；需要追溯时使用仓库外历史归档和
 迁移安全备份。当前开发与构建只使用上表中的 `firmware/` 正式源码。
@@ -50,7 +53,7 @@ flash-verified.cmd       受保护烧录入口，必须明确授权后使用
 `firmware_workspace/releases/`是正式发布资产；
 `firmware_workspace/scripts/`保存正式构建、验证和烧录逻辑。
 
-## 当前正式 Release
+## 最新已发布 Release
 
 | Variant | Release | 状态 |
 |---|---|---|
@@ -80,6 +83,8 @@ flash-verified.cmd       受保护烧录入口，必须明确授权后使用
 
 ## 当前版本文档
 
+- [Firmware 2.0.23 变更记录](docs/changelog/CHANGELOG_2.0.23.md)
+- [Firmware 2.0.23.1 变更记录](docs/changelog/CHANGELOG_2.0.23.1.md)
 - [Firmware 2.0.22 变更记录](docs/changelog/CHANGELOG_2.0.22.md)
 - [Firmware 2.0.22.1 变更记录](docs/changelog/CHANGELOG_2.0.22.1.md)
 - [LCD传感器配置协议](docs/protocols/lcd/LCD_SENSOR_CONFIG_PROTOCOL.md)
