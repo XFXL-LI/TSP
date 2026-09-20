@@ -170,6 +170,18 @@ DataPacket *Pm10Collect::collect()
     return packet;
 }
 
+bool Pm10Collect::readRegistersForBatch(uint8_t slaveId, uint16_t startAddr,
+                                        uint16_t count, uint16_t *destBuffer,
+                                        uint8_t maxAttempts,
+                                        uint32_t responseTimeoutMs,
+                                        uint32_t retryDelayMs)
+{
+    return _mb_manager != nullptr &&
+           _mb_manager->readModbusRegs(slaveId, startAddr, count, destBuffer,
+                                       maxAttempts, responseTimeoutMs,
+                                       retryDelayMs);
+}
+
 void Pm10Collect::setModbusConfig(uint8_t slave, uint16_t reg, uint8_t count, float factor)
 {
     _slaveId = slave;

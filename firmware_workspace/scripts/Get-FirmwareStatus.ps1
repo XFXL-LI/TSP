@@ -111,5 +111,5 @@ else {
 }
 
 Write-Host ''
-Write-Host 'Constraints: hourly statistics unchanged; HJ212 gap 3000ms; SHT30 separate; DEBUG enabled.'
+Write-Host 'Constraints: 120s realtime batches; 70s air-path pump; hourly statistics use every realtime batch; HJ212 gap 3000ms; SHT30 separate; DEBUG enabled.'
 Write-Host 'Flash guard: -Port and exact -ConfirmFlash FLASH are mandatory.'

@@ -2,6 +2,7 @@
 #include <freertos/FreeRTOS.h>
 #include <freertos/queue.h>
 #include <freertos/task.h>
+#include <freertos/timers.h>
 #include "esp_task_wdt.h"
 #include <SoftwareSerial.h>
 #include <time.h>
@@ -16,6 +17,7 @@
 #include "../ota/remote_ota_manager.h"
 #include "../../module/Serial/SerialManager.h"
 #include "../../module/gas/GasCalibrationManager.h"
+#include "../../module/gas/GasUnitConverter.h"
 #include "../call/base_call.h"
 #include "../../module/json/config_json.h"
 #include "../../module/file/file_storage.h"
@@ -37,6 +39,47 @@
 
 #define PUMP1_PIN 41
 #define ALARM_PIN 40    // 12v电控制开关
+
+static constexpr uint32_t REALTIME_COLLECTION_PERIOD_MS = 120UL * 1000UL;
+static constexpr uint32_t NON_AIR_COLLECTION_OFFSET_MS = 45UL * 1000UL;
+static constexpr uint32_t PUMP_RUN_TIME_MS = 70UL * 1000UL;
+static constexpr int DISPLAY_ROTATION_WINDOW_SECONDS = 60;
+
+static bool collectionUsesPump(const COLLECTMAP &collectMap)
+{
+    for (const auto &item : collectMap)
+    {
+        const String &id = item.first;
+        if (id == "a34005" || id == "a34004" || id == "a34002" ||
+            id == "a34001" || GasUnitConverter::isGasSensor(id))
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
+static bool millisecondDeadlineReached(uint32_t targetMs)
+{
+    return static_cast<int32_t>(millis() - targetMs) >= 0;
+}
+
+static void delayUntilMilliseconds(uint32_t targetMs)
+{
+    while (!millisecondDeadlineReached(targetMs))
+    {
+        const uint32_t remaining = targetMs - millis();
+        TickType_t ticks = pdMS_TO_TICKS(remaining);
+        if (ticks == 0) ticks = 1;
+        vTaskDelay(ticks);
+    }
+}
+
+static void pumpCutoffCallback(TimerHandle_t timer)
+{
+    (void)timer;
+    digitalWrite(PUMP1_PIN, LOW);
+}
 
 // Firmware 2.0.4 (2026-07-31):
 // Yinerda M100M-B2 requires packets to be sent one at a time. Keep the
@@ -429,22 +472,51 @@ static void CollectTask(void *pvParameters)
 
     collectorManager.begin(collectMap);
 
-    SYSTEMCONFIG sysCfg = ConfigManager::getInstance().getSystem();
-    int collectTime = sysCfg.collect_time > 0 ? sysCfg.collect_time : 60; // 默认 60s 采集时间
-
     TickType_t xLastWakeTime = xTaskGetTickCount();
-    const TickType_t xFrequency = pdMS_TO_TICKS(collectTime * 1000);
+    const TickType_t xFrequency = pdMS_TO_TICKS(REALTIME_COLLECTION_PERIOD_MS);
 
     pinMode(PUMP1_PIN, OUTPUT);
+    digitalWrite(PUMP1_PIN, LOW);
+    TimerHandle_t pumpCutoffTimer = xTimerCreate(
+        "PumpCutoff", pdMS_TO_TICKS(PUMP_RUN_TIME_MS), pdFALSE,
+        nullptr, pumpCutoffCallback);
+    if (pumpCutoffTimer == nullptr)
+    {
+        LOG_ERROR("Failed to create pump cutoff timer");
+    }
     while (true)
     {
+        const uint32_t cycleStartedMs = millis();
+        const bool usePump = collectionUsesPump(collectMap);
         {
             RemoteOtaManager::BusinessActivityGuard businessActivity;
-            digitalWrite(PUMP1_PIN, HIGH);
-            vTaskDelay(pdMS_TO_TICKS(collectTime * 1000 / 3));
+            if (usePump)
+            {
+                if (pumpCutoffTimer == nullptr)
+                {
+                    LOG_ERROR("Pump remains off because cutoff timer is unavailable");
+                }
+                else
+                {
+                    digitalWrite(PUMP1_PIN, HIGH);
+                    if (xTimerStart(pumpCutoffTimer,
+                                    pdMS_TO_TICKS(100)) != pdPASS)
+                    {
+                        digitalWrite(PUMP1_PIN, LOW);
+                        LOG_ERROR("Pump stopped because cutoff timer could not be armed");
+                    }
+                }
+            }
+            delayUntilMilliseconds(cycleStartedMs +
+                                   NON_AIR_COLLECTION_OFFSET_MS);
             collectorManager.poll();
+            delayUntilMilliseconds(cycleStartedMs + PUMP_RUN_TIME_MS);
             SerialManager::getInstance().checkAndReportOverflow(SERIAL_485);
             digitalWrite(PUMP1_PIN, LOW);
+            if (pumpCutoffTimer != nullptr)
+            {
+                xTimerStop(pumpCutoffTimer, pdMS_TO_TICKS(100));
+            }
         }
         // vTaskDelayUntil advances xLastWakeTime itself. Do not reset it to
         // the delayed actual wake tick, otherwise scheduling latency accumulates.
@@ -1128,9 +1200,6 @@ static void LedPrintTask(void *pvParameters)
 
     QueueHandle_t LedPrintTaskQueue = EventBus::getInstance().createReceiverQueue(5, "LED");
     EventBus::getInstance().subscribe(EventID::PROCESSED_DATA_COLLECTED, LedPrintTaskQueue);
-    SYSTEMCONFIG sysCfg = ConfigManager::getInstance().getSystem();
-    int collectTime = sysCfg.collect_time > 0 ? sysCfg.collect_time : 60; // 默认 60s 采集时间
-
     COLLECTMAP collectMap = ConfigManager::getInstance().getCollectConfigs();
 
     EventMsg msg;
@@ -1185,7 +1254,9 @@ static void LedPrintTask(void *pvParameters)
                     // display cycle or remain queued and retain heap.
                     if (allData->dataTime == DataTime::REAL_DATA)
                     {
-                        ledManager.updateDisplay(allData, collectTime, collectMap);
+                        ledManager.updateDisplay(allData,
+                                                 DISPLAY_ROTATION_WINDOW_SECONDS,
+                                                 collectMap);
                     }
                     else
                     {

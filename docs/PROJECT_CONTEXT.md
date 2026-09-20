@@ -20,8 +20,8 @@ a delay. Runtime work is performed by FreeRTOS tasks and event queues.
 
 | Variant | Canonical source | Version | Build inputs | Source fingerprint |
 | --- | --- | ---: | ---: | --- |
-| standard | `firmware/standard/TSP` | 2.0.23 | 88 | `A97AA91FD298EAA31D3ED2051C1A19FAEB210A98284533267508A947D644C3E9` |
-| certified | `firmware/certified/TSP` | 2.0.23.1 | 89 | `090B6AD564ED66941D9DA60EF1ABB1626113E5837A9A77C736A23CAC4A3CAA6B` |
+| standard | `firmware/standard/TSP` | 2.1.0 | 88 | `8D4DE1EA9A501390D4DF906B4B75988C2DAB424594704B9E648074B9E1F7991F` |
+| certified | `firmware/certified/TSP` | 2.1.0.1 | 89 | `7612C96BE98E74AC6182F8F9D96E3C4BE836DDACC9F87001418DDBA5A06777F0` |
 
 The certified variant adds `GasSpecificPolicy.h` and applies a 500 ppb upper
 cap to O3, NO2, and SO2. CO is not capped. Its certified calibration profile is
@@ -154,22 +154,37 @@ event queues discard stale entries and emit an `EVENT_DROP` diagnostic.
 
 Each serial interface has a mutex. Additional synchronization protects SD,
 configuration/setup/system state, data statistics, calibration state, log
-output, and Modbus request/response operation. Scheduling is delay/time based;
-there is no current FreeRTOS software-timer layer.
+output, and Modbus request/response operation. Collection scheduling is
+delay/time based; a one-shot FreeRTOS timer independently cuts the air-path
+pump off after 70 seconds.
 
 ## Sensor Data Flow
 
 1. `configManager` loads the sensor map and catalog from FFat.
-2. `collectorManager` polls the configured collector set.
+2. `collectorManager` stages non-air sensors at 45 seconds, then reads
+   particulate and gas sensors from 60 seconds while the pump is still on.
 3. A reference-counted `AllDataPacket` is published as
    `RAW_DATA_COLLECTED`.
 4. `dataManager` emits real-time processed data immediately and updates
    statistical windows.
 5. Processed subscribers independently feed storage, HJ212, LED, and alarms.
 
-The pump is enabled for the first third of a collection interval. Gas Modbus
-transactions enforce at least 200 ms between the end of one gas-module request
-and the start of the next, including calibration and retry paths.
+Real-time batches start every 120 seconds. If any particulate or gas factor is
+enabled, the pump runs from second 0 through second 70. Other configured
+sensors are read from second 45; at second 60 the particulate device is queried
+once with function 03, start register `0x0010`, count 8, followed by enabled gas
+modules. The pump cutoff remains independent of slow Modbus retries. Gas Modbus
+transactions use a 500 ms operational interval between the end of one request
+and the start of the next, including calibration and retry paths. A successful
+`0x6000/0x6001` response whose ready bit is clear is rechecked exactly once
+after that shared interval.
+
+The particulate response contains PM1, PM2.5, PM10, and TSP. Only enabled
+logical factors are emitted; when all particulate factors are disabled, no
+particulate query is sent. When all air-path factors are disabled, the pump is
+not started. `collect_time` and `upload_interval` remain seconds but are fixed
+to 120 at runtime and in configuration responses; an older FFat value is not
+automatically rewritten merely by booting.
 
 Gas status mapping currently treats not-ready or sensor-fault conditions as
 `D/SENSOR_FAULT`, high-concentration or over-range conditions as
@@ -177,9 +192,10 @@ Gas status mapping currently treats not-ready or sensor-fault conditions as
 uses calibration status and is excluded from local statistics.
 
 Statistics close an hour before accepting the first sample of the next hour,
-and the day is finalized after the final hour. Only every third minute is used
-in hour statistics. This hour-statistics behavior is a frozen compatibility
-constraint.
+and the day is finalized after the final hour. Every valid 120-second real-time
+batch contributes to both the active 10-minute and hour windows; invalid values
+are excluded per factor while preserving their status if a window has no valid
+sample.
 
 ## Storage Flow
 
@@ -195,7 +211,7 @@ Measurement records use:
 - `/sdcard/YYYYMMDD/day/day.dat`
 
 SD operations are serialized by a mutex. HJ212 pending packets are stored under
-`/sdcard/pending/<type>/<timestamp>.pkt`. In 2.0.23/2.0.23.1, the first write
+`/sdcard/pending/<type>/<timestamp>.pkt`. In 2.1.0/2.1.0.1, the first write
 uses a `.tmp1` stdio path and reopens it for CRC and byte-level verification.
 If that fails, `.tmp1` remains allocated while an independent `.tmp2` POSIX
 path writes in 256-byte chunks and is reopened for the same verification. Only
@@ -303,12 +319,13 @@ Both packages remain `packaged-not-hardware-verified`. A Git tag identifies
 the canonical repository state after migration; binary provenance is defined by
 the committed release metadata and recorded source fingerprint.
 
-The 2.0.23 standard and 2.0.23.1 certified pending-write-hardening builds have
-compiled successfully but are not yet packaged or hardware verified.
+The 2.1.0 standard and 2.1.0.1 certified staged-collection builds have compiled
+successfully but are not yet packaged or hardware verified.
 
 ## Important Constraints
 
-- Do not change the hour-statistics algorithm.
+- Keep the 120-second batch and 70-second pump schedule synchronized between
+  variants unless a future product-specific schedule is explicitly approved.
 - Keep HJ212 packet spacing at 3000 ms.
 - Keep the default HJ212 ACK timeout at 5000 ms and retry count at 3 unless
   explicitly requested.

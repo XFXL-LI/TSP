@@ -1,4 +1,5 @@
 #include "GasModbusAccess.h"
+#include "GasUnitConverter.h"
 #include "../log/log_manager.h"
 #include <Arduino.h>
 
@@ -67,6 +68,42 @@ bool readRegisters(modbus_manager &manager, uint8_t slave, uint16_t address,
         if (ok) return true;
     }
     return false;
+}
+
+bool readStatusAndConcentration(modbus_manager &manager, uint8_t slave,
+                                uint16_t *values, uint8_t maxAttempts,
+                                uint32_t responseTimeoutMs,
+                                const char *sensorId, const char *source)
+{
+    if (values == nullptr) return false;
+    if (!readRegisters(manager, slave, 0x6000, 2, values, maxAttempts,
+                       responseTimeoutMs, source)) {
+        return false;
+    }
+    if ((values[0] & GasUnitConverter::STATUS_READY) != 0U) {
+        return true;
+    }
+
+    const uint16_t firstStatus = values[0];
+    const uint16_t firstConcentration = values[1];
+    uint16_t recheck[2] = {0, 0};
+    LOG_INFO("[DIAG] GAS_STATUS_RECHECK id=%s slave=%u first_status=0x%04X first_raw=%u wait_ms=%u",
+             sensorId != nullptr ? sensorId : "unknown", (unsigned)slave,
+             firstStatus, firstConcentration,
+             (unsigned)MIN_QUERY_INTERVAL_MS);
+
+    const bool recheckOk = readRegisters(
+        manager, slave, 0x6000, 2, recheck, 1, responseTimeoutMs, source);
+    if (recheckOk) {
+        values[0] = recheck[0];
+        values[1] = recheck[1];
+    }
+    const bool ready = recheckOk &&
+        (recheck[0] & GasUnitConverter::STATUS_READY) != 0U;
+    LOG_INFO("[DIAG] GAS_STATUS_RECHECK_RESULT id=%s slave=%u second_ok=%d second_status=0x%04X second_raw=%u recovered_ready=%d",
+             sensorId != nullptr ? sensorId : "unknown", (unsigned)slave,
+             recheckOk ? 1 : 0, recheck[0], recheck[1], ready ? 1 : 0);
+    return true;
 }
 
 bool writeRegisters(modbus_manager &manager, uint8_t slave, uint16_t address,

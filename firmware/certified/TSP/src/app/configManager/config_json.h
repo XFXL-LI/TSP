@@ -3,8 +3,8 @@
 #define CONFIGJSON_H
 
 const char *CONFIG_JSON = R"({
-    "collect_time": 60,
-    "upload_interval": 60,
+    "collect_time": 120,
+    "upload_interval": 120,
     "dtu_server": "39.101.67.255:1883"
 })";
 

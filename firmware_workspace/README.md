@@ -1,6 +1,6 @@
 # TSP ESP32-S3 固件工作区
 
-最后更新：2026-09-14
+最后更新：2026-09-20
 
 本目录是固件状态查看、构建、Release验证和受保护烧录入口。正式业务源码已迁移到
 仓库根目录的 `firmware/`，不再从 `tmp/` 或根目录旧 `TSP/` 构建。
@@ -9,14 +9,14 @@
 
 | Variant | 版本 | 源码路径 | 构建输入 | 源码指纹 |
 |---|---:|---|---:|---|
-| standard | 2.0.23 | `../firmware/standard/TSP` | 88 | `A97AA91FD298EAA31D3ED2051C1A19FAEB210A98284533267508A947D644C3E9` |
-| certified | 2.0.23.1 | `../firmware/certified/TSP` | 89 | `090B6AD564ED66941D9DA60EF1ABB1626113E5837A9A77C736A23CAC4A3CAA6B` |
+| standard | 2.1.0 | `../firmware/standard/TSP` | 88 | `8D4DE1EA9A501390D4DF906B4B75988C2DAB424594704B9E648074B9E1F7991F` |
+| certified | 2.1.0.1 | `../firmware/certified/TSP` | 89 | `7612C96BE98E74AC6182F8F9D96E3C4BE836DDACC9F87001418DDBA5A06777F0` |
 
-两版2.0.23系列pending写入加固构建均已通过，状态为
-`compiled-not-hardware-verified`。构建目录分别为：
+两版2.1.0系列分段采集构建均已通过，状态为
+`compiled-not-hardware-verified`。当前构建目录分别为：
 
-- `build/firmware-2.0.23-pending-sector-write-hardening-20260914`
-- `build/firmware-2.0.23.1-certified-pending-sector-write-hardening-20260914`
+- `build/current-standard`
+- `build/current-certified`
 
 ## 目录职责
 

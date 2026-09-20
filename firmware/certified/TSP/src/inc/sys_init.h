@@ -10,8 +10,8 @@
 #include "../module/log/log_manager.h"
 
 //新版本
-// Firmware 2.0.22.1: certified gas-limited variant based on 2.0.22.
-#define VERSION2 "2.0.23.1"
+// Firmware 2.1.0.1: certified staged sensor collection cycle.
+#define VERSION2 "2.1.0.1"
 
 struct SYSINFO {
     int csq;
@@ -274,8 +274,8 @@ struct ALARMCONFIG {
 
 // 系统主配置
 struct SYSTEMCONFIG {
-    int collect_time = 60;
-    int upload_interval = 60;
+    int collect_time = 120;
+    int upload_interval = 120;
     String dtu_server = "";
 };
 

@@ -1,6 +1,6 @@
 # TSP 固件版本与目录说明
 
-最后更新：2026-09-10
+最后更新：2026-09-16
 
 本文件用于区分“正式实机验证固件”“对应的可编译源码”和“当前开发源码”。
 不要只根据目录名或 `TSP.ino` 文件名判断版本。
@@ -9,8 +9,8 @@
 
 | Variant | 版本 | 当前正式源码 | 构建输入 | 源码指纹 |
 |---|---:|---|---:|---|
-| standard | 2.0.23 | `firmware/standard/TSP` | 88 | `A97AA91FD298EAA31D3ED2051C1A19FAEB210A98284533267508A947D644C3E9` |
-| certified | 2.0.23.1 | `firmware/certified/TSP` | 89 | `090B6AD564ED66941D9DA60EF1ABB1626113E5837A9A77C736A23CAC4A3CAA6B` |
+| standard | 2.1.0 | `firmware/standard/TSP` | 88 | `8D4DE1EA9A501390D4DF906B4B75988C2DAB424594704B9E648074B9E1F7991F` |
+| certified | 2.1.0.1 | `firmware/certified/TSP` | 89 | `7612C96BE98E74AC6182F8F9D96E3C4BE836DDACC9F87001418DDBA5A06777F0` |
 
 当前构建入口为 `firmware_workspace/build-standard.cmd`、
 `firmware_workspace/build-certified.cmd`和兼容standard的
@@ -578,7 +578,7 @@ FFat`/gasCalibrationCertified.json`；不接触2.0.16的`/gasCalibration.json`�
 [Firmware 2.0.22变更记录](docs/changelog/CHANGELOG_2.0.22.md)与
 [Firmware 2.0.22.1变更记录](docs/changelog/CHANGELOG_2.0.22.1.md)。
 
-## Firmware 2.0.23：当前standard正式源码
+## Firmware 2.0.23：上一版standard编译基线
 
 当前正式源码：`firmware/standard/TSP`
 
@@ -595,7 +595,7 @@ FFat`/gasCalibrationCertified.json`；不接触2.0.16的`/gasCalibration.json`�
 marker和raw重建兜底。详细记录见
 [Firmware 2.0.23变更记录](docs/changelog/CHANGELOG_2.0.23.md)。
 
-## Firmware 2.0.23.1：当前certified正式源码
+## Firmware 2.0.23.1：上一版certified编译基线
 
 当前正式源码：`firmware/certified/TSP`
 
@@ -608,6 +608,37 @@ marker和raw重建兜底。详细记录见
 
 2.0.23.1同步2.0.23的公共pending写入加固，认证专用气体封顶和校准策略未修改。详细
 记录见[Firmware 2.0.23.1变更记录](docs/changelog/CHANGELOG_2.0.23.1.md)。
+
+## Firmware 2.1.0：当前standard正式源码
+
+当前正式源码：`firmware/standard/TSP`
+
+- 构建输入：88；
+- 源码指纹：`8D4DE1EA9A501390D4DF906B4B75988C2DAB424594704B9E648074B9E1F7991F`；
+- 应用BIN：683744字节；
+- 应用BIN SHA-256：`F904DF6E3352453CF639478F6EC3791245014600DC88932EAE85528C1A91833C`；
+- 当前构建目录：`firmware_workspace/build/current-standard`；
+- 状态：`compiled-not-hardware-verified`。
+
+2.1.0固定120秒实时批次和70秒气泵运行时间。其他传感器从第45秒读取；颗粒物和气体
+在持续通气60秒后于气泵仍运行的最后10秒内读取。颗粒物使用一次Modbus请求读取四个
+通道；小时统计纳入每一个有效实时批次。详细记录见
+[Firmware 2.1.0变更记录](docs/changelog/CHANGELOG_2.1.0.md)。
+
+## Firmware 2.1.0.1：当前certified正式源码
+
+当前正式源码：`firmware/certified/TSP`
+
+- 构建输入：89；
+- 源码指纹：`7612C96BE98E74AC6182F8F9D96E3C4BE836DDACC9F87001418DDBA5A06777F0`；
+- 应用BIN：684208字节；
+- 应用BIN SHA-256：`D959F8C5CF179C0090BFD4BC002ADF082E30FFD585717730F6136780D9605A39`；
+- 当前构建目录：`firmware_workspace/build/current-certified`；
+- 状态：`compiled-not-hardware-verified`。
+
+2.1.0.1同步2.1.0的公共时序、颗粒物批量读取、配置时间和统计逻辑，同时保留认证版
+O3/NO2/SO2封顶及独立校准策略。详细记录见
+[Firmware 2.1.0.1变更记录](docs/changelog/CHANGELOG_2.1.0.1.md)。
 
 ## 使用规则
 

@@ -19,3 +19,17 @@ history or firmware release changelogs.
   JihuLab remote that must not be pushed without explicit authorization.
 - Introduced `AGENTS.md`, `PROJECT_CONTEXT.md`, `OPEN_ISSUES.md`, and this
   file as the canonical long-term AI knowledge surface.
+
+## 2026-09-16 — Firmware 2.1 staged collection baseline
+
+- Advanced the canonical variants to standard 2.1.0 and certified 2.1.0.1.
+- Fixed real-time batches and both configuration interval fields at 120 seconds.
+- Defined the air path as pump start at second 0, particulate/gas reads from
+  second 60 while the pump remains on, and an independent cutoff at second 70.
+- Moved non-air sensor collection to the second-45 stage.
+- Replaced four independent particulate requests with one function-03 read of
+  eight registers from `0x0010`, while still emitting only enabled factors.
+- Changed hour statistics from every-third-minute sampling to every valid
+  real-time batch; invalid values remain excluded per factor.
+- Preserved the certified-only gas cap and calibration policy as the sole
+  product-specific gas behavior.

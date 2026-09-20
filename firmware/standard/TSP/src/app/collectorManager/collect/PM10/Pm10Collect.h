@@ -34,6 +34,11 @@ public:
     bool gal(int increment, int ratio) override;
     String getID() const override;
     virtual DataPacket* collect() override;
+    bool readRegistersForBatch(uint8_t slaveId, uint16_t startAddr,
+                               uint16_t count, uint16_t* destBuffer,
+                               uint8_t maxAttempts,
+                               uint32_t responseTimeoutMs,
+                               uint32_t retryDelayMs) override;
 
     void setModbusConfig(uint8_t slave, uint16_t reg, uint8_t count, float factor);
     void setFactor(float factor);

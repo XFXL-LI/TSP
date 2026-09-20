@@ -661,7 +661,7 @@ void GasCalibrationManager::tick()
                     // Do not poll 0x6006 immediately after the command ACK.
                     // The first status query follows the normal 1-second
                     // calibration interval (and therefore also exceeds the
-                    // common 200 ms gas-bus minimum).
+                    // common 500 ms gas-bus minimum).
                     _lastStatusAttemptMs = _commandStartedMs;
                     _statusReadFailures = 0;
                     _busWaiting = false;

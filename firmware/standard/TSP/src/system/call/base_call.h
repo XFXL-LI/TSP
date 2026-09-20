@@ -17,6 +17,18 @@ public:
     virtual bool gal(int increment, int ratio) = 0;
     virtual String getID() const = 0;
 
+    // Optional low-level access used when one physical Modbus response
+    // supplies multiple logical factors. Ordinary collectors keep the
+    // default implementation; particulate collectors expose their existing
+    // Modbus instance so the manager can read all four channels once.
+    virtual bool readRegistersForBatch(uint8_t slaveId, uint16_t startAddr,
+                                       uint16_t count, uint16_t* destBuffer,
+                                       uint8_t maxAttempts,
+                                       uint32_t responseTimeoutMs,
+                                       uint32_t retryDelayMs) {
+        return false;
+    }
+
     static std::map<String, BaseCollector*>& getRegistry() {
         static std::map<String, BaseCollector*> _registry;
         return _registry;

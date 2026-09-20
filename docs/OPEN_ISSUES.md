@@ -74,7 +74,7 @@ Description:
 
 The latest published 2.0.22 standard and 2.0.22.1 certified releases are
 packaged and file-level verified, but neither is recorded as hardware verified.
-The current 2.0.23 and 2.0.23.1 source builds are compiled but not yet packaged
+The current 2.1.0 and 2.1.0.1 source builds are compiled but not yet packaged
 or hardware verified.
 
 Evidence:
@@ -92,6 +92,44 @@ Suggested next action:
 Execute and record a controlled hardware qualification matrix for both variants
 without changing the release status until all required checks pass.
 
+## Staged 120-second collection needs hardware timing verification
+
+Status: Needs verification
+
+Priority: High
+
+Area: Sensors, pump, storage, and HJ212
+
+Description:
+
+Versions 2.1.0 and 2.1.0.1 replace the former one-pass collection with a
+120-second batch: pump start at second 0, non-air sensors from second 45,
+particulate and gas reads from second 60, and an independent pump cutoff at
+second 70. The particulate sensor is queried once for all four channels.
+
+Evidence:
+
+Both variants compile successfully. A certified 2.1.0.1 target-device run of
+about 18.5 hours covered 557 batches: the 120-second cadence remained stable,
+all particulate batch reads completed within the deadline, and no material
+batch drift was observed. The log did not include explicit physical
+`PUMP_ON/PUMP_OFF` edges, and standard plus partial-factor configurations have
+not completed the same qualification.
+
+Risk:
+
+The physical 70-second pump high time is not yet directly proven by logs. A
+configuration with only some particulate factors also needs confirmation that
+one physical four-channel read emits only the selected logical factors.
+
+Suggested next action:
+
+Add minimal pump-edge diagnostics and confirm the physical 70-second high time.
+Complete standard and partial-factor tests covering partial PM selection,
+gas-only, non-air-only, repeated module timeouts, network loss and recovery,
+SD records, HJ212 timestamps, and 10-minute/hour boundaries before packaging
+either version.
+
 ## Pending SD write hardening needs a long-run hardware test
 
 Status: Needs verification
@@ -104,30 +142,32 @@ Description:
 
 Six observed pending-write incidents produced correctly sized files whose first
 512 bytes read back as zero while the in-memory HJ212 packet remained valid.
-Versions 2.0.23 and 2.0.23.1 now keep the failed `.tmp1` allocation in place and
+Versions 2.1.0 and 2.1.0.1 keep the failed `.tmp1` allocation in place and
 use an independent `.tmp2` fallback with 256-byte POSIX writes, but this change
-has only passed compilation and static review.
+still needs broader long-run qualification.
 
 Evidence:
 
 The incident logs consistently reported `mismatch_offset=0`, differing memory
-and file CRC values, a zero-filled first sector, and successful rebuild-marker
-and raw-data recovery. The current code records per-stage I/O results and
-separate memory/file prefixes only when a pending write or verification fails.
+and file CRC values, and a zero-filled first sector. In the latest certified
+long run, the stdio `.tmp1` path reproduced that failure, the independent POSIX
+`.tmp2` path verified successfully, and the resulting pending packet was later
+ACKed, delivered, and deleted. This proves the fallback chain for one observed
+failure but does not explain or eliminate the underlying first-write defect.
 
 Risk:
 
-Without a target-device run, it is not yet proven that the independent path and
-sub-sector fallback prevent the repeated first-sector corruption on the field
-SD/FatFs stack. Existing recovery remains safe, but another failure could still
-require rebuild-marker recovery.
+The primary stdio write can still silently produce a zero-filled first sector.
+Only one observed fallback activation has completed end to end, so other cards,
+devices, repeated incidents, and the double-failure rebuild path remain
+unqualified.
 
 Suggested next action:
 
-Run a controlled long-duration certified build test that forces pending writes
-and retries. Confirm that normal writes remain quiet, `.tmp2` is used only after
-a verified `.tmp1` failure, final `.pkt` files pass CRC/byte comparison, and any
-double failure still rebuilds and retransmits from raw data.
+Continue controlled long-duration runs that force pending writes and retries on
+more than one device/card. Confirm that normal writes remain quiet, `.tmp2` is
+used only after a verified `.tmp1` failure, final `.pkt` files pass CRC/byte
+comparison, and any double failure still rebuilds and retransmits from raw data.
 
 ## Builds contain nondeterministic toolchain metadata
 

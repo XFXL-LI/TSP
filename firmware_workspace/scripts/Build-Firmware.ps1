@@ -186,7 +186,9 @@ $manifest = [ordered]@{
     applicationBytes = (Get-Item -LiteralPath $app).Length
     applicationSha256 = $appHash
     constraints = @(
-        'hourly statistics unchanged',
+        'hourly statistics include every valid realtime batch',
+        'realtime collection period fixed at 120 seconds',
+        'air-path pump runtime fixed at 70 seconds',
         'HJ212 packet gap 3000ms',
         'SHT30 handled independently',
         $debugConstraint

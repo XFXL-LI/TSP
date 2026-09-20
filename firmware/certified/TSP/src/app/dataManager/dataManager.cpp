@@ -208,16 +208,14 @@ void DataManager::checkAndDispatch(AllDataPacket* rawData) {
 
     _last_min_time = currentMin;
 
-    uint64_t minuteOfHour = currentMin % 100;
-    bool isThirdMinute = minuteOfHour % 3 == 0;
     for (auto const& [id, dataPtr] : rawData->data_map) {
         if (dataPtr == nullptr) continue;
         if (dataPtr->is_valid) {
             _min_stats[id].update(dataPtr->value);
-            if (isThirdMinute) _hour_stats[id].update(dataPtr->value);
+            _hour_stats[id].update(dataPtr->value);
         } else {
             _min_stats[id].observeInvalid(dataPtr->status);
-            if (isThirdMinute) _hour_stats[id].observeInvalid(dataPtr->status);
+            _hour_stats[id].observeInvalid(dataPtr->status);
         }
     }
 

@@ -14,6 +14,47 @@
 
 namespace {
 
+static constexpr int FIXED_COLLECTION_INTERVAL_SECONDS = 120;
+
+static bool setJsonInteger(cJSON *root, const char *name, int value)
+{
+    if (!cJSON_IsObject(root)) return false;
+    cJSON *number = cJSON_CreateNumber(value);
+    if (number == nullptr) return false;
+    if (cJSON_GetObjectItemCaseSensitive(root, name) != nullptr) {
+        cJSON_ReplaceItemInObject(root, name, number);
+        return true;
+    }
+    if (!cJSON_AddItemToObject(root, name, number)) {
+        cJSON_Delete(number);
+        return false;
+    }
+    return true;
+}
+
+static bool normalizeSystemTimingObject(cJSON *root)
+{
+    return setJsonInteger(root, "collect_time",
+                          FIXED_COLLECTION_INTERVAL_SECONDS) &&
+           setJsonInteger(root, "upload_interval",
+                          FIXED_COLLECTION_INTERVAL_SECONDS);
+}
+
+static bool normalizeSystemTimingContent(String &content)
+{
+    cJSON *root = cJSON_Parse(content.c_str());
+    if (root == nullptr || !normalizeSystemTimingObject(root)) {
+        if (root != nullptr) cJSON_Delete(root);
+        return false;
+    }
+    char *serialized = cJSON_PrintUnformatted(root);
+    cJSON_Delete(root);
+    if (serialized == nullptr) return false;
+    content = serialized;
+    cJSON_free(serialized);
+    return true;
+}
+
 struct SensorDefinition {
     const char *id;
     const char *name;
@@ -380,10 +421,8 @@ void ConfigManager::_parseSystem(cJSON *node, SYSTEMCONFIG &target)
 {
     if (!node) return;
     cJSON *item;
-    if ((item = cJSON_GetObjectItem(node, "collect_time")) && cJSON_IsNumber(item))
-        target.collect_time = item->valueint;
-    if ((item = cJSON_GetObjectItem(node, "upload_interval")) && cJSON_IsNumber(item))
-        target.upload_interval = item->valueint;
+    target.collect_time = FIXED_COLLECTION_INTERVAL_SECONDS;
+    target.upload_interval = FIXED_COLLECTION_INTERVAL_SECONDS;
     if ((item = cJSON_GetObjectItem(node, "dtu_server")) && cJSON_IsString(item))
         target.dtu_server = item->valuestring;
 }
@@ -1116,6 +1155,9 @@ void ConfigManager::getConfigRes(JSONCmdData* req){
     resData->fileName = fileName;
     if (fileName == "systemConfig"){
         resData->content = getConfigJson(CONFIG_PATH);
+        if (!normalizeSystemTimingContent(resData->content)) {
+            LOG_ERROR("Failed to normalize system timing response");
+        }
     } else if (fileName == "sensors") {
         cJSON *root = parser.getJsonObject();
         cJSON *view = cJSON_IsObject(root)
@@ -1245,7 +1287,13 @@ void ConfigManager::setConfigRes(JSONCmdData* req){
         return;
     }
 
-    if (fileName == "sensors") {
+    if (fileName == "systemConfig") {
+        if (!normalizeSystemTimingObject(contentObj)) {
+            LOG_ERROR("Failed to normalize system timing request");
+            publishFailure("Config normalization failed");
+            return;
+        }
+    } else if (fileName == "sensors") {
         normalizeGasUnitsInJson(contentObj);
     }
 

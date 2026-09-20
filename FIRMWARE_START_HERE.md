@@ -1,6 +1,6 @@
 # TSP Firmware 从这里开始
 
-最后更新：2026-09-14
+最后更新：2026-09-20
 
 本文件是当前固件源码、构建和发布入口。详细版本关系见
 [固件版本与目录说明](FIRMWARE_VERSION_LOCATIONS.md)，仓库整体说明见
@@ -17,19 +17,18 @@ AI辅助开发应同时读取：
 
 | Variant | 版本 | 正式源码 | 构建输入 | 源码指纹 |
 |---|---:|---|---:|---|
-| standard | 2.0.23 | `firmware/standard/TSP` | 88 | `A97AA91FD298EAA31D3ED2051C1A19FAEB210A98284533267508A947D644C3E9` |
-| certified | 2.0.23.1 | `firmware/certified/TSP` | 89 | `090B6AD564ED66941D9DA60EF1ABB1626113E5837A9A77C736A23CAC4A3CAA6B` |
+| standard | 2.1.0 | `firmware/standard/TSP` | 88 | `8D4DE1EA9A501390D4DF906B4B75988C2DAB424594704B9E648074B9E1F7991F` |
+| certified | 2.1.0.1 | `firmware/certified/TSP` | 89 | `7612C96BE98E74AC6182F8F9D96E3C4BE836DDACC9F87001418DDBA5A06777F0` |
 
-两套2.0.23系列源码均已编译通过，状态为
-`compiled-not-hardware-verified`。本次只加固pending完整HJ212报文的SD临时写入：首次
-使用`.tmp1`执行stdio写入和重开校验；失败后保留该文件，改用独立`.tmp2`和256字节
-POSIX分块写入，再重开校验。只有校验通过的临时文件才会重命名为最终`.pkt`；原有CRC、
-逐字节校验、rebuild marker和raw重建机制均保留。
+两套2.1.0系列源码均已编译通过，状态为
+`compiled-not-hardware-verified`。实时数据固定每120秒形成一批；有空气通道因子时气泵
+固定运行70秒，其他传感器从第45秒采集，颗粒物与气体在通气60秒后且泵仍运行时采集。
+颗粒物改为一次读取四通道，小时统计改为纳入每个有效实时批次。
 
 当前构建产物位于：
 
-- standard：`firmware_workspace/build/firmware-2.0.23-pending-sector-write-hardening-20260914`
-- certified：`firmware_workspace/build/firmware-2.0.23.1-certified-pending-sector-write-hardening-20260914`
+- standard：`firmware_workspace/build/current-standard`
+- certified：`firmware_workspace/build/current-certified`
 
 迁移前的两个 `tmp` 历史源码副本已退出主工作树；需要追溯时使用仓库外历史归档和
 迁移安全备份。当前开发与构建只使用上表中的 `firmware/` 正式源码。
@@ -83,6 +82,8 @@ flash-verified.cmd       受保护烧录入口，必须明确授权后使用
 
 ## 当前版本文档
 
+- [Firmware 2.1.0 变更记录](docs/changelog/CHANGELOG_2.1.0.md)
+- [Firmware 2.1.0.1 变更记录](docs/changelog/CHANGELOG_2.1.0.1.md)
 - [Firmware 2.0.23 变更记录](docs/changelog/CHANGELOG_2.0.23.md)
 - [Firmware 2.0.23.1 变更记录](docs/changelog/CHANGELOG_2.0.23.1.md)
 - [Firmware 2.0.22 变更记录](docs/changelog/CHANGELOG_2.0.22.md)

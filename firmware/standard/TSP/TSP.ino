@@ -2,8 +2,8 @@
 
 
 //�°汾
-// Firmware 2.0.22: live-priority HJ212 pending recovery scheduling.
-#define VERSION2 "2.0.23"
+// Firmware 2.1.0: 120-second staged sensor collection cycle.
+#define VERSION2 "2.1.0"
 
 void setup()
 {

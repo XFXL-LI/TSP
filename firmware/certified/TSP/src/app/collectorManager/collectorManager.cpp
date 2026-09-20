@@ -6,6 +6,7 @@
 #include "../../module/gas/GasCalibrationManager.h"
 #include "../../module/gas/GasUnitConverter.h"
 #include "../../module/diagnostics/RuntimeMemoryDiagnostics.h"
+#include "collect/SensorReadPolicy.h"
 
 collectorManager *collectorManager::_instance = nullptr;
 
@@ -210,6 +211,171 @@ void collectorManager::processQuery(JSONCmdData *req)
     resData->release();
 }
 
+namespace {
+
+constexpr uint32_t AIR_READ_OFFSET_MS = 15000;
+constexpr uint32_t BATCH_FINISH_OFFSET_MS = 25000;
+
+bool isParticleSensor(const String &id)
+{
+    return id == "a34005" || id == "a34004" ||
+           id == "a34002" || id == "a34001";
+}
+
+bool deadlineReached(uint32_t deadlineMs)
+{
+    return static_cast<int32_t>(millis() - deadlineMs) >= 0;
+}
+
+void waitUntil(uint32_t targetMs)
+{
+    while (!deadlineReached(targetMs))
+    {
+        const uint32_t remaining = targetMs - millis();
+        TickType_t ticks = pdMS_TO_TICKS(remaining);
+        if (ticks == 0) ticks = 1;
+        vTaskDelay(ticks);
+    }
+}
+
+uint64_t currentCollectionTimestamp()
+{
+    time_t now;
+    struct tm timeinfo = {};
+    time(&now);
+    if (localtime_r(&now, &timeinfo) == nullptr ||
+        timeinfo.tm_year + 1900 < 2020 ||
+        timeinfo.tm_year + 1900 > 2099)
+    {
+        return 0;
+    }
+    return ((uint64_t)(timeinfo.tm_year + 1900) * 10000000000ULL) +
+           ((uint64_t)(timeinfo.tm_mon + 1) * 100000000ULL) +
+           ((uint64_t)timeinfo.tm_mday * 1000000ULL) +
+           ((uint64_t)timeinfo.tm_hour * 10000ULL) +
+           ((uint64_t)timeinfo.tm_min * 100ULL) +
+           (uint64_t)timeinfo.tm_sec;
+}
+
+void publishCollectionAlarm(const String &id)
+{
+    auto *alarmData = new SystemRuntimeStatus();
+    alarmData->systemErrorInfo = CHECK_RESULT::COLLECT_ERROR;
+    alarmData->errorInfo = "Data collection error for sensor ID: " + id;
+    const int subscriberCount = EventBus::getInstance().getSubscriberCount(
+        EventID::ALARM_TRIGGERED);
+    for (int i = 0; i < subscriberCount; ++i) alarmData->retain();
+    EventBus::getInstance().publish(EventID::ALARM_TRIGGERED,
+                                    (void *)alarmData);
+    alarmData->release();
+}
+
+void storePacket(AllDataPacket *allData, const String &id,
+                 DataPacket *packet, bool reportFailure = true)
+{
+    if (allData == nullptr || packet == nullptr) return;
+    auto existing = allData->data_map.find(id);
+    if (existing != allData->data_map.end() && existing->second != nullptr)
+    {
+        existing->second->release();
+    }
+    allData->data_map[id] = packet;
+    if (packet->is_valid)
+    {
+        packet->status = DataStatus::NORMAL;
+    }
+    else if (reportFailure && packet->status != DataStatus::CALIBRATION)
+    {
+        LOG_WARNING("Invalid data collected - Sensor ID: %s, status=%c",
+                    id.c_str(), dataStatusCode(packet->status));
+        publishCollectionAlarm(id);
+    }
+}
+
+DataPacket *unavailablePacket(const String &id)
+{
+    DataPacket *packet = new DataPacket();
+    strncpy(packet->sensor_id, id.c_str(), sizeof(packet->sensor_id) - 1);
+    packet->status = DataStatus::COMMUNICATION_FAILURE;
+    return packet;
+}
+
+float particleUnitFactor(const String &id)
+{
+    const COLLECTMAP &config = ConfigManager::getInstance().getCollectConfigs();
+    const auto it = config.find(id);
+    if (it == config.end()) return 1.0f;
+    if (it->second.unit == "mg/m3") return 0.001f;
+    if (it->second.unit == "ng/m3") return 1000.0f;
+    return 1.0f;
+}
+
+void collectParticleChannels(const std::vector<BaseCollector *> &collectors,
+                             AllDataPacket *allData, uint32_t deadlineMs)
+{
+    struct Channel { const char *id; uint8_t offset; };
+    static const Channel channels[] = {
+        {"a34005", 0}, {"a34004", 2},
+        {"a34002", 4}, {"a34001", 6}
+    };
+
+    BaseCollector *transport = nullptr;
+    bool enabled[4] = {false, false, false, false};
+    for (BaseCollector *collector : collectors)
+    {
+        if (collector == nullptr || !isParticleSensor(collector->getID())) continue;
+        if (transport == nullptr) transport = collector;
+        for (size_t i = 0; i < 4; ++i)
+        {
+            if (collector->getID() == channels[i].id) enabled[i] = true;
+        }
+    }
+    if (transport == nullptr) return;
+
+    uint16_t raw[8] = {};
+    bool readOk = false;
+    auto &serialManager = SerialManager::getInstance();
+    SemaphoreHandle_t mutex = serialManager.getMutex("TTL");
+    if (!deadlineReached(deadlineMs) && mutex != nullptr &&
+        xSemaphoreTake(mutex, pdMS_TO_TICKS(3000)) == pdTRUE)
+    {
+        readOk = transport->readRegistersForBatch(
+            1, 0x0010, 8, raw, SensorReadPolicy::MAX_ATTEMPTS,
+            SensorReadPolicy::RESPONSE_TIMEOUT_MS,
+            SensorReadPolicy::QUERY_GAP_MS);
+        xSemaphoreGive(mutex);
+    }
+
+    const bool withinDeadline = !deadlineReached(deadlineMs);
+    LOG_INFO("[DIAG] PM_BATCH read_ok=%d within_deadline=%d duration_limit_ms=%u",
+             readOk ? 1 : 0, withinDeadline ? 1 : 0,
+             (unsigned)BATCH_FINISH_OFFSET_MS);
+    for (size_t i = 0; i < 4; ++i)
+    {
+        if (!enabled[i]) continue;
+        DataPacket *packet = unavailablePacket(channels[i].id);
+        if (readOk && withinDeadline)
+        {
+            const uint32_t value =
+                (static_cast<uint32_t>(raw[channels[i].offset]) << 16) |
+                raw[channels[i].offset + 1];
+            if (value != 0xFFFFFFFFU)
+            {
+                packet->value = static_cast<float>(value) *
+                                particleUnitFactor(channels[i].id);
+                packet->is_valid = true;
+            }
+            else
+            {
+                packet->status = DataStatus::SENSOR_FAULT;
+            }
+        }
+        storePacket(allData, channels[i].id, packet);
+    }
+}
+
+} // namespace
+
 void collectorManager::poll()
 {
     static std::atomic<uint32_t> nextTraceId(1);
@@ -218,123 +384,101 @@ void collectorManager::poll()
         LOG_WARNING("No collectors registered.");
         return;
     }
-    time_t now;
-    struct tm timeinfo = {};
-    time(&now);
-    if (localtime_r(&now, &timeinfo) == nullptr ||
-        timeinfo.tm_year + 1900 < 2020 ||
-        timeinfo.tm_year + 1900 > 2099)
-    {
-        LOG_ERROR("System clock is invalid; skipping this collection cycle");
-        return;
-    }
-    uint64_t time = ((uint64_t)(timeinfo.tm_year + 1900) * 10000000000) +
-                    ((uint64_t)(timeinfo.tm_mon + 1) * 100000000) +
-                    ((uint64_t)timeinfo.tm_mday * 1000000) +
-                    ((uint64_t)timeinfo.tm_hour * 10000) +
-                    ((uint64_t)timeinfo.tm_min * 100) +
-                    (uint64_t)timeinfo.tm_sec;
-    LOG_DEBUG("Current Time: %llu", time);
-    int subCount = EventBus::getInstance().getSubscriberCount(EventID::RAW_DATA_COLLECTED);
-    LOG_DEBUG("Starting batch polling cycle for %d collectors", _collectors.size());
+
+    const uint32_t stageStartedMs = millis();
+    const uint32_t airReadMs = stageStartedMs + AIR_READ_OFFSET_MS;
+    const uint32_t finishMs = stageStartedMs + BATCH_FINISH_OFFSET_MS;
     auto &gasCalibration = GasCalibrationManager::getInstance();
     gasCalibration.setNormalCollectionPending(true);
+
     AllDataPacket *allData = new AllDataPacket();
     allData->trace_id = nextTraceId.fetch_add(1, std::memory_order_relaxed);
-    for (auto *collector : _collectors)
+    LOG_INFO("[DIAG] COLLECT_STAGE trace=%u stage=non_air offset_ms=45000",
+             (unsigned)allData->trace_id);
+
+    for (BaseCollector *collector : _collectors)
     {
-        if (gasCalibration.isMaintenanceActive() &&
+        if (collector == nullptr || isParticleSensor(collector->getID()) ||
             GasUnitConverter::isGasSensor(collector->getID()))
         {
-            LOG_DEBUG("GAS_CAL_MAINTENANCE skip_normal id=%s",
-                      collector->getID().c_str());
-            DataPacket *maintenance = new DataPacket();
-            strncpy(maintenance->sensor_id, collector->getID().c_str(),
-                    sizeof(maintenance->sensor_id) - 1);
-            maintenance->status = DataStatus::CALIBRATION;
-            allData->data_map[collector->getID()] = maintenance;
             continue;
         }
-        DataPacket *data = collector->collect();
-        if (data != nullptr)
-        {
-            if (data->is_valid)
-            {
-                data->status = DataStatus::NORMAL;
-                // LOG_DEBUG("PRINT data, value: %.2f", data->value);
-                allData->data_map[String(data->sensor_id)] = data;
-            }
-            else
-            {
-                LOG_WARNING("Invalid data collected - Sensor ID: %s, Raw Value: %.2f, Collector ID: %s",
-                            data->sensor_id, data->value, collector->getID().c_str());
-                // Preserve the packet and its exact HJ212 status. Local
-                // statistics still ignore it through is_valid=false.
-                allData->data_map[String(collector->getID().c_str())] = data;
-                auto alarmData = new SystemRuntimeStatus();
-                alarmData->systemErrorInfo = CHECK_RESULT::COLLECT_ERROR;
-                alarmData->errorInfo = "Data collection error for sensor ID: " + String(collector->getID().c_str());
-                int alarmSubscriberCount = EventBus::getInstance().getSubscriberCount(
-                    EventID::ALARM_TRIGGERED);
-                for (int i = 0; i < alarmSubscriberCount; ++i)
-                {
-                    alarmData->retain();
-                }
-                EventBus::getInstance().publish(EventID::ALARM_TRIGGERED, (void *)alarmData);
-                // The publisher owns the initial reference. Each subscriber
-                // owns one retained reference and releases it after handling.
-                alarmData->release();
-            }
-        }
+        storePacket(allData, collector->getID(), collector->collect());
         vTaskDelay(pdMS_TO_TICKS(100));
     }
 
-    gasCalibration.setNormalCollectionPending(false);
+    waitUntil(airReadMs);
+    allData->last_update = currentCollectionTimestamp();
+    if (allData->last_update == 0)
+    {
+        LOG_ERROR("System clock is invalid; this collection cycle will not be published");
+    }
+    LOG_INFO("[DIAG] COLLECT_STAGE trace=%u stage=air_path offset_ms=60000",
+             (unsigned)allData->trace_id);
 
-    // A calibration session may start while a normal collection cycle is
-    // already in progress. Replace any earlier gas measurement with a C-state
-    // placeholder: it reaches HJ212 but remains excluded from statistics.
+    collectParticleChannels(_collectors, allData, finishMs);
+    for (BaseCollector *collector : _collectors)
+    {
+        if (collector == nullptr || !GasUnitConverter::isGasSensor(collector->getID()))
+        {
+            continue;
+        }
+        if (gasCalibration.isMaintenanceActive())
+        {
+            DataPacket *maintenance = unavailablePacket(collector->getID());
+            maintenance->status = DataStatus::CALIBRATION;
+            storePacket(allData, collector->getID(), maintenance, false);
+            continue;
+        }
+        if (deadlineReached(finishMs))
+        {
+            storePacket(allData, collector->getID(),
+                        unavailablePacket(collector->getID()));
+            continue;
+        }
+
+        DataPacket *packet = collector->collect();
+        if (deadlineReached(finishMs))
+        {
+            if (packet != nullptr) packet->release();
+            packet = unavailablePacket(collector->getID());
+            LOG_WARNING("[DIAG] AIR_READ_DEADLINE id=%s",
+                        collector->getID().c_str());
+        }
+        storePacket(allData, collector->getID(), packet);
+    }
+
+    gasCalibration.setNormalCollectionPending(false);
     if (gasCalibration.isMaintenanceActive())
     {
         for (auto &item : allData->data_map)
         {
-            if (GasUnitConverter::isGasSensor(item.first))
+            if (!GasUnitConverter::isGasSensor(item.first)) continue;
+            if (item.second == nullptr)
             {
-                if (item.second == nullptr)
-                {
-                    item.second = new DataPacket();
-                    strncpy(item.second->sensor_id, item.first.c_str(),
-                            sizeof(item.second->sensor_id) - 1);
-                }
-                item.second->value = 0.0f;
-                item.second->is_valid = false;
-                item.second->status = DataStatus::CALIBRATION;
+                item.second = unavailablePacket(item.first);
             }
+            item.second->value = 0.0f;
+            item.second->is_valid = false;
+            item.second->status = DataStatus::CALIBRATION;
         }
     }
 
-    
-    allData->last_update = time;
-    for (int i = 0; i < subCount; i++)
+    waitUntil(finishMs);
+    const int subCount = EventBus::getInstance().getSubscriberCount(
+        EventID::RAW_DATA_COLLECTED);
+    if (allData->last_update != 0 && !allData->data_map.empty())
     {
-        allData->retain();
-    }
-    if (!allData->data_map.empty())
-    {
+        for (int i = 0; i < subCount; ++i) allData->retain();
         const RuntimeMemorySnapshot memory = observeRuntimeMemory();
         LOG_INFO("[DIAG] COLLECT trace=%u timestamp=%llu sensors=%u subscribers=%d free=%u largest=%u min_free=%u min_largest=%u",
-                 (unsigned)allData->trace_id,
-                 allData->last_update,
-                 (unsigned)allData->data_map.size(),
-                 subCount, (unsigned)memory.freeHeap,
-                 (unsigned)memory.largestBlock,
+                 (unsigned)allData->trace_id, allData->last_update,
+                 (unsigned)allData->data_map.size(), subCount,
+                 (unsigned)memory.freeHeap, (unsigned)memory.largestBlock,
                  (unsigned)memory.minimumFreeHeap,
                  (unsigned)memory.minimumLargestBlock);
-        EventBus::getInstance().publish(EventID::RAW_DATA_COLLECTED, (void *)allData);
-    }
-    else
-    {
-        EventBus::getInstance().publish(EventID::ALARM_TRIGGERED, (void *)allData);
+        EventBus::getInstance().publish(EventID::RAW_DATA_COLLECTED,
+                                        (void *)allData);
     }
     allData->release();
 }

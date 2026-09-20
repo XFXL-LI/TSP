@@ -133,9 +133,9 @@ DataPacket* No2Collect::collect() {
 
     if (xSemaphoreTake(_StreamMutex, pdMS_TO_TICKS(3000)) == pdTRUE)
     {
-        readOk = GasModbusAccess::readRegisters(
-            *_mb_manager, _slaveId, 0x6000, 2, gasRegisters,
-            3, 500, "normal");
+        readOk = GasModbusAccess::readStatusAndConcentration(
+            *_mb_manager, _slaveId, gasRegisters, 3, 500,
+            _id.c_str(), "normal");
         xSemaphoreGive(_StreamMutex);
     }
     else
