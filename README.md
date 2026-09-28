@@ -301,6 +301,7 @@ tools/                             导出、诊断和厂商工具资料
 - [HJ 212-2025](docs/protocols/hj212/hj212-2025.pdf)
 - [传感器与设备说明书](docs/hardware/sensors/)
 - [装配前单设备测试文档](output/sensor_test_docs/)
+- [云端因子配置读取与修改接口（standard 2.1.0 / certified 2.1.0.1）](docs/protocols/remote/REMOTE_SENSOR_CONFIG_PROTOCOL.md)
 
 ## 当前注意事项
 

@@ -5,6 +5,11 @@
 适用对象：TSP ESP32-S3 MCU、LCD 屏幕程序、现有远程配置程序  
 当前状态：MCU 已在 Firmware 2.0.14 实现并通过完整编译，尚待烧录和 LCD/Remote 实机联调
 
+2026-09-28 核对：standard 2.1.0、certified 2.1.0.1 沿用本文因子接口。上方状态为原实现
+阶段记录，不代表当前固件已经完成云端验收。云端开发请使用
+[当前云端因子配置接口](../remote/REMOTE_SENSOR_CONFIG_PROTOCOL.md)，其中补充了 Remote 通道、
+保存后逐组重启/回读、旧全量接口差别及当前固定 120 秒周期；本文 LCD 串口参数不适用于 Remote。
+
 ## 1. 修改目标
 
 现有 LCD 和远程端使用全量 `get_config/sensors` 与全量
