@@ -33,10 +33,6 @@
 #include "../../app/tempManager/tempManager.h"
 #include "../../app/ledManager/ledManager.h"
 
-
-// Firmware 2.0.20 keeps DEBUG enabled for field validation.
-#define DEBUG
-
 #define PUMP1_PIN 41
 #define ALARM_PIN 40    // 12v电控制开关
 
@@ -218,11 +214,7 @@ System::~System()
 void System::SystemInit(void)
 {
 
-#ifdef DEBUG
     LogManager::getInstance().setLevel(LOG_LEVEL_DEBUG);
-#else
-    LogManager::getInstance().setLevel(LOG_LEVEL_INFO);
-#endif
     LOG_INFO("Firmware version: %s", VERSION2);
     LOG_DEBUG("System init start");
 
