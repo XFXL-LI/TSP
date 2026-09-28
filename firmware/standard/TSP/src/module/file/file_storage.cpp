@@ -10,6 +10,7 @@
 #include "driver/sdspi_host.h"
 #include "../log/log_manager.h"
 #include <Arduino.h>
+#include "../diagnostics/DeviceRuntimeStatus.h"
 
 file_storage::file_storage() : sd_card_initialized(false), ffat_initialized(false) {}
 file_storage::~file_storage() {}
@@ -157,6 +158,7 @@ int file_storage::writeFFATAtomic(const char *path, const char *config_content) 
 }
 
 bool file_storage::SDcardInit() {
+    DeviceRuntimeStatus::sdMountStarted();
     sdmmc_card_t *sdmmc_card = NULL;
     esp_vfs_fat_sdmmc_mount_config_t mount_config = {
         .format_if_mount_failed = false,
@@ -170,6 +172,7 @@ bool file_storage::SDcardInit() {
     slot_config.d0 = SD_DAT0_IO;
     slot_config.flags |= SDMMC_SLOT_FLAG_INTERNAL_PULLUP;
     esp_err_t ret =  esp_vfs_fat_sdmmc_mount(SD_MOUNT_POINT, &sdmmc_host, &slot_config, &mount_config, &sdmmc_card);
+    DeviceRuntimeStatus::sdMountFinished(ret);
 
     if (ret != ESP_OK) {
         sd_card_initialized = false;

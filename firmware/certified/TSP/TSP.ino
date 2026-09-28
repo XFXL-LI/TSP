@@ -2,8 +2,8 @@
 
 
 //�°汾
-// Firmware 2.1.0.1: certified staged sensor collection cycle.
-#define VERSION2 "2.1.0.1"
+// Firmware 2.1.1.1: offline local snapshots and opt-in device status.
+#define VERSION2 "2.1.1.1"
 
 void setup()
 {

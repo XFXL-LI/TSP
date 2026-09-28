@@ -3,6 +3,7 @@
 #include "../../module/log/log_manager.h"
 #include "../../module/file/file_storage.h"
 #include "../../module/json/config_json.h"
+#include "../../module/json/GetDataResponse.h"
 #include "../../module/gas/GasUnitConverter.h"
 #include "../../module/gas/GasCalibrationManager.h"
 #include "../../module/diagnostics/RuntimeMemoryDiagnostics.h"
@@ -235,21 +236,6 @@ void PermissionSystem::processLine(String line, Stream *stream)
     }
 }
 
-static bool appendJson(char *buffer, size_t capacity, size_t &used,
-                       const char *format, ...)
-{
-    if (used >= capacity) return false;
-    va_list args;
-    va_start(args, format);
-    int written = vsnprintf(buffer + used, capacity - used, format, args);
-    va_end(args);
-    if (written < 0 || static_cast<size_t>(written) >= capacity - used) {
-        buffer[capacity - 1] = '\0';
-        return false;
-    }
-    used += static_cast<size_t>(written);
-    return true;
-}
 
 static String configuredGasUnit(const String &sensorId)
 {
@@ -323,27 +309,67 @@ static void appendRecordValues(String &json, const String &sensorId,
 
 void PermissionSystem::sendRealtimeDataDirect(cJSON *request, Stream *stream)
 {
-    constexpr size_t MAX_LCD_IDS = 16;
-    constexpr size_t RESPONSE_CAPACITY = 1024;
-    const char *ids[MAX_LCD_IDS] = {};
-    float values[MAX_LCD_IDS] = {};
+    const char *ids[GetDataResponse::MAX_IDS] = {};
+    float values[GetDataResponse::MAX_IDS] = {};
+    uint8_t decimals[GetDataResponse::MAX_IDS] = {};
     size_t idCount = 0;
-
+    cJSON *statusSwitch = request
+        ? cJSON_GetObjectItemCaseSensitive(request, "with_status") : nullptr;
+    if (statusSwitch != nullptr && !cJSON_IsBool(statusSwitch)) {
+        sendResponse(stream, "get_data", "NG", "Invalid with_status");
+        return;
+    }
+    const bool withStatus = cJSON_IsTrue(statusSwitch);
     cJSON *idsArray = request ? cJSON_GetObjectItemCaseSensitive(request, "ids") : nullptr;
+    if (withStatus && !cJSON_IsArray(idsArray)) {
+        sendResponse(stream, "get_data", "NG", "Invalid ids");
+        return;
+    }
+    if (withStatus && cJSON_GetArraySize(idsArray) > GetDataResponse::MAX_IDS) {
+        sendResponse(stream, "get_data", "NG", "Too many requested ids");
+        return;
+    }
     if (cJSON_IsArray(idsArray)) {
         cJSON *item = nullptr;
         cJSON_ArrayForEach(item, idsArray) {
-            if (idCount >= MAX_LCD_IDS) break;
-            if (cJSON_IsString(item) && item->valuestring != nullptr) {
-                ids[idCount++] = item->valuestring;
+            if (idCount >= GetDataResponse::MAX_IDS) break; // Legacy behavior only.
+            if (!cJSON_IsString(item) || item->valuestring == nullptr) {
+                if (!withStatus) continue;
+                sendResponse(stream, "get_data", "NG", "Invalid sensor id");
+                return;
             }
+            if (withStatus) {
+                if (!ConfigManager::isKnownSensorId(item->valuestring)) {
+                    sendResponse(stream, "get_data", "NG", "Unknown sensor id");
+                    return;
+                }
+                for (size_t i = 0; i < idCount; ++i) {
+                    if (strcmp(ids[i], item->valuestring) == 0) {
+                        sendResponse(stream, "get_data", "NG", "Duplicate sensor id");
+                        return;
+                    }
+                }
+            }
+            ids[idCount++] = item->valuestring;
         }
     }
 
     uint64_t timestamp = 0;
-    if (!DataManager::getInstance().readLatestValues(ids, idCount, values, timestamp)) {
+    RealtimeSnapshotInfo sample;
+    if (!DataManager::getInstance().readLatestValues(
+            ids, idCount, values, timestamp, &sample)) {
         sendResponse(stream, "get_data", "NG", "Data snapshot busy");
         return;
+    }
+    for (size_t i = 0; i < idCount; ++i) {
+        const String sensorId(ids[i]);
+        if (withStatus && ConfigManager::getInstance().getCollectConfigs().find(sensorId) ==
+                          ConfigManager::getInstance().getCollectConfigs().end()) {
+            values[i] = 0.0f;
+            sample.validMask &= ~(1U << i);
+        }
+        decimals[i] = decimalsForSensor(sensorId);
+        values[i] = valueForConfiguredUnit(sensorId, values[i]);
     }
 
     int csq = 99;
@@ -356,31 +382,16 @@ void PermissionSystem::sendRealtimeDataDirect(cJSON *request, Stream *stream)
         mete = systemInfo.mete;
         xSemaphoreGive(systemInfo.mutex);
     }
-
-    char response[RESPONSE_CAPACITY] = {};
+    const DeviceStatusSnapshot device = DeviceRuntimeStatus::read();
+    char response[GetDataResponse::BUFFER_CAPACITY] = {};
     size_t used = 0;
-    bool ok = appendJson(response, sizeof(response), used,
-        "{\"operation\":\"get_data\",\"code\":\"OK\","
-        "\"message\":\"get data success\",\"timestamp\":%llu,"
-        "\"csq\":%d,\"temp\":%.2f,\"mete\":%.2f,\"params\":[",
-        timestamp, csq, temp, mete);
-    for (size_t i = 0; ok && i < idCount; ++i) {
-        ok = appendJson(response, sizeof(response), used, "%s\"%s\"",
-                        i == 0 ? "" : ",", ids[i]);
-    }
-    ok = ok && appendJson(response, sizeof(response), used, "],\"values\":[");
-    for (size_t i = 0; ok && i < idCount; ++i) {
-        const String sensorId(ids[i]);
-        const uint8_t decimals = decimalsForSensor(sensorId);
-        const float outputValue = valueForConfiguredUnit(sensorId, values[i]);
-        ok = appendJson(response, sizeof(response), used, "%s%.*f",
-                        i == 0 ? "" : ",", decimals, outputValue);
-    }
-    ok = ok && appendJson(response, sizeof(response), used, "]}");
-    if (!ok) {
-        LOG_ERROR("[DIAG] GET_DATA_RESPONSE_OVERFLOW ids=%u capacity=%u",
-                  (unsigned)idCount, (unsigned)sizeof(response));
-        sendResponse(stream, "get_data", "NG", "Too many requested ids");
+    if (!GetDataResponse::build(response, sizeof(response), used, ids, values,
+            decimals, idCount, timestamp, csq, temp, mete, sample,
+            withStatus ? &device : nullptr)) {
+        LOG_ERROR("[DIAG] GET_DATA_RESPONSE_OVERFLOW ids=%u bytes=%u status=%u",
+                  (unsigned)idCount, (unsigned)used, withStatus ? 1U : 0U);
+        sendResponse(stream, "get_data", "NG",
+                     withStatus ? "Response too large" : "Too many requested ids");
         return;
     }
     sendMsg(stream, response);

@@ -20,8 +20,8 @@ a delay. Runtime work is performed by FreeRTOS tasks and event queues.
 
 | Variant | Canonical source | Version | Build inputs | Source fingerprint |
 | --- | --- | ---: | ---: | --- |
-| standard | `firmware/standard/TSP` | 2.1.0 | 88 | `8D4DE1EA9A501390D4DF906B4B75988C2DAB424594704B9E648074B9E1F7991F` |
-| certified | `firmware/certified/TSP` | 2.1.0.1 | 89 | `7612C96BE98E74AC6182F8F9D96E3C4BE836DDACC9F87001418DDBA5A06777F0` |
+| standard | `firmware/standard/TSP` | 2.1.1 | 93 | `95CE6E20E3FF7DEB9DE43F76FB505EC55E194C5E354132FAC94DC4E5774605B3` |
+| certified | `firmware/certified/TSP` | 2.1.1.1 | 94 | `DCF142C5D1078957237B193A2BB80FBF5B3370E587B9C1CE4853C3C9338DD7F2` |
 
 The certified variant adds `GasSpecificPolicy.h` and applies a 500 ppb upper
 cap to O3, NO2, and SO2. CO is not capped. Its certified calibration profile is
@@ -29,9 +29,10 @@ cap to O3, NO2, and SO2. CO is not capped. Its certified calibration profile is
 and SO2 250 ppb. Common changes must be evaluated for both variants; this
 certified policy must not leak into standard.
 
-Both variants passed repository-migration build verification with only expected
-nondeterministic build metadata differences. This status is not hardware
-verification.
+The earlier migration baseline passed verification with only expected
+nondeterministic build metadata differences. Current 2.1.1/2.1.1.1 builds
+compiled successfully; neither result is hardware verification. The experimental
+laboratory source is separate and is not updated with this baseline.
 
 ## Repository Layout
 
@@ -90,7 +91,8 @@ The runtime uses:
 - task notifications and atomics for operational coordination;
 - `vTaskDelay`, `vTaskDelayUntil`, `millis()`, and wall-clock scheduling.
 
-No FreeRTOS software timer is used in the current source.
+The pump uses a one-shot FreeRTOS cutoff timer; collection and maintenance
+scheduling otherwise use elapsed-time delays.
 
 ## Main Modules
 
@@ -165,7 +167,8 @@ pump off after 70 seconds.
    particulate and gas sensors from 60 seconds while the pump is still on.
 3. A reference-counted `AllDataPacket` is published as
    `RAW_DATA_COLLECTED`.
-4. `dataManager` emits real-time processed data immediately and updates
+4. `dataManager` always updates its protected local real-time snapshot. Only a
+   batch with a valid calendar timestamp emits processed data and updates
    statistical windows.
 5. Processed subscribers independently feed storage, HJ212, LED, and alarms.
 
@@ -196,6 +199,28 @@ and the day is finalized after the final hour. Every valid 120-second real-time
 batch contributes to both the active 10-minute and hour windows; invalid values
 are excluded per factor while preserving their status if a window has no valid
 sample.
+
+In 2.1.1/2.1.1.1, timestamp 0 no longer suppresses the raw collection event or
+the local snapshot. Missing valid time pauses measurement SD records, calendar
+statistics and live HJ212 without creating fake dates, backdating old samples,
+or accumulating an unbounded offline buffer. Invalid-time batches reset
+statistical baselines; subsequent dated batches establish new windows. RTC
+initialization, collection, statistics, storage and HJ212 use the same calendar
+validity rule (2020 through 2099, including month lengths and leap years);
+only clock input retains legacy 12-digit compatibility.
+
+LCD and remote DTU `get_data` remain direct cache queries. Boolean
+`with_status:true` opts into `ds.v=1`: initialization, SD mount/error,
+last measurement-write return result, current time source, batch sequence,
+monotonic `age_ms`, and request-order `valid_mask`. These sample fields are
+copied under the existing real-time mutex. Sequence advances on batches, not
+queries, and skips zero on wrap; age saturates at UINT32_MAX. Known disabled
+factors return invalid zero placeholders, distinct from valid measured zero.
+The opt-in path validates at most 16 unique catalog IDs and enforces at most
+800 wire bytes including CRLF with the existing 1024-byte buffer. Older requests
+retain their field structure. Queries do not access SD, the RTC bus or the DTU
+and create no extra task; LCD absence does not gate startup. See
+[the status contract](protocols/lcd/LCD_GET_DATA_STATUS_PROTOCOL.md).
 
 ## Storage Flow
 
@@ -319,8 +344,11 @@ Both packages remain `packaged-not-hardware-verified`. A Git tag identifies
 the canonical repository state after migration; binary provenance is defined by
 the committed release metadata and recorded source fingerprint.
 
-The 2.1.0 standard and 2.1.0.1 certified staged-collection builds have compiled
-successfully but are not yet packaged or hardware verified.
+The 2.1.1 standard and 2.1.1.1 certified offline-snapshot/status builds have
+compiled successfully but are not yet packaged or hardware verified. Output
+directories are `firmware_workspace/build/standard-2.1.1` and
+`firmware_workspace/build/certified-2.1.1.1`; existing INFO test packages remain
+unchanged.
 
 ## Important Constraints
 

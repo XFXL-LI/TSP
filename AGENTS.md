@@ -4,8 +4,8 @@
 
 - Standard source: `firmware/standard/TSP`
 - Certified source: `firmware/certified/TSP`
-- Standard version: `2.1.0`
-- Certified version: `2.1.0.1`
+- Standard version: `2.1.1`
+- Certified version: `2.1.1.1`
 
 The root-level legacy `TSP/` tree has been retired. Never recover current code
 from archived or historical source trees unless the user explicitly requests a

@@ -18,6 +18,8 @@
 #include "../../module/Serial/SerialManager.h"
 #include "../../module/gas/GasCalibrationManager.h"
 #include "../../module/gas/GasUnitConverter.h"
+#include "../../module/diagnostics/CalendarClock.h"
+#include "../../module/diagnostics/DeviceRuntimeStatus.h"
 #include "../call/base_call.h"
 #include "../../module/json/config_json.h"
 #include "../../module/file/file_storage.h"
@@ -146,7 +148,7 @@ static bool runPendingRecoveryCycle(QueueHandle_t hjQueue);
 static void servicePendingRecoveryIfIdle(QueueHandle_t hjQueue);
 //
 
-SYSINFO systemInfo;
+SYSINFO systemInfo = {99, 0.0f, 0.0f, nullptr};
 static std::atomic<bool> networkRestoreRunning(false);
 static std::atomic<bool> pendingRecoveryRequested(false);
 
@@ -205,6 +207,20 @@ static void MqttPublicTask(void *pvParameters);
 static void AlarmTask(void *pvParameters);
 static Hj212SendResult sendHJ212PacketLocked(const String &packet, int maxRetry);
 
+static BaseType_t createCheckedTask(TaskFunction_t function, const char* name,
+                                    uint32_t stackSize, void* argument,
+                                    UBaseType_t priority, TaskHandle_t* handle,
+                                    BaseType_t core)
+{
+    const BaseType_t result = xTaskCreatePinnedToCore(
+        function, name, stackSize, argument, priority, handle, core);
+    if (result != pdPASS) {
+        DeviceRuntimeStatus::criticalInitFailed();
+        LOG_ERROR("Task initialization failed: %s", name);
+    }
+    return result;
+}
+
 System::System()
 {
 }
@@ -223,6 +239,7 @@ void System::SystemInit(void)
     if (systemInfo.mutex == NULL) {
         systemInfo.mutex = xSemaphoreCreateMutex();
     }
+    if (!systemInfo.mutex) DeviceRuntimeStatus::criticalInitFailed();
 
     alarmManager::getInstance().printRestartInfo();
 
@@ -233,6 +250,7 @@ void System::SystemInit(void)
     SystemSetupInit();
     vTaskDelay(pdMS_TO_TICKS(500));
     SystemTaskInit();
+    DeviceRuntimeStatus::startupChecksComplete();
 }
 void System::SystemSerialInit(void)
 {
@@ -250,54 +268,54 @@ void System::SystemConfigInit(void)
     if (hj212Cfg.protocol_version == "2017")
     {
         LOG_INFO("HJ212 protocol version set to 2017");
-        xTaskCreatePinnedToCore(Hj212_2017SendTask, "Hj2017Task", 8 * 1024, NULL, TASK_PRIORITY_HJ212, NULL, 0);
+        createCheckedTask(Hj212_2017SendTask, "Hj2017Task", 8 * 1024, NULL, TASK_PRIORITY_HJ212, NULL, 0);
     }
     else if (hj212Cfg.protocol_version == "2025")
     {
         LOG_INFO("HJ212 protocol version set to 2025");
-        xTaskCreatePinnedToCore(Hj212_2025SendTask, "Hj2025Task", 8 * 1024, NULL, TASK_PRIORITY_HJ212, NULL, 0);
+        createCheckedTask(Hj212_2025SendTask, "Hj2025Task", 8 * 1024, NULL, TASK_PRIORITY_HJ212, NULL, 0);
     }
     else
     {
         LOG_WARNING("Unknown HJ212 protocol version '%s', defaulting to 2017", hj212Cfg.protocol_version.c_str());
-        xTaskCreatePinnedToCore(Hj212_2017SendTask, "Hj2017Task", 8 * 1024, NULL, TASK_PRIORITY_HJ212, NULL, 0);
+        createCheckedTask(Hj212_2017SendTask, "Hj2017Task", 8 * 1024, NULL, TASK_PRIORITY_HJ212, NULL, 0);
     }
     cfg.runIfTempCon([]()
                      {
         LOG_INFO("Temperature control enabled, starting related tasks...");
-        xTaskCreatePinnedToCore(TempControlTask, "TempConTask", 4 * 1024, NULL, TASK_PRIORITY_TEMP_CONTROL, NULL, 1); });
+        createCheckedTask(TempControlTask, "TempConTask", 4 * 1024, NULL, TASK_PRIORITY_TEMP_CONTROL, NULL, 1); });
     cfg.runMqttCon([]()
                    {
         LOG_INFO("mqtt control enabled, starting mqtt tasks...");
-        xTaskCreatePinnedToCore(MqttPublicTask, "MqttPublicTask", 8 * 1024, NULL, TASK_PRIORITY_MQTT, NULL, 1); });
+        createCheckedTask(MqttPublicTask, "MqttPublicTask", 8 * 1024, NULL, TASK_PRIORITY_MQTT, NULL, 1); });
 
     cfg.runAlarmCon([]()
                     {
         LOG_INFO("Alarm control enabled, starting alarm tasks...");
-        xTaskCreatePinnedToCore(AlarmTask, "AlarmTask", 4 * 1024, NULL, TASK_PRIORITY_ALARM, NULL, 1); });
+        createCheckedTask(AlarmTask, "AlarmTask", 4 * 1024, NULL, TASK_PRIORITY_ALARM, NULL, 1); });
 
-    xTaskCreatePinnedToCore(updateConfigTask, "updateConfigTask", 8 * 1024, NULL, TASK_PRIORITY_CONFIG, NULL, 0);
+    createCheckedTask(updateConfigTask, "updateConfigTask", 8 * 1024, NULL, TASK_PRIORITY_CONFIG, NULL, 0);
 }
 
 void System::SystemSetupInit(void)
 {
     // Firmware 2.0.3: pending recovery reuses this permanent maintenance task.
-    xTaskCreatePinnedToCore(updateSetupTask, "udSetTask", 6 * 1024, NULL, TASK_PRIORITY_MAINTENANCE, NULL, 1);
+    createCheckedTask(updateSetupTask, "udSetTask", 6 * 1024, NULL, TASK_PRIORITY_MAINTENANCE, NULL, 1);
 }
 
 void System::SystemTaskInit(void)
 {
     LOG_INFO("System Task Init Start!");
 
-    xTaskCreatePinnedToCore(CollectTask, "CollectTask", 4 * 1024, NULL, TASK_PRIORITY_COLLECT, NULL, 1);
+    createCheckedTask(CollectTask, "CollectTask", 4 * 1024, NULL, TASK_PRIORITY_COLLECT, NULL, 1);
 
-    xTaskCreatePinnedToCore(LedPrintTask, "LedPrintTask", 4 * 1024, NULL, TASK_PRIORITY_LED, NULL, 0);
+    createCheckedTask(LedPrintTask, "LedPrintTask", 4 * 1024, NULL, TASK_PRIORITY_LED, NULL, 0);
 
-    xTaskCreatePinnedToCore(SaveDataFileTask, "SaveFileTask", 4 * 1024, NULL, TASK_PRIORITY_STORAGE, NULL, 0);
+    createCheckedTask(SaveDataFileTask, "SaveFileTask", 4 * 1024, NULL, TASK_PRIORITY_STORAGE, NULL, 0);
 
-    xTaskCreatePinnedToCore(PermissionTask, "PermissionTask", 4 * 1024, NULL, TASK_PRIORITY_PERMISSION, NULL, 1);
+    createCheckedTask(PermissionTask, "PermissionTask", 4 * 1024, NULL, TASK_PRIORITY_PERMISSION, NULL, 1);
 
-    xTaskCreatePinnedToCore(CollectGalTask, "CollectGalTask", 4 * 1024, NULL, TASK_PRIORITY_CALIBRATION, NULL, 0);
+    createCheckedTask(CollectGalTask, "CollectGalTask", 4 * 1024, NULL, TASK_PRIORITY_CALIBRATION, NULL, 0);
 
     RemoteOtaManager::notifyLcdNormal();
     RemoteOtaManager::begin(TASK_PRIORITY_OTA_LISTENER,
@@ -457,7 +475,7 @@ static void CollectTask(void *pvParameters)
 {
     LOG_INFO("CollectTask Started");
 
-    xTaskCreatePinnedToCore(DataProcessTask, "DataProcessTask", 4 * 1024, NULL, TASK_PRIORITY_DATA_PROCESS, NULL, 0);
+    createCheckedTask(DataProcessTask, "DataProcessTask", 4 * 1024, NULL, TASK_PRIORITY_DATA_PROCESS, NULL, 0);
 
     auto &collectorManager = collectorManager::getInstance();
     auto &collectMap = ConfigManager::getInstance().getCollectConfigs();
@@ -474,6 +492,7 @@ static void CollectTask(void *pvParameters)
         nullptr, pumpCutoffCallback);
     if (pumpCutoffTimer == nullptr)
     {
+        DeviceRuntimeStatus::criticalInitFailed();
         LOG_ERROR("Failed to create pump cutoff timer");
     }
     while (true)
@@ -631,7 +650,7 @@ static void Hj212_2017SendTask(void *pvParameters)
                     }
                     else
                     {
-                        if (allData->last_update > 20260527000000)
+                        if (CalendarClock::isValidTimestamp(allData->last_update))
                         {
                             LOG_WARNING("HJ212 Packet construction failed or empty.");
                             filesys.protectPendingPacket(allData, HJ212_str);
@@ -640,7 +659,7 @@ static void Hj212_2017SendTask(void *pvParameters)
                 }
                 else
                 {
-                    if (allData->last_update > 20260527000000)
+                    if (CalendarClock::isValidTimestamp(allData->last_update))
                     {
                         String HJ212_str = HJ212.build2017Hj212Packet(allData, config);
                         LOG_WARNING("Network unavailable, saving HJ212 packet for retry.");
@@ -673,7 +692,7 @@ static void Hj212_2017SendTask(void *pvParameters)
                         filesys.protectPendingPacket(allData, HJ212_str);
                     }
                 }
-                else if (allData->last_update > 20260527000000)
+                else if (CalendarClock::isValidTimestamp(allData->last_update))
                 {
                     filesys.protectPendingPacket(allData, HJ212_str);
                 }
@@ -739,7 +758,7 @@ static void Hj212_2025SendTask(void *pvParameters)
                     }
                     else
                     {
-                        if (allData->last_update > 20260527000000)
+                        if (CalendarClock::isValidTimestamp(allData->last_update))
                         {
                             LOG_WARNING("HJ212 Packet construction failed or empty.");
                             filesys.protectPendingPacket(allData, HJ212_str);
@@ -748,7 +767,7 @@ static void Hj212_2025SendTask(void *pvParameters)
                 }
                 else
                 {
-                    if (allData->last_update > 20260527000000)
+                    if (CalendarClock::isValidTimestamp(allData->last_update))
                     {
                         String HJ212_str = HJ212.build2025Hj212Packet(allData, config);
                         LOG_WARNING("Network unavailable, saving HJ212 packet for retry.");
@@ -781,7 +800,7 @@ static void Hj212_2025SendTask(void *pvParameters)
                         filesys.protectPendingPacket(allData, HJ212_str);
                     }
                 }
-                else if (allData->last_update > 20260527000000)
+                else if (CalendarClock::isValidTimestamp(allData->last_update))
                 {
                     filesys.protectPendingPacket(allData, HJ212_str);
                 }
@@ -1281,8 +1300,8 @@ static void PermissionTask(void *pvParameters)
     auto &permission = PermissionSystem::getInstance();
     permission.begin(SERIAL_LCD, SERIAL_DTU);
 
-    xTaskCreatePinnedToCore(SerialControlTask_lcd, "Controllcd", 4 * 1024, NULL, TASK_PRIORITY_SERIAL_CONTROL, NULL, 1);
-    xTaskCreatePinnedToCore(SerialControlTask_dtu, "Controldtu", 4 * 1024, NULL, TASK_PRIORITY_SERIAL_CONTROL, NULL, 1);
+    createCheckedTask(SerialControlTask_lcd, "Controllcd", 4 * 1024, NULL, TASK_PRIORITY_SERIAL_CONTROL, NULL, 1);
+    createCheckedTask(SerialControlTask_dtu, "Controldtu", 4 * 1024, NULL, TASK_PRIORITY_SERIAL_CONTROL, NULL, 1);
 
     while (true)
     {
@@ -1622,7 +1641,10 @@ bool updateMillisTime(uint64_t newTime)
             struct timeval tv;
             tv.tv_sec = t;
             tv.tv_usec = 0;
-            settimeofday(&tv, nullptr);
+            if (settimeofday(&tv, nullptr) != 0) {
+                LOG_ERROR("Failed to apply clock time: %llu", newTime);
+                return false;
+            }
 
             // 4. 验证设置结果
             time_t now;
@@ -1685,6 +1707,7 @@ static bool synchronizeTimeFromDtu()
     int64_t absoluteDelta = deltaSeconds < 0 ? -deltaSeconds : deltaSeconds;
     if (absoluteDelta <= TIME_SYNC_APPLY_THRESHOLD_SEC)
     {
+        DeviceRuntimeStatus::networkTimeConfirmed();
         LOG_INFO("[DIAG] TIME_SYNC_VERIFIED timestamp=%llu delta_sec=%lld applied=0",
                  networkTime, (long long)deltaSeconds);
         return true;
@@ -1697,6 +1720,7 @@ static bool synchronizeTimeFromDtu()
                   networkTime, (long long)deltaSeconds);
         return false;
     }
+    DeviceRuntimeStatus::networkTimeConfirmed();
     LOG_INFO("[DIAG] TIME_SYNC_APPLIED timestamp=%llu delta_sec=%lld",
              networkTime, (long long)deltaSeconds);
     return true;
@@ -1715,7 +1739,9 @@ void setUpInit(void)
     // retries. Network time is synchronized later after the first valid CSQ.
     rtc.init();
     uint64_t rtcTime = getCurrentTime();
-    if (!updateMillisTime(rtcTime))
+    const bool rtcValid = updateMillisTime(rtcTime);
+    DeviceRuntimeStatus::rtcCheckComplete(rtcValid);
+    if (!rtcValid)
     {
         LOG_ERROR("RTC startup time invalid; waiting for network synchronization");
     }
@@ -1853,21 +1879,5 @@ static bool runPendingRecoveryCycle(QueueHandle_t hjQueue)
 
 static bool isValidClockTime(uint64_t timestamp)
 {
-    int year, month, day, hour, minute, second = 0;
-    char value[20];
-    snprintf(value, sizeof(value), "%llu", timestamp);
-    size_t length = strlen(value);
-    int parsed = sscanf(value, "%4d%2d%2d%2d%2d%2d",
-                        &year, &month, &day, &hour, &minute, &second);
-    if ((length != 12 && length != 14) ||
-        (parsed != 5 && parsed != 6))
-    {
-        return false;
-    }
-    return year >= 2020 && year <= 2099 &&
-           month >= 1 && month <= 12 &&
-           day >= 1 && day <= 31 &&
-           hour >= 0 && hour <= 23 &&
-           minute >= 0 && minute <= 59 &&
-           second >= 0 && second <= 59;
+    return CalendarClock::isValidClockInput(timestamp);
 }

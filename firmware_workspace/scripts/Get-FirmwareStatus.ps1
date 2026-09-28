@@ -82,7 +82,17 @@ Write-Host "Versions consistent: $($inoVersion -eq $headerVersion -and $inoVersi
 Write-Host "Build inputs: $($sourceState.Count)"
 Write-Host "Source fingerprint: $($sourceState.Fingerprint)"
 $debugLine = Select-String -LiteralPath (Join-Path $sourcePath 'src\system\system\system.cpp') -Pattern '^#define DEBUG' -ErrorAction SilentlyContinue | Select-Object -First 1
-Write-Host "DEBUG enabled: $([bool]$debugLine)"
+$systemSource = Get-Content -LiteralPath (Join-Path $sourcePath 'src\system\system\system.cpp') -Raw
+$debugEnabled = [bool]$debugLine
+if ($systemSource -notmatch '#\s*ifdef\s+DEBUG') {
+    $level = [regex]::Match($systemSource, 'setLevel\((LOG_LEVEL_\w+)\)')
+    $debugEnabled = if ($level.Success) {
+        $level.Groups[1].Value -eq 'LOG_LEVEL_DEBUG'
+    } else {
+        'unknown'
+    }
+}
+Write-Host "DEBUG enabled: $debugEnabled"
 
 $latestBuild = Find-LatestManifest (Join-Path $workspaceRoot 'build') 'build-manifest.json'
 if ($latestBuild) {

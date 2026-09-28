@@ -74,7 +74,7 @@ Description:
 
 The latest published 2.0.22 standard and 2.0.22.1 certified releases are
 packaged and file-level verified, but neither is recorded as hardware verified.
-The current 2.1.0 and 2.1.0.1 source builds are compiled but not yet packaged
+The current 2.1.1 and 2.1.1.1 source builds are compiled but not yet packaged
 or hardware verified.
 
 Evidence:
@@ -432,6 +432,44 @@ Suggested next action:
 
 Confirm that the helper is truly unused. Remove it or correct and test its
 return contract in a dedicated storage change.
+
+## Offline local snapshot and status interface needs hardware qualification
+
+Status: Implemented; needs verification
+
+Priority: High
+
+Area: RTC, local display, storage, and remote interface
+
+Description:
+
+The former collector timestamp gate and fixed 2026-05-27 processing cutoff
+prevented LCD cache updates when a new board had neither valid RTC time nor
+network synchronization. Versions 2.1.1/2.1.1.1 separate local snapshots from
+dated storage/statistics/HJ212 and add opt-in `get_data/with_status:true` health
+metadata, without changing experimental firmware.
+
+Evidence:
+
+Both canonical variants compile successfully. Date, sequence and monotonic-age
+compile-time regression assertions pass. The response encoder checks its
+1024-byte buffer and 800-byte extended wire limit. The full native runtime
+response test and physical LCD/DTU/SD/time-recovery cases are not yet qualified.
+
+Risk:
+
+Legacy LCD logic may still reject timestamp 0; it must implement the documented
+status-aware display and history guards. SD mount/write status is not a
+continuous card-presence test or proof of read-back correctness. Compilation
+does not prove UART receive capacity, missing-LCD operation or boot-time memory.
+
+Suggested next action:
+
+Run the status protocol acceptance matrix on both variants: invalid/valid RTC
+without network, failed SD mount/write, true zero/invalid factors, first batch,
+time recovery without backdating, 14-factor replies, legacy clients and OTA.
+Do not close this issue, pending first-sector corruption, or pump timing based
+only on source/build validation.
 
 ## Source scan found no TODO or FIXME markers
 

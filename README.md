@@ -2,11 +2,15 @@
 
 本项目是基于 ESP32-S3 的空气微站/TSP 环境监测终端固件，用于采集颗粒物、气态污染物、气象和噪声数据，并通过 HJ 212 协议上传到监控平台。项目同时提供本地显示、历史存储、断点续传、远程配置、传感器标定、告警和 OTA 升级等功能。
 
-当前正式开发版本：standard `2.1.0`，certified `2.1.0.1`。
+当前正式开发版本：standard `2.1.1`，certified `2.1.1.1`。
 
 正式源码分别位于 `firmware/standard/TSP` 和 `firmware/certified/TSP`。2.1.0系列将
 实时批次固定为120秒、气泵固定运行70秒，并在通气60秒后于泵运行期间读取颗粒物和
 气体；两版均已编译通过，但尚未完成硬件时序和长跑验证。
+
+2.1.1系列新增无有效时间时的本地测量快照，以及可选的 `get_data/with_status:true`
+精简状态回复。没有有效时间时不写正式历史、不统计或上传，不给旧批次补造日期。
+MCU已编译通过；LCD解析与实机联调仍待验收，实验版不随此次更新。
 
 当前最新已发布的2026-09-07正式打包Release：
 
@@ -36,6 +40,7 @@ AI辅助开发入口：
 - HJ 212 发送失败时保存完整待传报文，网络恢复后按批次补传。
 - 支持 M100M-B2 DTU 的网络时间、CSQ、TCP 目标配置和透明传输。
 - 支持 LCD、本项目 LED 控制卡和外部远程串口接口。
+- LCD/云端可复用 `get_data` 查询初始化、SD挂载/最近写入、时间及本批有效性；旧请求不增加字段。
 - 支持传感器校准、配置文件读写、告警、温湿度控制和 OTA 升级。
 
 ## 数据处理链路
@@ -276,8 +281,8 @@ python tools/export_sd_history_to_excel.py D:\sdcard_backup -o output\history_ra
 
 ```text
 firmware/
-├─ standard/TSP/                   Firmware 2.1.0正式通用源码
-└─ certified/TSP/                  Firmware 2.1.0.1正式认证源码
+├─ standard/TSP/                   Firmware 2.1.1正式通用源码
+└─ certified/TSP/                  Firmware 2.1.1.1正式认证源码
 
 firmware_workspace/
 ├─ build/                          可再生构建产物
@@ -301,7 +306,8 @@ tools/                             导出、诊断和厂商工具资料
 - [HJ 212-2025](docs/protocols/hj212/hj212-2025.pdf)
 - [传感器与设备说明书](docs/hardware/sensors/)
 - [装配前单设备测试文档](output/sensor_test_docs/)
-- [云端因子配置读取与修改接口（standard 2.1.0 / certified 2.1.0.1）](docs/protocols/remote/REMOTE_SENSOR_CONFIG_PROTOCOL.md)
+- [云端因子配置读取与修改接口](docs/protocols/remote/REMOTE_SENSOR_CONFIG_PROTOCOL.md)
+- [LCD/云端实时数据与精简设备状态接口](docs/protocols/lcd/LCD_GET_DATA_STATUS_PROTOCOL.md)
 
 ## 当前注意事项
 

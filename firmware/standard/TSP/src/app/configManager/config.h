@@ -59,6 +59,7 @@ public:
     ConfigManager();
 
     void begin();
+    static bool isKnownSensorId(const char* id);
     // --- 核心操作接口 ---
     bool loadFromFile(const char *path);
     bool saveToFile(const char *path);

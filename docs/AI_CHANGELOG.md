@@ -33,3 +33,16 @@ history or firmware release changelogs.
   real-time batch; invalid values remain excluded per factor.
 - Preserved the certified-only gas cap and calibration policy as the sole
   product-specific gas behavior.
+
+## 2026-09-28 — Offline snapshot and status baseline
+
+- Advanced only canonical standard/certified to 2.1.1/2.1.1.1; experimental
+  laboratory firmware remains independent and unchanged.
+- Separated always-available local measurement snapshots from valid-date
+  SD records, statistics and HJ212; no fake dates or backdating.
+- Added opt-in `get_data/with_status:true` compact device status, per-batch
+  sequence, monotonic age and request-order validity bits. Legacy requests
+  retain their field structure; the extended wire limit is 800 bytes.
+- Unified calendar validity across the dated data flow. No new task or LCD
+  startup dependency; 120-second batches, 70-second pump and certified gas
+  policy remain unchanged. Builds passed; hardware/LCD qualification is pending.

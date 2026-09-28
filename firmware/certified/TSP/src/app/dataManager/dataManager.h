@@ -10,6 +10,7 @@
 #include <freertos/semphr.h>
 #include "../../module/pack212/pack212.h"
 #include "../../inc/sys_init.h" 
+#include "../../module/diagnostics/RealtimeSnapshotInfo.h"
 
 // ͳ���߼��ṹ��
 struct StatValue {
@@ -70,7 +71,8 @@ public:
     // Firmware 2.0.3: copy only the values requested by the LCD. This avoids
     // cloning the complete std::map for every get_data command.
     bool readLatestValues(const char* const* ids, size_t idCount,
-                          float* values, uint64_t& timestamp);
+                          float* values, uint64_t& timestamp,
+                          RealtimeSnapshotInfo* sample = nullptr);
     // Build a one-shot status view from the latest valid measurements. The
     // caller owns the returned reference and must release it.
     AllProcessedDataPacket* createStatusSnapshot(DataStatus status);
@@ -98,6 +100,8 @@ private:
     std::map<String, ProcessedDataPacket> _last_real_snapshot;
     uint64_t _l_m_s_timestamp;
     uint64_t _last_real_timestamp;
+    uint32_t _last_real_seq = 0;
+    uint64_t _last_real_sampled_us = 0;
 
     // ʱ���¼ (��ʽ��YYYYMMDDHHMMSS)
     uint64_t _last_min_time;
@@ -106,6 +110,7 @@ private:
 
     // �ڲ���������
     void checkAndDispatch(AllDataPacket* rawData);
+    void updateLatestSnapshot(const AllDataPacket* rawData);
     void dispatchRealPacket(const AllDataPacket* rawData);
     void dispatchPacket(DataTime type, uint64_t ts, std::map<String, StatValue>& source, uint32_t traceId);
 };

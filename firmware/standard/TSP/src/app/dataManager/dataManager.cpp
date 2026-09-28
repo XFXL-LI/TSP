@@ -4,6 +4,10 @@
 #include "../../inc/sys_init.h"
 #include <new>
 #include <time.h>
+#include <math.h>
+#include <esp_timer.h>
+#include "../../module/diagnostics/CalendarClock.h"
+#include "../../module/diagnostics/DeviceRuntimeStatus.h"
 
 DataManager::DataManager() {
     _last_min_time = 0;
@@ -14,14 +18,22 @@ DataManager::DataManager() {
     _statsMutex = xSemaphoreCreateMutex();
     _lastMinDataMutex = xSemaphoreCreateMutex();
     _lastRealDataMutex = xSemaphoreCreateMutex();
+    if (!_statsMutex || !_lastMinDataMutex || !_lastRealDataMutex) {
+        DeviceRuntimeStatus::criticalInitFailed();
+    }
 }
 void DataManager::begin() {
     _queryQueue = EventBus::getInstance().createReceiverQueue(10, "DATA_MANAGER");
+    if (!_queryQueue) {
+        DeviceRuntimeStatus::criticalInitFailed();
+        return;
+    }
     EventBus::getInstance().subscribe(EventID::DATA_QUERY_REQ, _queryQueue);
     EventBus::getInstance().subscribe(EventID::RAW_DATA_COLLECTED, _queryQueue);
 }
 
 void DataManager::poll() {
+    if (!_queryQueue) return;
     EventMsg msg;
     if (EventBus::waitEvent(_queryQueue, msg)) {
         RemoteOtaManager::BusinessActivityGuard businessActivity;
@@ -48,20 +60,31 @@ void DataManager::processAllData(AllDataPacket* pkg) {
 }
 
 bool DataManager::readLatestValues(const char* const* ids, size_t idCount,
-                                   float* values, uint64_t& timestamp) {
+                                   float* values, uint64_t& timestamp,
+                                   RealtimeSnapshotInfo* sample) {
     if (ids == nullptr || values == nullptr) return false;
     for (size_t i = 0; i < idCount; ++i) values[i] = 0.0f;
+    if (_lastRealDataMutex == nullptr) return false;
 
     if (xSemaphoreTake(_lastRealDataMutex, pdMS_TO_TICKS(100)) != pdTRUE) {
         LOG_WARNING("[DIAG] GET_DATA_SNAPSHOT_BUSY");
         return false;
     }
     timestamp = _last_real_timestamp;
+    if (sample != nullptr) {
+        sample->seq = _last_real_seq;
+        sample->ageMs = realtimeAgeMs(_last_real_seq, _last_real_sampled_us,
+                                     static_cast<uint64_t>(esp_timer_get_time()));
+        sample->validMask = 0;
+    }
     for (size_t i = 0; i < idCount; ++i) {
         if (ids[i] == nullptr) continue;
         for (const auto& item : _last_real_snapshot) {
             if (item.first.equals(ids[i])) {
-                if (item.second.is_valid) values[i] = item.second.value;
+                if (item.second.is_valid && isfinite(item.second.value)) {
+                    values[i] = item.second.value;
+                    if (sample != nullptr && i < 16) sample->validMask |= 1U << i;
+                }
                 break;
             }
         }
@@ -71,14 +94,17 @@ bool DataManager::readLatestValues(const char* const* ids, size_t idCount,
 }
 
 AllProcessedDataPacket* DataManager::createStatusSnapshot(DataStatus status) {
+    // OTA maintenance reports are dated HJ212 data, not local display queries.
+    const uint64_t timestamp = CalendarClock::currentTimestamp();
+    if (timestamp == 0) return nullptr;
     AllProcessedDataPacket* pkg = new (std::nothrow) AllProcessedDataPacket();
     if (pkg == nullptr) return nullptr;
 
-    if (xSemaphoreTake(_lastRealDataMutex, pdMS_TO_TICKS(100)) != pdTRUE) {
+    if (_lastRealDataMutex == nullptr ||
+        xSemaphoreTake(_lastRealDataMutex, pdMS_TO_TICKS(100)) != pdTRUE) {
         pkg->release();
         return nullptr;
     }
-    const uint64_t fallbackTimestamp = _last_real_timestamp;
     for (const auto& item : _last_real_snapshot) {
         if (!item.second.is_valid) continue;
         ProcessedDataPacket copy = item.second;
@@ -88,21 +114,7 @@ AllProcessedDataPacket* DataManager::createStatusSnapshot(DataStatus status) {
     }
     xSemaphoreGive(_lastRealDataMutex);
 
-    time_t now = 0;
-    struct tm timeInfo = {};
-    time(&now);
-    if (localtime_r(&now, &timeInfo) != nullptr &&
-        timeInfo.tm_year + 1900 >= 2020 && timeInfo.tm_year + 1900 <= 2099) {
-        pkg->last_update =
-            static_cast<uint64_t>(timeInfo.tm_year + 1900) * 10000000000ULL +
-            static_cast<uint64_t>(timeInfo.tm_mon + 1) * 100000000ULL +
-            static_cast<uint64_t>(timeInfo.tm_mday) * 1000000ULL +
-            static_cast<uint64_t>(timeInfo.tm_hour) * 10000ULL +
-            static_cast<uint64_t>(timeInfo.tm_min) * 100ULL +
-            static_cast<uint64_t>(timeInfo.tm_sec);
-    } else {
-        pkg->last_update = fallbackTimestamp;
-    }
+    pkg->last_update = timestamp;
     pkg->dataTime = DataTime::REAL_DATA;
     return pkg;
 }
@@ -133,8 +145,19 @@ void DataManager::checkAndDispatch(AllDataPacket* rawData) {
         return;
     }
 
+    // Local measurements must remain available without RTC or network time.
+    // Only dated events may feed SD records, statistics and HJ212.
+    updateLatestSnapshot(rawData);
     uint64_t ts = rawData->last_update;
-    if (ts < 20260527000000) {
+    if (!CalendarClock::isValidTimestamp(ts)) {
+        if (_statsMutex != nullptr &&
+            xSemaphoreTake(_statsMutex, pdMS_TO_TICKS(100)) == pdTRUE) {
+            _min_stats.clear();
+            _hour_stats.clear();
+            _day_stats.clear();
+            _last_min_time = _last_hour_time = _last_day_time = 0;
+            xSemaphoreGive(_statsMutex);
+        }
         return;
     }
 
@@ -147,7 +170,8 @@ void DataManager::checkAndDispatch(AllDataPacket* rawData) {
 
     LOG_DEBUG("checkAndDispatch time: %llu", currentMin);
 
-    if (xSemaphoreTake(_statsMutex, pdMS_TO_TICKS(100)) != pdTRUE) {
+    if (_statsMutex == nullptr ||
+        xSemaphoreTake(_statsMutex, pdMS_TO_TICKS(100)) != pdTRUE) {
         LOG_WARNING("DataManager: Failed to acquire mutex for checkAndDispatch");
         return;
     }
@@ -222,6 +246,36 @@ void DataManager::checkAndDispatch(AllDataPacket* rawData) {
     xSemaphoreGive(_statsMutex);
 }
 
+void DataManager::updateLatestSnapshot(const AllDataPacket* rawData) {
+    if (_lastRealDataMutex == nullptr ||
+        xSemaphoreTake(_lastRealDataMutex, pdMS_TO_TICKS(100)) != pdTRUE) {
+        LOG_WARNING("DataManager: Failed to update serial real-time snapshot");
+        return;
+    }
+    // Reuse existing nodes; remove disabled factors instead of retaining stale data.
+    for (auto it = _last_real_snapshot.begin(); it != _last_real_snapshot.end();) {
+        if (rawData->data_map.find(it->first) == rawData->data_map.end()) {
+            it = _last_real_snapshot.erase(it);
+        } else {
+            ++it;
+        }
+    }
+    for (const auto& item : rawData->data_map) {
+        ProcessedDataPacket data = {};
+        if (item.second != nullptr) {
+            data.value = data.min_val = data.max_val = data.cou_val = item.second->value;
+            data.is_valid = item.second->is_valid && isfinite(data.value);
+            data.status = item.second->status;
+        }
+        _last_real_snapshot[item.first] = data;
+    }
+    _last_real_timestamp = CalendarClock::isValidTimestamp(rawData->last_update)
+        ? rawData->last_update : 0;
+    _last_real_seq = nextRealtimeSequence(_last_real_seq);
+    _last_real_sampled_us = static_cast<uint64_t>(esp_timer_get_time());
+    xSemaphoreGive(_lastRealDataMutex);
+}
+
 void DataManager::dispatchRealPacket(const AllDataPacket* rawData) {
     AllProcessedDataPacket* pkg = new AllProcessedDataPacket();
     pkg->last_update = rawData->last_update;
@@ -239,16 +293,6 @@ void DataManager::dispatchRealPacket(const AllDataPacket* rawData) {
             data.status = dataPtr->status;
         }
         pkg->processed_data_map[id] = data;
-    }
-
-    if (xSemaphoreTake(_lastRealDataMutex, pdMS_TO_TICKS(100)) == pdTRUE) {
-        _last_real_snapshot = pkg->processed_data_map;
-        _last_real_timestamp = pkg->last_update;
-        xSemaphoreGive(_lastRealDataMutex);
-        LOG_DEBUG("Updated serial real-time snapshot: %llu, sensors=%d",
-                  _last_real_timestamp, _last_real_snapshot.size());
-    } else {
-        LOG_WARNING("DataManager: Failed to update serial real-time snapshot");
     }
 
     LOG_INFO("[DIAG] PROCESS trace=%u type=%u timestamp=%llu records=%u",

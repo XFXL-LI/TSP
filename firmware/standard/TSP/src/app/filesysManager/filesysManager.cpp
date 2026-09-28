@@ -3,6 +3,8 @@
 #include "../../module/log/log_manager.h"
 #include "../../module/pack212/pack212.h"
 #include "../../module/diagnostics/RuntimeMemoryDiagnostics.h"
+#include "../../module/diagnostics/DeviceRuntimeStatus.h"
+#include "../../module/diagnostics/CalendarClock.h"
 #include "../../system/event/eventBus.h"
 #include "../../module/json/config_json.h"
 #include <sys/dirent.h>
@@ -287,6 +289,9 @@ filesysManager::filesysManager() {
     if (SaveDataFileTaskQueue == nullptr) {
         SaveDataFileTaskQueue = EventBus::getInstance().createReceiverQueue(20, "STORAGE");
     }
+    if (!_sdMutex || !SaveDataFileTaskQueue) {
+        DeviceRuntimeStatus::criticalInitFailed();
+    }
     EventBus::getInstance().subscribe(EventID::PROCESSED_DATA_COLLECTED, SaveDataFileTaskQueue);
     EventBus::getInstance().subscribe(EventID::RECORD_QUERY_REQ, SaveDataFileTaskQueue);
 }
@@ -329,6 +334,7 @@ String filesysManager::getFilePath(int type, uint64_t ts) {
 
 void filesysManager::storeProcessedPacket(AllProcessedDataPacket* pkg) {
     if (!pkg) return;
+    if (!CalendarClock::isValidTimestamp(pkg->last_update)) return;
     // Firmware 2.0.3: serialize FAT access across storage, LCD history reads,
     // and pending recovery. Concurrent stdio calls produced zero-filled files.
     ScopedSdLock sdLock(_sdMutex);
@@ -359,6 +365,7 @@ void filesysManager::storeProcessedPacket(AllProcessedDataPacket* pkg) {
         historyData.push_back(rec);
     }
     bool ok = writeToFile(path, historyData);
+    DeviceRuntimeStatus::measurementWriteFinished(ok);
     LOG_INFO("[DIAG] STORE trace=%u type=%u timestamp=%llu records=%u ok=%d path=%s",
              (unsigned)pkg->trace_id,
              (unsigned)pkg->dataTime,
@@ -381,13 +388,14 @@ bool filesysManager::writeToFile(const String& path, const std::vector<fileStora
             if (f) {
                 size_t written = fwrite(rec.data(), sizeof(fileStorage), rec.size(), f);
                 
-                fclose(f);
+                const int closeResult = fclose(f);
 
-                if (written == rec.size()) {
+                if (written == rec.size() && closeResult == 0) {
                     LOG_DEBUG("Successfully saved %d records to: %s", (int)written, path.c_str());
                     return true;
                 } else {
-                    LOG_ERROR("Write size mismatch! Expected %d, wrote %d", rec.size(), written);
+                    LOG_ERROR("Record write failed: expected=%u written=%u close=%d",
+                              (unsigned)rec.size(), (unsigned)written, closeResult);
                 }
             } else {
                 LOG_ERROR("Failed to open file: %s", path.c_str());

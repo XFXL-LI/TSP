@@ -6,6 +6,7 @@
 #include "../../module/gas/GasCalibrationManager.h"
 #include "../../module/gas/GasUnitConverter.h"
 #include "../../module/diagnostics/RuntimeMemoryDiagnostics.h"
+#include "../../module/diagnostics/CalendarClock.h"
 #include "collect/SensorReadPolicy.h"
 
 collectorManager *collectorManager::_instance = nullptr;
@@ -249,12 +250,13 @@ uint64_t currentCollectionTimestamp()
     {
         return 0;
     }
-    return ((uint64_t)(timeinfo.tm_year + 1900) * 10000000000ULL) +
+    const uint64_t timestamp = ((uint64_t)(timeinfo.tm_year + 1900) * 10000000000ULL) +
            ((uint64_t)(timeinfo.tm_mon + 1) * 100000000ULL) +
            ((uint64_t)timeinfo.tm_mday * 1000000ULL) +
            ((uint64_t)timeinfo.tm_hour * 10000ULL) +
            ((uint64_t)timeinfo.tm_min * 100ULL) +
            (uint64_t)timeinfo.tm_sec;
+    return CalendarClock::isValidTimestamp(timestamp) ? timestamp : 0;
 }
 
 void publishCollectionAlarm(const String &id)
@@ -411,7 +413,7 @@ void collectorManager::poll()
     allData->last_update = currentCollectionTimestamp();
     if (allData->last_update == 0)
     {
-        LOG_ERROR("System clock is invalid; this collection cycle will not be published");
+        LOG_WARNING("System clock is invalid; local values remain available, dated outputs paused");
     }
     LOG_INFO("[DIAG] COLLECT_STAGE trace=%u stage=air_path offset_ms=60000",
              (unsigned)allData->trace_id);
@@ -467,7 +469,7 @@ void collectorManager::poll()
     waitUntil(finishMs);
     const int subCount = EventBus::getInstance().getSubscriberCount(
         EventID::RAW_DATA_COLLECTED);
-    if (allData->last_update != 0 && !allData->data_map.empty())
+    if (!allData->data_map.empty())
     {
         for (int i = 0; i < subCount; ++i) allData->retain();
         const RuntimeMemorySnapshot memory = observeRuntimeMemory();

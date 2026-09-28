@@ -1,6 +1,6 @@
 # TSP 固件版本与目录说明
 
-最后更新：2026-09-16
+最后更新：2026-09-28
 
 本文件用于区分“正式实机验证固件”“对应的可编译源码”和“当前开发源码”。
 不要只根据目录名或 `TSP.ino` 文件名判断版本。
@@ -9,19 +9,22 @@
 
 | Variant | 版本 | 当前正式源码 | 构建输入 | 源码指纹 |
 |---|---:|---|---:|---|
-| standard | 2.1.0 | `firmware/standard/TSP` | 88 | `8D4DE1EA9A501390D4DF906B4B75988C2DAB424594704B9E648074B9E1F7991F` |
-| certified | 2.1.0.1 | `firmware/certified/TSP` | 89 | `7612C96BE98E74AC6182F8F9D96E3C4BE836DDACC9F87001418DDBA5A06777F0` |
+| standard | 2.1.1 | `firmware/standard/TSP` | 93 | `95CE6E20E3FF7DEB9DE43F76FB505EC55E194C5E354132FAC94DC4E5774605B3` |
+| certified | 2.1.1.1 | `firmware/certified/TSP` | 94 | `DCF142C5D1078957237B193A2BB80FBF5B3370E587B9C1CE4853C3C9338DD7F2` |
 
 当前构建入口为 `firmware_workspace/build-standard.cmd`、
 `firmware_workspace/build-certified.cmd`和兼容standard的
 `firmware_workspace/build-current.cmd`。状态入口为
 `status-standard.cmd`、`status-certified.cmd`和默认standard的`status.cmd`。
 
-两版正式源码均已得到以下迁移验证结论：
+此前两版迁移基线得到以下验证结论（不是本次新代码的二进制等价结论）：
 
 `MIGRATION BUILD VERIFIED - EXPECTED NONDETERMINISTIC METADATA ONLY`
 
 该结论不是bit-identical；新旧BIN的差异已由编译时间及其派生镜像元数据完整解释。
+
+当前2.1.1/2.1.1.1已编译通过，均为 `compiled-not-hardware-verified`；
+实验版不随本次更新。新构建不覆盖已有INFO测试目录，也未生成新的正式Release。
 
 当前最新已发布的2026-09-07正式Release分别为：
 
@@ -609,7 +612,7 @@ marker和raw重建兜底。详细记录见
 2.0.23.1同步2.0.23的公共pending写入加固，认证专用气体封顶和校准策略未修改。详细
 记录见[Firmware 2.0.23.1变更记录](docs/changelog/CHANGELOG_2.0.23.1.md)。
 
-## Firmware 2.1.0：当前standard正式源码
+## Firmware 2.1.0：上一版standard编译基线
 
 当前正式源码：`firmware/standard/TSP`
 
@@ -625,7 +628,7 @@ marker和raw重建兜底。详细记录见
 通道；小时统计纳入每一个有效实时批次。详细记录见
 [Firmware 2.1.0变更记录](docs/changelog/CHANGELOG_2.1.0.md)。
 
-## Firmware 2.1.0.1：当前certified正式源码
+## Firmware 2.1.0.1：上一版certified编译基线
 
 当前正式源码：`firmware/certified/TSP`
 
@@ -639,6 +642,36 @@ marker和raw重建兜底。详细记录见
 2.1.0.1同步2.1.0的公共时序、颗粒物批量读取、配置时间和统计逻辑，同时保留认证版
 O3/NO2/SO2封顶及独立校准策略。详细记录见
 [Firmware 2.1.0.1变更记录](docs/changelog/CHANGELOG_2.1.0.1.md)。
+
+## Firmware 2.1.1：当前standard正式源码
+
+正式源码：`firmware/standard/TSP`
+
+- 构建输入：93；
+- 源码指纹：`95CE6E20E3FF7DEB9DE43F76FB505EC55E194C5E354132FAC94DC4E5774605B3`；
+- 应用BIN：687264字节；
+- SHA-256：`3A18371CF566838E88B5C93936B620C8BCCE93D73AA7D58AF49871942F79479D`；
+- 构建目录：`firmware_workspace/build/standard-2.1.1`；
+- 状态：`compiled-not-hardware-verified`，运行日志级别仍为DEBUG。
+
+无有效时间时仍更新本地测量快照；正式SD记录、统计和实时HJ212等待有效日期。
+`get_data` 新增可选 `with_status:true` 精简状态，旧请求结构不变，扩展回复含换行
+限制为800字节。采集120秒、气泵70秒和气体间隔500ms不变，未操作设备FFat。
+LCD/云端按[状态接口约定](docs/protocols/lcd/LCD_GET_DATA_STATUS_PROTOCOL.md)联调。
+
+## Firmware 2.1.1.1：当前certified正式源码
+
+正式源码：`firmware/certified/TSP`
+
+- 构建输入：94；
+- 源码指纹：`DCF142C5D1078957237B193A2BB80FBF5B3370E587B9C1CE4853C3C9338DD7F2`；
+- 应用BIN：687744字节；
+- SHA-256：`B50F569F1C1F348376205082DD2D301590EA7A6056288D1AC45F612061D766AB`；
+- 构建目录：`firmware_workspace/build/certified-2.1.1.1`；
+- 状态：`compiled-not-hardware-verified`，运行日志级别仍为DEBUG。
+
+同步2.1.1公共改动，保留O3/NO2/SO2封顶500ppb、CO不封顶，以及独立认证校准策略。
+实验固件和既有INFO测试包不变。两个新BIN均只编译，未烧录、未擦除或实机验收。
 
 ## 使用规则
 

@@ -1,4 +1,5 @@
 #include "config.h"
+#include "../../module/diagnostics/DeviceRuntimeStatus.h"
 #include "../../system/ota/remote_ota_manager.h"
 #include "config_json.h"
 #include "system_json.h"
@@ -338,35 +339,47 @@ ConfigManager::ConfigManager() : fs(file_storage::getInstance())
     LOG_INFO("ConfigManager Instance Created.");
 }
 
+bool ConfigManager::isKnownSensorId(const char* id) {
+    return sensorDefinitionIndex(id) >= 0;
+}
+
 void ConfigManager::begin(){
-    LOG_INFO("FFAT and SDcart Init sucess, start load system file!");
+    LOG_INFO("Initializing FFAT and SD, then loading system configuration");
     int res = fs.begin();
     if (res == 1){
         LOG_ERROR("FFAT Init error");
+        DeviceRuntimeStatus::criticalInitFailed();
     } else if (res == 2){
         LOG_ERROR("SDcard Init error");
     }
     if (!loadFromFile(CONFIG_PATH)){
         LOG_ERROR("Load CONFIG_PATH error");
+        DeviceRuntimeStatus::criticalInitFailed();
     }
 
     if (!loadFromFile(MODEL_PATH)){
         LOG_ERROR("Load MODEL_PATH error");
+        DeviceRuntimeStatus::criticalInitFailed();
     }
     if (!loadFromFile(SYSTEM_PATH)){
         LOG_ERROR("Load SYSTEM_PATH error");
+        DeviceRuntimeStatus::criticalInitFailed();
     }
     if (!loadFromFile(TEMP_CONTROL_PATH)){
         LOG_ERROR("Load TEMP_CONTROL_PATH error");
+        DeviceRuntimeStatus::criticalInitFailed();
     }
     if (!loadFromFile(HJ212_PATH)){
         LOG_ERROR("Load HJ212_PATH error");
+        DeviceRuntimeStatus::criticalInitFailed();
     }
     if (!loadFromFile(SWITCH_PATH)){
         LOG_ERROR("Load SWITCH_PATH error");
+        DeviceRuntimeStatus::criticalInitFailed();
     }
     if (!loadFromFile(ALARM_PATH)){
         LOG_ERROR("Load ALARM_PATH error");
+        DeviceRuntimeStatus::criticalInitFailed();
     }
     LOG_INFO("======== Global Configuration Dump ========");
 
@@ -412,6 +425,9 @@ void ConfigManager::begin(){
              globalCfg.alarmConfig.alarm_switch ? "ON" : "OFF");
     
     _queryQueue = EventBus::getInstance().createReceiverQueue(10);
+    if (!_queryQueue || !systemSetup.mutex) {
+        DeviceRuntimeStatus::criticalInitFailed();
+    }
     EventBus::getInstance().subscribe(EventID::CONFIG_QUERY_REQ, _queryQueue);
     EventBus::getInstance().subscribe(EventID::CONFIG_SET_REQ, _queryQueue);
     LOG_INFO("============================================");

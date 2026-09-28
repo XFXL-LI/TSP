@@ -172,6 +172,15 @@ $debugConstraint = if ($debugDefinition) {
 } else {
     'DEBUG disabled (LOG_LEVEL_INFO)'
 }
+$systemSource = Get-Content -LiteralPath (Join-Path $SourcePath 'src\system\system\system.cpp') -Raw
+if ($systemSource -notmatch '#\s*ifdef\s+DEBUG') {
+    $level = [regex]::Match($systemSource, 'setLevel\((LOG_LEVEL_\w+)\)')
+    $debugConstraint = if ($level.Success) {
+        "Runtime logging: $($level.Groups[1].Value)"
+    } else {
+        'Runtime logging: unknown (not inferred from a missing DEBUG macro)'
+    }
+}
 
 $manifest = [ordered]@{
     firmwareVersion = $firmwareVersion

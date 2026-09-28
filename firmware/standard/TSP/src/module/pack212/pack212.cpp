@@ -1,4 +1,5 @@
 #include "pack212.h"
+#include "../diagnostics/CalendarClock.h"
 #include "../../inc/sys_init.h"
 #include "../../module/log/log_manager.h"
 #include "../../module/gas/GasUnitConverter.h"
@@ -113,7 +114,8 @@ String HJ212_DataCenter::getCnCode(DataTime type) {
 }
 // 20260506120000
 String HJ212_DataCenter::build2017Hj212Packet(const AllProcessedDataPacket* allData, const HJ212CONFIG& sysCfg) {
-    if (allData == nullptr || allData->processed_data_map.empty()) return "";
+    if (allData == nullptr || allData->processed_data_map.empty() ||
+        !CalendarClock::isValidTimestamp(allData->last_update)) return "";
     String cp;
     if (!cp.reserve(allData->processed_data_map.size() * 80 + 64)) {
         LOG_ERROR("[DIAG] HJ_BUILD_FAIL version=2017 stage=cp_reserve free=%u largest=%u",
@@ -181,7 +183,8 @@ unsigned int HJ212_DataCenter::calculateCRC(const char *puchMsg, int usDataLen) 
 }
 
 String HJ212_DataCenter::build2025Hj212Packet(const AllProcessedDataPacket* allData, const HJ212CONFIG& sysCfg) {
-    if (allData == nullptr || allData->processed_data_map.empty()) return "";
+    if (allData == nullptr || allData->processed_data_map.empty() ||
+        !CalendarClock::isValidTimestamp(allData->last_update)) return "";
     String cp;
     if (!cp.reserve(allData->processed_data_map.size() * 80 + 64)) {
         LOG_ERROR("[DIAG] HJ_BUILD_FAIL version=2025 stage=cp_reserve free=%u largest=%u",

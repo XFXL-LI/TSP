@@ -2,12 +2,14 @@
 
 文档版本：1.0；核对日期：2026-09-28。
 
-适用固件：standard 2.1.0、certified 2.1.0.1。
+适用固件：standard 2.1.1、certified 2.1.1.1；沿用2.1.0系列的因子配置接口。
 
 核对状态：已按两套正式源码核对；云端程序和实际链路仍需联调验收。
 
 本文供云端开发人员实现因子开关、因子详情读取和修改，以及当前采集/上传周期的配置显示。
-MCU 已具备本文接口，本次只补充文档，不新增协议或修改固件。
+MCU 已具备本文配置接口，2.1.1系列不改变本文因子选择、详情查询和保存语义。
+实时数据的可选设备状态扩展另见
+[LCD/云端实时数据与设备状态接口](../lcd/LCD_GET_DATA_STATUS_PROTOCOL.md)。
 
 新云端使用 `selection` 管理开关，使用 `ids` 查询详情，使用 `merge` 修改详情。
 旧全量接口继续兼容，但不应作为新页面的局部保存接口。
@@ -16,8 +18,8 @@ MCU 已具备本文接口，本次只补充文档，不新增协议或修改固�
 
 正式源码仅为：
 
-- standard：`firmware/standard/TSP`，固件版本 `2.1.0`。
-- certified：`firmware/certified/TSP`，固件版本 `2.1.0.1`。
+- standard：`firmware/standard/TSP`，固件版本 `2.1.1`。
+- certified：`firmware/certified/TSP`，固件版本 `2.1.1.1`。
 
 两套正式固件的本文配置接口逻辑一致；不适用于 experimental 实验固件。
 `certified` 名称不代表本文接口已经完成云端或硬件验收。
