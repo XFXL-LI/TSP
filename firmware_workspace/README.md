@@ -1,6 +1,6 @@
 # TSP ESP32-S3 固件工作区
 
-最后更新：2026-09-20
+最后更新：2026-10-09
 
 本目录是固件状态查看、构建、Release验证和受保护烧录入口。正式业务源码已迁移到
 仓库根目录的 `firmware/`，不再从 `tmp/` 或根目录旧 `TSP/` 构建。
@@ -9,14 +9,22 @@
 
 | Variant | 版本 | 源码路径 | 构建输入 | 源码指纹 |
 |---|---:|---|---:|---|
-| standard | 2.1.0 | `../firmware/standard/TSP` | 88 | `8D4DE1EA9A501390D4DF906B4B75988C2DAB424594704B9E648074B9E1F7991F` |
-| certified | 2.1.0.1 | `../firmware/certified/TSP` | 89 | `7612C96BE98E74AC6182F8F9D96E3C4BE836DDACC9F87001418DDBA5A06777F0` |
+| standard | 2.1.3 | `../firmware/standard/TSP` | 99 | `D490FACFB83CC839F004B30781B882F70E236EF7484A2891D497804A847C13BF` |
+| certified | 2.1.3.1 | `../firmware/certified/TSP` | 100 | `5F50F4FBF848D450EE7E90842DF6E1D18EADC38889F4103420357FB150DB2700` |
 
-两版2.1.0系列分段采集构建均已通过，状态为
+两版2.1.3系列构建均已通过，状态为
 `compiled-not-hardware-verified`。当前构建目录分别为：
 
-- `build/current-standard`
-- `build/current-certified`
+- `build/standard-2.1.3-atmospheric-pressure-20261009`
+- `build/certified-2.1.3.1-atmospheric-pressure-20261009`
+
+本次公共改动为LED兼容开关映射、两／四区域连续翻页，以及加热总开关即时生效；
+保留上一版的气体读取／SD挂载可靠性修改。120秒采集、70秒气泵及认证气体策略不变。
+未烧录、未实机验收；不宣称支持SD热拔卡。
+2026-10-09在同版本下修复LED帧间隔：发送完成后至少等待50ms，再发下一区域，
+清屏／模式切换同样分帧；每版静态RAM比2026-10-08构建增加80字节。
+旧`build/standard-2.1.3`及`build/certified-2.1.3.1`保留，不是本次修复产物。
+接口与验收要求见[开关配置协议](../docs/protocols/lcd/LCD_SWITCH_CONFIG_PROTOCOL.md)。
 
 ## 目录职责
 

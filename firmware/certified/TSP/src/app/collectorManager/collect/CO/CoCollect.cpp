@@ -121,6 +121,10 @@ bool CoCollect::gal(int increment, int ratio) {
     }
 }
 DataPacket* CoCollect::collect() {
+    return collect(ReadDeadline{});
+}
+
+DataPacket* CoCollect::collect(ReadDeadline deadline) {
     DataPacket *packet = new DataPacket();
     strncpy(packet->sensor_id, _id.c_str(), sizeof(packet->sensor_id) - 1);
     packet->is_valid = false;
@@ -134,11 +138,14 @@ DataPacket* CoCollect::collect() {
     uint16_t gasRegisters[2] = {0, 0};
     bool readOk = false;
 
-    if (xSemaphoreTake(_StreamMutex, pdMS_TO_TICKS(3000)) == pdTRUE)
+    const uint32_t remainingMs = deadline.remainingMs(millis());
+    const uint32_t lockWaitMs = remainingMs < 3000 ? remainingMs : 3000;
+    if (_StreamMutex != nullptr &&
+        xSemaphoreTake(_StreamMutex, pdMS_TO_TICKS(lockWaitMs)) == pdTRUE)
     {
         readOk = GasModbusAccess::readStatusAndConcentration(
             *_mb_manager, _slaveId, gasRegisters, 3, 500,
-            _id.c_str(), "normal");
+            _id.c_str(), "normal", deadline);
         xSemaphoreGive(_StreamMutex);
     }
     else

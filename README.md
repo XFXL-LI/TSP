@@ -2,7 +2,7 @@
 
 本项目是基于 ESP32-S3 的空气微站/TSP 环境监测终端固件，用于采集颗粒物、气态污染物、气象和噪声数据，并通过 HJ 212 协议上传到监控平台。项目同时提供本地显示、历史存储、断点续传、远程配置、传感器标定、告警和 OTA 升级等功能。
 
-当前正式开发版本：standard `2.1.1`，certified `2.1.1.1`。
+当前正式开发版本：standard `2.1.3`，certified `2.1.3.1`。
 
 正式源码分别位于 `firmware/standard/TSP` 和 `firmware/certified/TSP`。2.1.0系列将
 实时批次固定为120秒、气泵固定运行70秒，并在通气60秒后于泵运行期间读取颗粒物和
@@ -11,6 +11,21 @@
 2.1.1系列新增无有效时间时的本地测量快照，以及可选的 `get_data/with_status:true`
 精简状态回复。没有有效时间时不写正式历史、不统计或上传，不给旧批次补造日期。
 MCU已编译通过；LCD解析与实机联调仍待验收，实验版不随此次更新。
+
+2.1.2系列将未就绪气体的状态/浓度组合读取扩展为最多3次，各次之间仍至少间隔500ms，
+且采集阶段按70秒结束时间预算跳过来不及完成的读取。SD启动挂载失败后约每60秒重试，
+每次设置3秒I/O预算、单命令超时参数上限1秒，并回收失败时已取得的资源；调度和SDK内部
+事件处理、清理仍可能使总耗时超过I/O预算。成功后停止重试，复用现有SD状态字段。
+这不等于支持运行中热拔卡，也不补写未挂载期间的历史数据；两版仍待实机验收。
+
+2.1.3系列复用LCD原有JSON字段控制LED开关和两／四区域模式，连续每5秒翻页，
+用小型文本缓存代替长时间占用数据包；加热总开关保存后即时生效，关闭时主动停止加热，
+但SHT30与风扇继续运行。采集／上传周期和认证气体策略不变。
+2026-10-09同版本修复LED帧间隔，每帧完成后至少50ms再发送下一区域，清屏同样分帧；
+当前源码对应同日下午的`atmospheric-pressure-20261009`构建；此前LED帧间隔构建保留，实机复测待完成。
+字段映射、首次升级默认值和验收要求见
+[LCD／远程端开关配置协议](docs/protocols/lcd/LCD_SWITCH_CONFIG_PROTOCOL.md)。
+两版已编译，尚未实机验证；分钟／小时／天开关的业务语义留待后续单独处理。
 
 当前最新已发布的2026-09-07正式打包Release：
 
@@ -259,7 +274,7 @@ status.cmd               默认查看 standard 状态
 5. 跨 10 分钟边界产生 `CN=2051`；
 6. SD 卡能够写入历史记录；
 7. 断网后生成 pending 文件，恢复网络后补传并删除已确认文件；
-8. LED 动态区域 41/42 正常轮播，LCD 数据与平台数据一致；
+8. LED 两区域41/42与四区域41～44连续翻页、关闭清屏和模式切换正常，加热开关即时生效，LCD数据与平台一致；
 9. 连续运行期间无 `abort()`、看门狗复位和持续堆内存下降。
 
 ## SD 历史数据导出
@@ -281,8 +296,8 @@ python tools/export_sd_history_to_excel.py D:\sdcard_backup -o output\history_ra
 
 ```text
 firmware/
-├─ standard/TSP/                   Firmware 2.1.1正式通用源码
-└─ certified/TSP/                  Firmware 2.1.1.1正式认证源码
+├─ standard/TSP/                   Firmware 2.1.3正式通用源码
+└─ certified/TSP/                  Firmware 2.1.3.1正式认证源码
 
 firmware_workspace/
 ├─ build/                          可再生构建产物
@@ -308,13 +323,14 @@ tools/                             导出、诊断和厂商工具资料
 - [装配前单设备测试文档](output/sensor_test_docs/)
 - [云端因子配置读取与修改接口](docs/protocols/remote/REMOTE_SENSOR_CONFIG_PROTOCOL.md)
 - [LCD/云端实时数据与精简设备状态接口](docs/protocols/lcd/LCD_GET_DATA_STATUS_PROTOCOL.md)
+- [LCD/远程端开关配置与LED模式接口](docs/protocols/lcd/LCD_SWITCH_CONFIG_PROTOCOL.md)
 
 ## 当前注意事项
 
 - `model_json.h` 中大气压 `a01006` 的单位目前仍写为 `dB`，正确工程单位应为 `kPa`，正式平台联调前需要统一。
 - 气体采集器当前直接使用 `0x6001` 原始值，装配前必须确认模组单位和 `0x2031` 小数点配置与固件一致。
 - CO 的项目模型当前使用 `ppb`，而部分认证或平台数据可能使用 `μmol/mol`/`ppm`，上线前必须确认换算规则。
-- LED 控制卡采用项目专用 485 协议，不是 Modbus RTU；动态模板必须预先配置索引 41 和 42。
+- LED 控制卡采用项目专用485协议，不是Modbus RTU；两区域模板配置41/42，四区域模板配置41～44。空格清屏效果与控制卡接收节奏须实机验收。
 - M100M-B2 的供电、电平和接口以实物铭牌及原厂资料为准，不能套用相近型号参数。
 - 根目录 README 作为当前项目入口；旧版 Modbus/JSON 接口记录统一归档在
   [legacy-TSP-README](docs/archive/firmware-interface/legacy-TSP-README.md)，仅用于历史追溯。

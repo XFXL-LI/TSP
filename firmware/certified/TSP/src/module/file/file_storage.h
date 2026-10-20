@@ -7,6 +7,8 @@
 #include "esp_vfs_fat.h"
 #include <sys/stat.h>
 #include <vector>
+#include <atomic>
+#include "SdMountSession.h"
 
 #ifndef SD_MOUNT_POINT
 
@@ -22,7 +24,10 @@ struct DataRecord;
 
 class file_storage {
 private:
-    bool sd_card_initialized = false;
+    std::atomic<bool> sd_card_initialized{false};
+    std::atomic<bool> sd_mount_attempted{false};
+    std::atomic<uint32_t> sd_mount_finished_ms{0};
+    SdMountSession sd_mount_session;
     bool ffat_initialized = false;
 
     file_storage();
@@ -47,7 +52,8 @@ public:
     int writeFFATAtomic(const char *path, const char *config_content);
 
     bool SDcardInit();
-    bool isSDcardReady() const { return sd_card_initialized; }
+    bool isSDcardReady() const { return sd_card_initialized.load(std::memory_order_acquire); }
+    bool isSDMountRetryDue(uint32_t nowMs) const;
     int readSDCard(const char *path, String &content);
     int writeSDCard(const char *path, const String &content, bool append = false);
 

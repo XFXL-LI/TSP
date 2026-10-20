@@ -8,6 +8,7 @@
 #include "../../module/gas/GasUnitConverter.h"
 #include "../../inc/sys_init.h"
 #include "../../system/event/eventBus.h"
+#include "../tempManager/tempManager.h"
 #include <Ds1302.h>
 #include <esp_heap_caps.h>
 #include <math.h>
@@ -54,6 +55,79 @@ static bool normalizeSystemTimingContent(String &content)
     content = serialized;
     cJSON_free(serialized);
     return true;
+}
+
+static SwitchConfigPolicy::BoolField booleanField(cJSON *root, const char *name)
+{
+    cJSON *field = cJSON_GetObjectItemCaseSensitive(root, name);
+    return {field != nullptr, cJSON_IsBool(field) != 0, cJSON_IsTrue(field) != 0};
+}
+
+static bool readOtherSwitches(cJSON *root, SYSTEMSWITCH &target)
+{
+    if (!cJSON_IsObject(root)) return false;
+    struct Binding { const char *name; bool *value; };
+    const Binding bindings[] = {
+        {"log_to_sd", &target.log_to_sd},
+        {"save_min_data", &target.save_min_data},
+        {"save_hour_data", &target.save_hour_data},
+        {"save_day_data", &target.save_day_data},
+        {"enable_hj212", &target.enable_hj212},
+        {"mqtt_public", &target.mqtt_public}
+    };
+    for (const auto &binding : bindings) {
+        const auto field = booleanField(root, binding.name);
+        if (!field.present) continue;
+        if (!field.isBoolean) return false;
+        *binding.value = field.value;
+    }
+    return true;
+}
+
+static bool readStoredSwitch(cJSON *root, SYSTEMSWITCH &target,
+                             SwitchConfigPolicy::Controls &controls)
+{
+    if (!readOtherSwitches(root, target) ||
+        !SwitchConfigPolicy::readHeating(booleanField(root, "tempControlSwitch"),
+                                         booleanField(root, "tempConSwitch"), controls)) return false;
+    cJSON *led = cJSON_GetObjectItemCaseSensitive(root, "led");
+    if (led != nullptr) {
+        cJSON *enabled = cJSON_GetObjectItemCaseSensitive(led, "enabled");
+        cJSON *regions = cJSON_GetObjectItemCaseSensitive(led, "region_count");
+        if (!cJSON_IsObject(led) || !cJSON_IsBool(enabled) || !cJSON_IsNumber(regions) ||
+            (regions->valuedouble != 2 && regions->valuedouble != 4)) return false;
+        controls.ledEnabled = cJSON_IsTrue(enabled);
+        controls.ledRegions = static_cast<uint8_t>(regions->valueint);
+    }
+    // Legacy save_raw_data/enable_remote_dtu values are not LED choices.
+    target.tempConSwitch = controls.heatingEnabled;
+    return true;
+}
+
+static bool serializeSwitch(const SYSTEMSWITCH &value,
+                            const SwitchConfigPolicy::Controls &controls,
+                            bool legacyWire, char *buffer, size_t capacity)
+{
+    cJSON *root = cJSON_CreateObject();
+    if (root == nullptr) return false;
+    bool ok = cJSON_AddBoolToObject(root, "tempControlSwitch", controls.heatingEnabled) &&
+              cJSON_AddBoolToObject(root, "log_to_sd", value.log_to_sd) &&
+              cJSON_AddBoolToObject(root, "save_min_data", value.save_min_data) &&
+              cJSON_AddBoolToObject(root, "save_hour_data", value.save_hour_data) &&
+              cJSON_AddBoolToObject(root, "save_day_data", value.save_day_data) &&
+              cJSON_AddBoolToObject(root, "enable_hj212", value.enable_hj212) &&
+              cJSON_AddBoolToObject(root, "mqtt_public", value.mqtt_public);
+    if (ok && legacyWire) {
+        ok = cJSON_AddBoolToObject(root, "enable_remote_dtu", controls.ledEnabled) &&
+             cJSON_AddBoolToObject(root, "save_raw_data", controls.ledRegions == 4);
+    } else if (ok) {
+        cJSON *led = cJSON_AddObjectToObject(root, "led");
+        ok = led != nullptr && cJSON_AddBoolToObject(led, "enabled", controls.ledEnabled) &&
+             cJSON_AddNumberToObject(led, "region_count", controls.ledRegions);
+    }
+    if (ok) ok = cJSON_PrintPreallocated(root, buffer, static_cast<int>(capacity), false);
+    cJSON_Delete(root);
+    return ok;
 }
 
 struct SensorDefinition {
@@ -389,9 +463,10 @@ void ConfigManager::begin(){
     LOG_INFO("  Upload Interval: %d s", globalCfg.system.upload_interval);
     LOG_INFO("  DTU Server: %s", globalCfg.system.dtu_server.c_str());
 
-    LOG_INFO("  Toggles -> Raw:%d, Min:%d, HJ212:%d, DTU:%d",
-             globalCfg.systemSwitch.save_raw_data, globalCfg.systemSwitch.save_min_data,
-             globalCfg.systemSwitch.enable_hj212, globalCfg.systemSwitch.enable_remote_dtu);
+    const auto controls = getRuntimeControls();
+    LOG_INFO("  Toggles -> LED:%d, LEDRegions:%u, Min:%d, HJ212:%d",
+             controls.ledEnabled, controls.ledRegions,
+             globalCfg.systemSwitch.save_min_data, globalCfg.systemSwitch.enable_hj212);
 
     // 2. ��ӡ �¿� ����
     LOG_INFO("[TempControl Config]");
@@ -522,27 +597,11 @@ void ConfigManager::_parseSensors(cJSON *objectNode, COLLECTMAP &target_map)
         LOG_INFO("Successfully parsed sensor: %s (%s)", s.id.c_str(), s.name.c_str());
     }
 }
-void ConfigManager::_parseSwitch(cJSON *node, SYSTEMSWITCH &target) {
-    if (!node) return;
-    cJSON *item;
-    if ((item = cJSON_GetObjectItem(node, "tempConSwitch")) && cJSON_IsBool(item))
-        target.tempConSwitch = cJSON_IsTrue(item);
-    if ((item = cJSON_GetObjectItem(node, "save_raw_data")) && cJSON_IsBool(item))
-        target.save_raw_data = cJSON_IsTrue(item);
-    if ((item = cJSON_GetObjectItem(node, "log_to_sd")) && cJSON_IsBool(item))
-        target.log_to_sd = cJSON_IsTrue(item);
-    if ((item = cJSON_GetObjectItem(node, "save_min_data")) && cJSON_IsBool(item))
-        target.save_min_data = cJSON_IsTrue(item);
-    if ((item = cJSON_GetObjectItem(node, "save_hour_data")) && cJSON_IsBool(item))
-        target.save_hour_data = cJSON_IsTrue(item);
-    if ((item = cJSON_GetObjectItem(node, "save_day_data")) && cJSON_IsBool(item))
-        target.save_day_data = cJSON_IsTrue(item);
-    if ((item = cJSON_GetObjectItem(node, "enable_hj212")) && cJSON_IsBool(item))
-        target.enable_hj212 = cJSON_IsTrue(item);
-    if ((item = cJSON_GetObjectItem(node, "enable_remote_dtu")) && cJSON_IsBool(item))
-        target.enable_remote_dtu = cJSON_IsTrue(item);
-    if ((item = cJSON_GetObjectItem(node, "mqtt_public")) && cJSON_IsBool(item))
-        target.mqtt_public = cJSON_IsTrue(item);
+bool ConfigManager::_parseSwitch(cJSON *node, SYSTEMSWITCH &target) {
+    SwitchConfigPolicy::Controls controls;
+    if (!readStoredSwitch(node, target, controls)) return false;
+    _runtimeControlBits.store(SwitchConfigPolicy::pack(controls));
+    return true;
 }
 
 void ConfigManager::_parseSystemInfo(cJSON *node, SYSTEMCONFIG &target) {
@@ -616,7 +675,10 @@ bool ConfigManager::loadFromFile(const char *path)
             } else if (strcmp(path, HJ212_PATH) == 0) {
                 _parseHJ212(root, globalCfg.hj212);
             } else if (strcmp(path, SWITCH_PATH) == 0) {
-                _parseSwitch(root, globalCfg.systemSwitch);
+                if (!_parseSwitch(root, globalCfg.systemSwitch)) {
+                    LOG_ERROR("Invalid switch configuration; heating remains inhibited");
+                    return false;
+                }
             } else if (strcmp(path, ALARM_PATH) == 0) {
                 _parseAlarm(root, globalCfg.alarmConfig);
             }
@@ -1157,6 +1219,61 @@ void ConfigManager::setSensorMergeRes(cJSON *contentObj,
              ESP.getFreeHeap(), ESP.getMaxAllocHeap());
 }
 
+String ConfigManager::getSwitchConfigJson()
+{
+    const String stored = getConfigJson(SWITCH_PATH);
+    config_json parser(stored.c_str());
+    SYSTEMSWITCH switches;
+    SwitchConfigPolicy::Controls controls;
+    if (!readStoredSwitch(parser.getJsonObject(), switches, controls)) return String();
+    char wire[512] = {};
+    if (!serializeSwitch(switches, getRuntimeControls(), true, wire, sizeof(wire))) return String();
+    return String(wire);
+}
+
+void ConfigManager::setSwitchConfigRes(cJSON *content, configData *response)
+{
+    response->success = false;
+    response->content = "null";
+    const String stored = getConfigJson(SWITCH_PATH);
+    config_json parser(stored.c_str());
+    SYSTEMSWITCH switches;
+    SwitchConfigPolicy::Controls controls;
+    if (!readStoredSwitch(parser.getJsonObject(), switches, controls)) {
+        response->message = "Invalid stored switch config";
+        return;
+    }
+    controls = getRuntimeControls();
+    if (!readOtherSwitches(content, switches) ||
+        !SwitchConfigPolicy::applyClient(controls,
+            booleanField(content, "tempControlSwitch"), booleanField(content, "tempConSwitch"),
+            booleanField(content, "enable_remote_dtu"), booleanField(content, "save_raw_data"))) {
+        response->message = "Switch values must be JSON booleans";
+        return;
+    }
+    char canonical[512] = {};
+    char wire[512] = {};
+    if (!serializeSwitch(switches, controls, false, canonical, sizeof(canonical)) ||
+        !serializeSwitch(switches, controls, true, wire, sizeof(wire))) {
+        response->message = "Switch serialization failed";
+        return;
+    }
+    parser.clear();
+    response->content = wire;
+    if (!saveConfig(SWITCH_PATH, canonical)) {
+        response->content = "null";
+        response->message = "Config save failed";
+        return;
+    }
+    _runtimeControlBits.store(SwitchConfigPolicy::pack(controls));
+    globalCfg.systemSwitch.tempConSwitch = controls.heatingEnabled;
+    TempManager::getInstance().setHeatingEnabled(controls.heatingEnabled);
+    EventBus::getInstance().publish(EventID::RUNTIME_SWITCH_CHANGED, nullptr);
+    response->success = true;
+    LOG_INFO("[DIAG] SWITCH_APPLIED heating=%d led=%d regions=%u",
+             controls.heatingEnabled, controls.ledEnabled, controls.ledRegions);
+}
+
 void ConfigManager::getConfigRes(JSONCmdData* req){
     configData* resData = new configData();
     resData->cmd = req->command;
@@ -1204,7 +1321,10 @@ void ConfigManager::getConfigRes(JSONCmdData* req){
     } else if (fileName == "hj212Config") {
         resData->content = getConfigJson(HJ212_PATH);
     } else if (fileName == "switchConfig") {
-        resData->content = getConfigJson(SWITCH_PATH);
+        resData->content = getSwitchConfigJson();
+        if (resData->content.length() == 0) {
+            resData->rawResponse = "{\"operation\":\"get_config\",\"code\":\"NG\",\"config\":\"switchConfig\",\"message\":\"Invalid switch config\"}";
+        }
     } else if (fileName == "alarmConfig"){
         resData->content = getConfigJson(ALARM_PATH);
     }
@@ -1300,6 +1420,12 @@ void ConfigManager::setConfigRes(JSONCmdData* req){
     if (!contentObj) {
         LOG_ERROR("set_config content is missing or not an object");
         publishFailure("Missing content object");
+        return;
+    }
+
+    if (fileName == "switchConfig") {
+        setSwitchConfigRes(contentObj, resData);
+        publishResponse();
         return;
     }
 

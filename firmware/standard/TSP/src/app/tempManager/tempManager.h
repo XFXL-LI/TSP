@@ -4,15 +4,19 @@
 
 #include <Arduino.h>
 #include "../../module/sht30/sht30.h"
+#include "HeatingControlPolicy.h"
+#include <atomic>
+#include <freertos/FreeRTOS.h>
+#include <freertos/task.h>
 
-#define TEMP_HEAT_PIN 42 // ¼ÓÈÈ
+#define TEMP_HEAT_PIN 42 // åŠ çƒ­
 #define TEMP_I2C_SDA 8
 #define TEMP_I2C_SCL 18
 #define FAN_PIN 14
 
 class TempManager {
 public:
-    // »ñÈ¡µ¥ÀıÊµÀı
+    // è·å–å•ä¾‹å®ä¾‹
     static TempManager& getInstance() {
         static TempManager instance;
         return instance;
@@ -21,7 +25,10 @@ public:
     void poll();
     void setTargetTemp(int tempUp, int tempLow);
     void setTargetHumi(int humiUp, int humiLow);
-    bool isHeatingActive() const { return _isHeating; }
+    void setHeatingEnabled(bool enabled);
+    void bindControlTask(TaskHandle_t task) { _controlTask.store(task); }
+    void applyHeatingControl();
+    bool isHeatingActive() const { return _isHeating.load(); }
 
 private:
     TempManager();
@@ -33,17 +40,22 @@ private:
     
 
     unsigned long _lastActivity = 0;
-    // ¿ØÖÆ²ÎÊı
+    // æ§åˆ¶å‚æ•°
     float _targetTempUp;
     float _targetHumiUp;
     float _targetTempLow;
     float _targetHumiLow;
 
-    // ÊµÊ±×´Ì¬Öµ
+    // å®æ—¶çŠ¶æ€å€¼
     float _currentTemp;
     float _currentHumi;
-    bool _isHeating;
+    std::atomic<bool> _isHeating;
     bool _isFanRuning;
+    bool _heatingEnabled = false;
+    bool _outputReady = false;
+    bool _sampleValid = false;
+    portMUX_TYPE _heatMux = portMUX_INITIALIZER_UNLOCKED;
+    std::atomic<TaskHandle_t> _controlTask{nullptr};
 
     void executeControl();
 };

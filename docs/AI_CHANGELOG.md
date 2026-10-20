@@ -46,3 +46,19 @@ history or firmware release changelogs.
 - Unified calendar validity across the dated data flow. No new task or LCD
   startup dependency; 120-second batches, 70-second pump and certified gas
   policy remain unchanged. Builds passed; hardware/LCD qualification is pending.
+
+## 2026-10-08 — Runtime switch compatibility and continuous LED baseline
+
+- Advanced only canonical standard/certified to 2.1.3/2.1.3.1 on explicit
+  request, preserving the 2.1.2-series reliability behavior.
+- Separated canonical LED persistence/runtime state from legacy LCD/remote
+  `enable_remote_dtu` and `save_raw_data` wire aliases; both interfaces share
+  LED-enable and four-region semantics, with safe first-upgrade defaults.
+- Replaced the LED packet-held rotation window with a bounded short-text cache
+  and continuous five-second compact 2/4-region paging using the existing task
+  and queue. Runtime notifications preserve owned packets on a full queue.
+- Made the heating switch runtime-effective and fail-closed while keeping
+  SHT30 sampling/fan independent; the original thermal task is always created.
+- Left interval, certified gas policy, experimental firmware, and deferred
+  statistic/storage/upload switch semantics unchanged. Hardware qualification
+  remains pending; no device or published-release operation was performed.

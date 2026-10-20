@@ -41,6 +41,9 @@ class filesysManager {
 public:
     static filesysManager& getInstance();
 
+    // Maintenance-only; LCD queries never initialize or remount the card.
+    void retrySDMountIfDue();
+
     void storeProcessedPacket(AllProcessedDataPacket* pkg);
     
     // ���������ݹ���ӿ�

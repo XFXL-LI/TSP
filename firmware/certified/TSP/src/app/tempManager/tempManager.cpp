@@ -18,6 +18,10 @@ void TempManager::begin() {
     pinMode(FAN_PIN, OUTPUT);
     digitalWrite(TEMP_HEAT_PIN, LOW);
     digitalWrite(FAN_PIN, LOW);
+    taskENTER_CRITICAL(&_heatMux);
+    _outputReady = true;
+    _isHeating.store(false);
+    taskEXIT_CRITICAL(&_heatMux);
     if (!_sht30.begin(TEMP_I2C_SDA, TEMP_I2C_SCL, 30000)) {
         LOG_ERROR("TempManager - Failed to initialize SHT30 sensor");
     }
@@ -32,26 +36,50 @@ void TempManager::setTargetHumi(int humiUp, int humiLow) {
     _targetHumiLow = (float)humiLow;
 }
 
-void TempManager::executeControl() {
-    if (_currentTemp < _targetTempLow || _currentHumi > _targetHumiUp) {
-        if (!_isHeating) {
+void TempManager::setHeatingEnabled(bool enabled) {
+    taskENTER_CRITICAL(&_heatMux);
+    const bool changed = _heatingEnabled != enabled;
+    _heatingEnabled = enabled;
+    if (!enabled) {
+        if (_outputReady) digitalWrite(TEMP_HEAT_PIN, LOW);
+        _isHeating.store(false);
+    }
+    taskEXIT_CRITICAL(&_heatMux);
+    const TaskHandle_t task = _controlTask.load();
+    if (changed && task != nullptr) xTaskNotifyGive(task);
+    LOG_INFO("[DIAG] HEATING_CONFIG enabled=%d", enabled ? 1 : 0);
+}
+
+void TempManager::applyHeatingControl() {
+    // Serialize the final GPIO decision with a cross-core switch-off request.
+    taskENTER_CRITICAL(&_heatMux);
+    const auto action = HeatingControlPolicy::decide(
+        _heatingEnabled, _sampleValid, _currentTemp, _currentHumi,
+        _targetTempLow, _targetHumiUp);
+    if (action == HeatingControlPolicy::Action::Start) {
+        if (!_isHeating.load()) {
             digitalWrite(TEMP_HEAT_PIN, HIGH);
             _lastActivity = millis();
-            _isHeating = true;
+            _isHeating.store(true);
         }
     } 
-    else if (_currentTemp >= _targetTempLow && _currentHumi <= _targetHumiUp) {
-        if (_isHeating) {
+    else if (action == HeatingControlPolicy::Action::Stop) {
+        if (_isHeating.load()) {
             digitalWrite(TEMP_HEAT_PIN, LOW);
-            _isHeating = false;
+            _isHeating.store(false);
         }
     }
     if ((millis() - _lastActivity) > 6* 60 * 60 * 1000) {
-        if (_isHeating) {
+        if (_isHeating.load()) {
             digitalWrite(TEMP_HEAT_PIN, LOW);
-            _isHeating = false;
+            _isHeating.store(false);
         }
     }
+    taskEXIT_CRITICAL(&_heatMux);
+}
+
+void TempManager::executeControl() {
+    applyHeatingControl();
     if (_currentTemp > 25.0) {
         if (!_isFanRuning){
             digitalWrite(FAN_PIN, HIGH);
@@ -70,6 +98,7 @@ void TempManager::poll() {
     float h = 0.0f;
     LOG_DEBUG("TempManager - Polling SHT30 sensor...");
     if (_sht30.readTemperatureHumidity(t, h)) {
+        _sampleValid = true;
         _currentTemp = t;
         _currentHumi = h;
         if (systemInfo.mutex == NULL)
@@ -85,7 +114,7 @@ void TempManager::poll() {
         LOG_DEBUG("TempManager - Current Temp: %.2f C, Humidity: %.2f %%", _currentTemp, _currentHumi);
         executeControl();
     } else {
-        digitalWrite(TEMP_HEAT_PIN, LOW);
-        _isHeating = false;
+        _sampleValid = false;
+        applyHeatingControl();
     }
 }

@@ -7,6 +7,7 @@
 #include <freertos/queue.h>
 #include <map>
 #include "../../inc/sys_init.h"
+#include "../../module/diagnostics/ReadDeadline.h"
 
 class BaseCollector {
 public:
@@ -14,6 +15,7 @@ public:
     virtual bool modbusInit(Stream* new_port, String id, String port_name, float factor, String unit) = 0;
     virtual bool begin() = 0;
     virtual DataPacket* collect() = 0;
+    virtual DataPacket* collect(ReadDeadline deadline) { return collect(); }
     virtual bool gal(int increment, int ratio) = 0;
     virtual String getID() const = 0;
 

@@ -33,6 +33,7 @@ enum class EventID {
 
     DTU_COMMAND_REQ,
     DTU_COMMAND_RES,
+    RUNTIME_SWITCH_CHANGED,
 };
 
 struct EventMsg {

@@ -1,6 +1,6 @@
 # TSP Firmware 从这里开始
 
-最后更新：2026-09-20
+最后更新：2026-10-09
 
 本文件是当前固件源码、构建和发布入口。详细版本关系见
 [固件版本与目录说明](FIRMWARE_VERSION_LOCATIONS.md)，仓库整体说明见
@@ -17,18 +17,24 @@ AI辅助开发应同时读取：
 
 | Variant | 版本 | 正式源码 | 构建输入 | 源码指纹 |
 |---|---:|---|---:|---|
-| standard | 2.1.0 | `firmware/standard/TSP` | 88 | `8D4DE1EA9A501390D4DF906B4B75988C2DAB424594704B9E648074B9E1F7991F` |
-| certified | 2.1.0.1 | `firmware/certified/TSP` | 89 | `7612C96BE98E74AC6182F8F9D96E3C4BE836DDACC9F87001418DDBA5A06777F0` |
+| standard | 2.1.3 | `firmware/standard/TSP` | 99 | `D490FACFB83CC839F004B30781B882F70E236EF7484A2891D497804A847C13BF` |
+| certified | 2.1.3.1 | `firmware/certified/TSP` | 100 | `5F50F4FBF848D450EE7E90842DF6E1D18EADC38889F4103420357FB150DB2700` |
 
-两套2.1.0系列源码均已编译通过，状态为
+两套2.1.3系列源码均已编译通过，状态为
 `compiled-not-hardware-verified`。实时数据固定每120秒形成一批；有空气通道因子时气泵
 固定运行70秒，其他传感器从第45秒采集，颗粒物与气体在通气60秒后且泵仍运行时采集。
 颗粒物改为一次读取四通道，小时统计改为纳入每个有效实时批次。
+当前版保留无有效时间时的本地快照、可选状态查询、最多3次气体状态读取及
+SD启动挂载失败后的约60秒重试；不支持运行中热拔卡。
+本次增加LED两／四区域连续5秒翻页及兼容开关映射，修复加热总开关即时生效。
+2026-10-09修正LED区域帧连续发送：每帧完成后至少间隔50ms，清屏也遵守；
+版本号未再次递增，旧2.1.3系列构建保留，须按构建日期／指纹区分新旧包。
+未修改采集／上传时序、认证气体策略或实验版；LCD／LED／加热实机验收仍待完成。
 
 当前构建产物位于：
 
-- standard：`firmware_workspace/build/current-standard`
-- certified：`firmware_workspace/build/current-certified`
+- standard：`firmware_workspace/build/standard-2.1.3-atmospheric-pressure-20261009`
+- certified：`firmware_workspace/build/certified-2.1.3.1-atmospheric-pressure-20261009`
 
 迁移前的两个 `tmp` 历史源码副本已退出主工作树；需要追溯时使用仓库外历史归档和
 迁移安全备份。当前开发与构建只使用上表中的 `firmware/` 正式源码。
@@ -82,6 +88,8 @@ flash-verified.cmd       受保护烧录入口，必须明确授权后使用
 
 ## 当前版本文档
 
+- [当前2.1.3/2.1.3.1构建与版本记录](FIRMWARE_VERSION_LOCATIONS.md)
+- [LCD/远程端开关配置协议](docs/protocols/lcd/LCD_SWITCH_CONFIG_PROTOCOL.md)
 - [Firmware 2.1.0 变更记录](docs/changelog/CHANGELOG_2.1.0.md)
 - [Firmware 2.1.0.1 变更记录](docs/changelog/CHANGELOG_2.1.0.1.md)
 - [Firmware 2.0.23 变更记录](docs/changelog/CHANGELOG_2.0.23.md)

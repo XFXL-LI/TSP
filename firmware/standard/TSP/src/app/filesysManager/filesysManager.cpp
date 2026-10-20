@@ -284,6 +284,15 @@ filesysManager& filesysManager::getInstance() {
     return instance;
 }
 
+void filesysManager::retrySDMountIfDue() {
+    auto &storage = file_storage::getInstance();
+    if (!storage.isSDMountRetryDue(millis())) return;
+    // Defer rather than holding up an ongoing history/write/recovery operation.
+    ScopedSdLock sdLock(_sdMutex, 0);
+    if (!sdLock.locked() || !storage.isSDMountRetryDue(millis())) return;
+    storage.SDcardInit();
+}
+
 filesysManager::filesysManager() {
     _sdMutex = xSemaphoreCreateMutex();
     if (SaveDataFileTaskQueue == nullptr) {

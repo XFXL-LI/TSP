@@ -41,7 +41,6 @@
 static constexpr uint32_t REALTIME_COLLECTION_PERIOD_MS = 120UL * 1000UL;
 static constexpr uint32_t NON_AIR_COLLECTION_OFFSET_MS = 45UL * 1000UL;
 static constexpr uint32_t PUMP_RUN_TIME_MS = 70UL * 1000UL;
-static constexpr int DISPLAY_ROTATION_WINDOW_SECONDS = 60;
 
 static bool collectionUsesPump(const COLLECTMAP &collectMap)
 {
@@ -280,10 +279,11 @@ void System::SystemConfigInit(void)
         LOG_WARNING("Unknown HJ212 protocol version '%s', defaulting to 2017", hj212Cfg.protocol_version.c_str());
         createCheckedTask(Hj212_2017SendTask, "Hj2017Task", 8 * 1024, NULL, TASK_PRIORITY_HJ212, NULL, 0);
     }
-    cfg.runIfTempCon([]()
-                     {
-        LOG_INFO("Temperature control enabled, starting related tasks...");
-        createCheckedTask(TempControlTask, "TempConTask", 4 * 1024, NULL, TASK_PRIORITY_TEMP_CONTROL, NULL, 1); });
+    // SHT30 sampling and the existing fan control remain active independently
+    // of the automatic-heating master switch.
+    TempManager::getInstance().setHeatingEnabled(cfg.getRuntimeControls().heatingEnabled);
+    createCheckedTask(TempControlTask, "TempConTask", 4 * 1024, NULL,
+                      TASK_PRIORITY_TEMP_CONTROL, NULL, 1);
     cfg.runMqttCon([]()
                    {
         LOG_INFO("mqtt control enabled, starting mqtt tasks...");
@@ -352,6 +352,11 @@ static void updateSetupTask(void *pvParameters)
         // CSQ command succeeding. Once one valid CSQ has been observed, keep
         // the five-minute recovery clock running even when CSQ is deferred by
         // a live upload. DTUManager still arbitrates the actual serial send.
+        // Retry only a failed startup mount, independently of network/time/LCD.
+        // The business guard excludes OTA and filesysManager owns the SD lock.
+        if (file_storage::getInstance().isSDMountRetryDue(millis())) {
+            filesysManager::getInstance().retrySDMountIfDue();
+        }
         if (hasValidCsq)
         {
             uint32_t nowMs = millis();
@@ -557,14 +562,23 @@ static void TempControlTask(void *pvParameters)
     tempManager.begin();
     tempManager.setTargetTemp(tempCon.tempUpperLimit, tempCon.tempLowerLimit);
     tempManager.setTargetHumi(tempCon.wetnUpperLimit, tempCon.wetnLowerLimit);
+    tempManager.bindControlTask(xTaskGetCurrentTaskHandle());
+    uint32_t nextSampleAt = millis();
 
     while (true)
     {
-        {
+        if (static_cast<int32_t>(millis() - nextSampleAt) >= 0) {
             RemoteOtaManager::BusinessActivityGuard businessActivity;
             tempManager.poll();
+            nextSampleAt = millis() + 30000U;
         }
-        vTaskDelay(pdMS_TO_TICKS(30000));
+        const uint32_t now = millis();
+        const uint32_t waitMs = static_cast<int32_t>(now - nextSampleAt) >= 0
+            ? 0 : nextSampleAt - now;
+        if (ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(waitMs)) != 0) {
+            RemoteOtaManager::BusinessActivityGuard businessActivity;
+            tempManager.applyHeatingControl();
+        }
     }
     vTaskDelete(NULL);
 }
@@ -1211,74 +1225,39 @@ static void LedPrintTask(void *pvParameters)
 
     QueueHandle_t LedPrintTaskQueue = EventBus::getInstance().createReceiverQueue(5, "LED");
     EventBus::getInstance().subscribe(EventID::PROCESSED_DATA_COLLECTED, LedPrintTaskQueue);
+    EventBus::getInstance().subscribe(EventID::RUNTIME_SWITCH_CHANGED, LedPrintTaskQueue);
     COLLECTMAP collectMap = ConfigManager::getInstance().getCollectConfigs();
 
     EventMsg msg;
     while (true)
     {
-        if (EventBus::waitEvent(LedPrintTaskQueue, msg))
         {
             RemoteOtaManager::BusinessActivityGuard businessActivity;
-            if (msg.id == EventID::PROCESSED_DATA_COLLECTED)
-            {
-                AllProcessedDataPacket *allData = static_cast<AllProcessedDataPacket *>(msg.data);
-                uint32_t coalescedCount = 0;
-                EventMsg queuedMsg;
-                while (EventBus::getInstance().waitEvent(
-                    LedPrintTaskQueue, queuedMsg, 0))
-                {
-                    if (queuedMsg.id != EventID::PROCESSED_DATA_COLLECTED)
-                    {
-                        continue;
+            const auto controls = ConfigManager::getInstance().getRuntimeControls();
+            ledManager.configure(controls.ledEnabled, controls.ledRegions, millis());
+            ledManager.poll(millis());
+        }
+        if (EventBus::waitEvent(LedPrintTaskQueue, msg, ledManager.waitMs(millis())))
+        {
+            AllProcessedDataPacket *latest = nullptr;
+            do {
+                if (msg.id == EventID::PROCESSED_DATA_COLLECTED) {
+                    auto *packet = static_cast<AllProcessedDataPacket *>(msg.data);
+                    if (packet == nullptr) continue;
+                    if (packet->dataTime == DataTime::REAL_DATA) {
+                        if (latest != nullptr) latest->release();
+                        latest = packet;
+                    } else {
+                        packet->release();
                     }
-                    AllProcessedDataPacket *queuedData =
-                        static_cast<AllProcessedDataPacket *>(queuedMsg.data);
-                    if (queuedData == nullptr)
-                    {
-                        continue;
-                    }
-                    if (queuedData->dataTime == DataTime::REAL_DATA)
-                    {
-                        if (allData != nullptr)
-                        {
-                            allData->release();
-                        }
-                        allData = queuedData;
-                    }
-                    else
-                    {
-                        queuedData->release();
-                    }
-                    coalescedCount++;
                 }
-                if (coalescedCount > 0)
-                {
-                    LOG_INFO("[DIAG] LED_COALESCE drained=%u latest_timestamp=%llu",
-                             (unsigned)coalescedCount,
-                             allData != nullptr ? allData->last_update : 0ULL);
-                }
-                if (allData != nullptr)
-                {
-                    // Firmware 2.0.4: the LED cycles through one real-time
-                    // snapshot for the full collection interval. Minute,
-                    // hour and day packets must not consume another full
-                    // display cycle or remain queued and retain heap.
-                    if (allData->dataTime == DataTime::REAL_DATA)
-                    {
-                        ledManager.updateDisplay(allData,
-                                                 DISPLAY_ROTATION_WINDOW_SECONDS,
-                                                 collectMap);
-                    }
-                    else
-                    {
-                        LOG_DEBUG("[DIAG] LED_SKIP_NONREAL type=%d timestamp=%llu",
-                                  (int)allData->dataTime, allData->last_update);
-                    }
-                    allData->release();
-                }
+            } while (EventBus::waitEvent(LedPrintTaskQueue, msg, 0));
+            if (latest != nullptr) {
+                RemoteOtaManager::BusinessActivityGuard businessActivity;
+                ledManager.updateCache(latest, collectMap);
+                latest->release();
             }
         }
-        vTaskDelay(pdMS_TO_TICKS(10));
     }
     vTaskDelete(NULL);
 }

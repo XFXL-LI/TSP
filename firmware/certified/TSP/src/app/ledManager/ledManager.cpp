@@ -7,8 +7,7 @@
 #include "../../module/log/log_manager.h"
 #include "../../module/gas/GasUnitConverter.h"
 
-LedManager::LedManager()
-    : _runLedStep(0) {}
+LedManager::LedManager() {}
 
 LedManager::~LedManager() {}
 
@@ -20,40 +19,23 @@ LedManager &LedManager::getInstance()
 
 void LedManager::begin()
 {
-    _runLedStep = 0;
     LOG_INFO("LED manager initialized on 485 transport");
 }
 
-void LedManager::updateDisplay(const AllProcessedDataPacket *packet, int updateTime, COLLECTMAP &collectMap)
+void LedManager::updateCache(const AllProcessedDataPacket *packet, const COLLECTMAP &collectMap)
 {
     if (packet == nullptr)
     {
         LOG_WARNING("LED update skipped because packet is null");
         return;
     }
-    if (packet->processed_data_map.empty())
+    _cache.beginUpdate();
+    for (const char *id : LedDisplayPolicy::SENSOR_ORDER)
     {
-        LOG_WARNING("LED update skipped because processed data map is empty");
-        return;
-    }
-    int step = 1;
-    int size = packet->processed_data_map.size();
-    const uint32_t updateMs = (uint32_t)updateTime * 1000U;
-    const uint32_t displayHeadroomMs = 5000U;
-    const uint32_t displayBudgetMs = updateMs > displayHeadroomMs
-        ? updateMs - displayHeadroomMs
-        : updateMs;
-    uint32_t itemDelayMs = displayBudgetMs / (uint32_t)size;
-    if (itemDelayMs == 0)
-    {
-        itemDelayMs = 1;
-    }
-    LOG_DEBUG("[DIAG] LED_CYCLE records=%d budget_ms=%u item_delay_ms=%u",
-              size, (unsigned)displayBudgetMs, (unsigned)itemDelayMs);
-    for (const auto &entry : packet->processed_data_map)
-    {
-        const String &sensorId = entry.first;
-        const ProcessedDataPacket &processedData = entry.second;
+        const String sensorId(id);
+        const auto entry = packet->processed_data_map.find(sensorId);
+        if (entry == packet->processed_data_map.end()) continue;
+        const ProcessedDataPacket &processedData = entry->second;
         if (!processedData.is_valid)
         {
             continue;
@@ -80,25 +62,118 @@ void LedManager::updateDisplay(const AllProcessedDataPacket *packet, int updateT
         {
             continue;
         }
-        if (step == 1)
-        {
-            if (displayValue > alarmLimit){
-                sendLineLimit(41, content);
-            } else {
-                sendLine(41, content);
-            }
-            step = 0;
-        } else if (step == 0)
-        {
-            if (displayValue > alarmLimit){
-                sendLineLimit(42, content);
-            } else {
-                sendLine(42, content);
-            }
-            step = 1;
-        }
-        vTaskDelay(pdMS_TO_TICKS(itemDelayMs));
+        _cache.append(content, displayValue > alarmLimit);
     }
+    _cache.finishUpdate(_regions);
+    LOG_DEBUG("[DIAG] LED_CACHE items=%u bytes=%u", _cache.count(),
+              static_cast<unsigned>(sizeof(*this)));
+}
+
+void LedManager::configure(bool enabled, uint8_t regions, uint32_t now)
+{
+    regions = regions == 4 ? 4 : 2;
+    if (_configured && enabled == _enabled && regions == _regions) return;
+    const bool modeChanged = regions != _regions;
+    _configured = true;
+    _enabled = enabled;
+    _regions = regions;
+    _cache.resetPage();
+    // Cancel unsent content from the old mode, but preserve the frame deadline.
+    _pendingMask = 0;
+    _pagePending = false;
+    _nextPageAt = now;
+    _clearInactive = regions == 2;
+    if (!enabled) {
+        clearSlots(0, 4);
+    } else if (modeChanged && regions == 2) {
+        clearSlots(2, 4);
+    }
+    LOG_INFO("[DIAG] LED_CONFIG enabled=%d regions=%u frame_gap_ms=%u",
+             enabled ? 1 : 0, regions, LedDisplayPolicy::FRAME_INTERVAL_MS);
+}
+
+void LedManager::queueSlot(uint8_t slot, const LedDisplayPolicy::Item *item)
+{
+    LedDisplayPolicy::Item blank;
+    LedDisplayPolicy::setItem(blank, " ", false);
+    const auto &value = item != nullptr ? *item : blank;
+    if ((_sentMask & (1U << slot)) != 0 &&
+        _lastSent[slot].alarm == value.alarm &&
+        std::strcmp(_lastSent[slot].text, value.text) == 0) {
+        _pendingMask &= static_cast<uint8_t>(~(1U << slot));
+        return;
+    }
+    _pending[slot] = value;
+    _pendingMask |= 1U << slot;
+}
+
+void LedManager::clearSlots(uint8_t first, uint8_t last)
+{
+    for (uint8_t slot = first; slot < last; ++slot) queueSlot(slot, nullptr);
+}
+
+void LedManager::sendPending(uint32_t now)
+{
+    if (_frameGapActive) {
+        if (!LedDisplayPolicy::due(now, _nextFrameAt)) return;
+        _frameGapActive = false; // Expire the deadline even during long idle periods.
+    }
+    if (_pendingMask == 0) return;
+    uint8_t slot = 0;
+    while ((_pendingMask & (1U << slot)) == 0) ++slot;
+    const auto &value = _pending[slot];
+    const uint32_t startedAt = millis();
+    const bool sent = value.alarm ? sendLineLimit(41 + slot, value.text)
+                                  : sendLine(41 + slot, value.text);
+    const uint32_t finishedAt = millis();
+    // Start the quiet gap after synchronous UART transmission, not before it.
+    // Failed/partial writes retain their target with a bounded retry rate.
+    _nextFrameAt = finishedAt + (sent ? LedDisplayPolicy::FRAME_INTERVAL_MS
+                                     : LedDisplayPolicy::PAGE_INTERVAL_MS);
+    _frameGapActive = true;
+    if (sent) {
+        _lastSent[slot] = value;
+        _sentMask |= 1U << slot;
+        _pendingMask &= static_cast<uint8_t>(~(1U << slot));
+    }
+    LOG_DEBUG("[DIAG] LED_TX region=%u ok=%d start_ms=%u end_ms=%u",
+              41 + slot, sent ? 1 : 0, static_cast<unsigned>(startedAt),
+              static_cast<unsigned>(finishedAt));
+}
+
+void LedManager::poll(uint32_t now)
+{
+    if (!_enabled) {
+        clearSlots(0, 4);
+    } else if (!_pagePending && _cache.count() != 0 &&
+               LedDisplayPolicy::due(now, _nextPageAt)) {
+        if (_clearInactive) {
+            clearSlots(2, 4);
+            _clearInactive = false; // Pending targets retain failed clears.
+        }
+        for (uint8_t slot = 0; slot < _regions; ++slot) {
+            queueSlot(slot, _cache.slot(slot, _regions));
+        }
+        _pagePending = true;
+        _nextPageAt = now + LedDisplayPolicy::PAGE_INTERVAL_MS;
+    }
+    // One frame per call. The existing LED task waits outside its business
+    // guard and outside the serial mutex before polling the next frame.
+    sendPending(now);
+    if (_pagePending && _pendingMask == 0) {
+        _cache.advance(_regions);
+        _pagePending = false;
+    }
+}
+
+uint32_t LedManager::waitMs(uint32_t now) const
+{
+    if (_pendingMask != 0) {
+        return !_frameGapActive || LedDisplayPolicy::due(now, _nextFrameAt)
+            ? 0 : _nextFrameAt - now;
+    }
+    if (!_enabled || _cache.count() == 0) return LedDisplayPolicy::PAGE_INTERVAL_MS;
+    return LedDisplayPolicy::due(now, _nextPageAt) ? 0 : _nextPageAt - now;
 }
 
 bool LedManager::buildDisplayTextBySensorId(const String &sensorId, float value,
@@ -176,11 +251,11 @@ bool LedManager::buildDisplayTextBySensorId(const String &sensorId, float value,
     return false;
 }
 
-void LedManager::sendLine(uint8_t index, const char *content)
+bool LedManager::sendLine(uint8_t index, const char *content)
 {
     if (content == nullptr)
     {
-        return;
+        return false;
     }
 
     uint8_t packet[512] = {0};
@@ -188,15 +263,15 @@ void LedManager::sendLine(uint8_t index, const char *content)
     if (packetLen == 0)
     {
         LOG_WARNING("Failed to build 485 LED packet for %s", content);
-        return;
+        return false;
     }
-    sendPacket(packet, packetLen);
+    return sendPacket(packet, packetLen);
 }
-void LedManager::sendLineLimit(uint8_t index, const char *content)
+bool LedManager::sendLineLimit(uint8_t index, const char *content)
 {
     if (content == nullptr)
     {
-        return;
+        return false;
     }
 
     uint8_t packet[512] = {0};
@@ -204,17 +279,17 @@ void LedManager::sendLineLimit(uint8_t index, const char *content)
     if (packetLen == 0)
     {
         LOG_WARNING("Failed to build 485 LED packet for %s", content);
-        return;
+        return false;
     }
 
-    sendPacket(packet, packetLen);
+    return sendPacket(packet, packetLen);
 }
 
-void LedManager::sendPacket(const uint8_t *data, uint16_t len)
+bool LedManager::sendPacket(const uint8_t *data, uint16_t len)
 {
     if (data == nullptr || len == 0)
     {
-        return;
+        return false;
     }
 
     auto &serialManager = SerialManager::getInstance();
@@ -223,6 +298,7 @@ void LedManager::sendPacket(const uint8_t *data, uint16_t len)
     {
         LOG_WARNING("LED 485 write incomplete: wrote %u of %u bytes", written, len);
     }
+    return written == len;
 }
 uint16_t LedManager::packTo485(uint8_t index,
                                const char *content,
@@ -417,7 +493,7 @@ void LedManager::buildHumidityText(float value, char *buffer, size_t size)
 
 void LedManager::buildPressureText(float value, char *buffer, size_t size)
 {
-    static const uint8_t prefix[] = { 0xD1, 0xB9, 0xC7, 0xBF};
+    static const uint8_t prefix[] = {0xB4, 0xF3, 0xC6, 0xF8, 0xD1, 0xB9}; // GBK: 大气压
 
     memset(buffer, 0, size);
     memcpy(buffer, prefix, sizeof(prefix));

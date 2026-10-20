@@ -33,6 +33,7 @@ public:
     bool gal(int increment, int ratio) override;
     String getID() const override;
     virtual DataPacket* collect() override;
+    virtual DataPacket* collect(ReadDeadline deadline) override;
 
     void setModbusConfig(uint8_t slave, uint16_t reg, uint8_t count, float factor);
     void setFactor(float factor);

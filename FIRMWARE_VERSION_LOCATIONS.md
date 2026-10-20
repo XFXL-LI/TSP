@@ -1,6 +1,6 @@
 # TSP 固件版本与目录说明
 
-最后更新：2026-09-28
+最后更新：2026-10-09
 
 本文件用于区分“正式实机验证固件”“对应的可编译源码”和“当前开发源码”。
 不要只根据目录名或 `TSP.ino` 文件名判断版本。
@@ -9,8 +9,8 @@
 
 | Variant | 版本 | 当前正式源码 | 构建输入 | 源码指纹 |
 |---|---:|---|---:|---|
-| standard | 2.1.1 | `firmware/standard/TSP` | 93 | `95CE6E20E3FF7DEB9DE43F76FB505EC55E194C5E354132FAC94DC4E5774605B3` |
-| certified | 2.1.1.1 | `firmware/certified/TSP` | 94 | `DCF142C5D1078957237B193A2BB80FBF5B3370E587B9C1CE4853C3C9338DD7F2` |
+| standard | 2.1.3 | `firmware/standard/TSP` | 99 | `D490FACFB83CC839F004B30781B882F70E236EF7484A2891D497804A847C13BF` |
+| certified | 2.1.3.1 | `firmware/certified/TSP` | 100 | `5F50F4FBF848D450EE7E90842DF6E1D18EADC38889F4103420357FB150DB2700` |
 
 当前构建入口为 `firmware_workspace/build-standard.cmd`、
 `firmware_workspace/build-certified.cmd`和兼容standard的
@@ -23,7 +23,7 @@
 
 该结论不是bit-identical；新旧BIN的差异已由编译时间及其派生镜像元数据完整解释。
 
-当前2.1.1/2.1.1.1已编译通过，均为 `compiled-not-hardware-verified`；
+当前2.1.3/2.1.3.1已编译通过，均为 `compiled-not-hardware-verified`；
 实验版不随本次更新。新构建不覆盖已有INFO测试目录，也未生成新的正式Release。
 
 当前最新已发布的2026-09-07正式Release分别为：
@@ -643,7 +643,7 @@ marker和raw重建兜底。详细记录见
 O3/NO2/SO2封顶及独立校准策略。详细记录见
 [Firmware 2.1.0.1变更记录](docs/changelog/CHANGELOG_2.1.0.1.md)。
 
-## Firmware 2.1.1：当前standard正式源码
+## Firmware 2.1.1：上一版standard编译基线
 
 正式源码：`firmware/standard/TSP`
 
@@ -659,7 +659,7 @@ O3/NO2/SO2封顶及独立校准策略。详细记录见
 限制为800字节。采集120秒、气泵70秒和气体间隔500ms不变，未操作设备FFat。
 LCD/云端按[状态接口约定](docs/protocols/lcd/LCD_GET_DATA_STATUS_PROTOCOL.md)联调。
 
-## Firmware 2.1.1.1：当前certified正式源码
+## Firmware 2.1.1.1：上一版certified编译基线
 
 正式源码：`firmware/certified/TSP`
 
@@ -672,6 +672,103 @@ LCD/云端按[状态接口约定](docs/protocols/lcd/LCD_GET_DATA_STATUS_PROTOCO
 
 同步2.1.1公共改动，保留O3/NO2/SO2封顶500ppb、CO不封顶，以及独立认证校准策略。
 实验固件和既有INFO测试包不变。两个新BIN均只编译，未烧录、未擦除或实机验收。
+
+## Firmware 2.1.2：上一版standard编译基线
+
+正式源码：`firmware/standard/TSP`
+
+- 构建输入：96；
+- 源码指纹：`EDEFD29E492923514D5F07561D787C90F3767E7A84D9A5518DE838FFA7A0D0EC`；
+- 应用BIN：688800字节；
+- SHA-256：`84B9B2442CB6E6262DC756544BD2B2CFF97557497447E52A0629CCB5C34F3A47`；
+- 构建目录：`firmware_workspace/build/standard-2.1.2`；
+- 状态：`compiled-not-hardware-verified`，运行日志级别仍为DEBUG。
+
+气体首次通信仍最多尝试3次；成功回复未就绪时，最多再进行2次状态/浓度组合读取，
+每次只发1次通信请求。回复显示已就绪即停止（故障位仍按原策略判断），连续未就绪
+仍标记无效，各次气体通信之间
+保持至少500ms；采集阶段在70秒截止预算不足时跳过后续读取，不延长气泵时间或周期。
+
+SD启动挂载失败后，在现有维护任务中约每60秒重试，独立于网络、RTC和LCD。
+使用原有SD锁，成功后停止重试；失败按已取得的资源逐项清理，不格式化、不重启，
+不重新初始化FFat。初始化I/O预算3秒，单命令超时参数上限1秒；这不是总耗时的
+硬上限，SDK内部事件处理、调度和清理可能增加耗时。新增 `SD_MOUNT_RESULT` 日志
+记录结果、耗时和堆余量，LCD沿用现有SD状态字段。该机制不支持运行中热拔卡，
+也不补写未挂载期间的历史数据；pending底层首次写零问题未关闭。
+
+## Firmware 2.1.2.1：上一版certified编译基线
+
+正式源码：`firmware/certified/TSP`
+
+- 构建输入：97；
+- 源码指纹：`19B58E7ED62F4AB72B70E1BAA4AA3BF3A504C5D8C3A3C870FA3DCFC26BEAB382`；
+- 应用BIN：689280字节；
+- SHA-256：`6FE48C68F7DBBF5671BFBB1981B17712CA33BEF5E670DD518AAF18C34E7BE555`；
+- 构建目录：`firmware_workspace/build/certified-2.1.2.1`；
+- 状态：`compiled-not-hardware-verified`，运行日志级别仍为DEBUG。
+
+同步2.1.2公共改动，认证专用O3/NO2/SO2封顶、CO策略和校准逻辑未改。
+两版均通过气体第三次读取/截止预算、SD分阶段失败清理/重试的软件故障注入测试，
+以及现有 `get_data` 兼容性和回复容量测试；软件模拟不替代硬件验收。
+实验版与既有INFO包未修改。本次未烧录、未擦除、未操作设备FFat、未创建正式Release。
+
+## Firmware 2.1.3／2.1.3.1：当前正式源码
+
+当前源码指纹与2026-10-09下午的`atmospheric-pressure`构建记录一致，版本号仍为2.1.3／2.1.3.1；上午LED帧间隔构建保留供追溯：
+
+| 项目 | standard 2.1.3 | certified 2.1.3.1 |
+|---|---|---|
+| 源码 | `firmware/standard/TSP` | `firmware/certified/TSP` |
+| 构建输入 | 99 | 100 |
+| 编译时间（UTC+8） | 2026-10-09 14:22:47 | 2026-10-09 14:22:51 |
+| 应用BIN字节 | 692640 | 693120 |
+| 应用BIN SHA-256 | `99E72FA5C7C6751609550AA88B0EC3D36CAF23C69D985B5F770558437262798A` | `7034A54705F8613688F8C31987BB8663C80C7EB2C3ADFDE75D53AF97934D7211` |
+| 构建目录 | `firmware_workspace/build/standard-2.1.3-atmospheric-pressure-20261009` | `firmware_workspace/build/certified-2.1.3.1-atmospheric-pressure-20261009` |
+| 全局静态RAM | 28024字节 | 28024字节 |
+| 状态 | `compiled-not-hardware-verified` | `compiled-not-hardware-verified` |
+
+2026-10-08首版构建基线保留如下，不包含此次帧间隔修复：
+
+| 项目 | standard 2.1.3 | certified 2.1.3.1 |
+|---|---|---|
+| 源码 | `firmware/standard/TSP` | `firmware/certified/TSP` |
+| 构建输入 | 99 | 100 |
+| 应用BIN字节 | 692352 | 692832 |
+| 应用BIN SHA-256 | `E579B89663DE11BBC51CB473169D822FA7BA811E0C31DC999D84A795B6193118` | `6414C5DD013A19C0D789324AA3F481A6EB02367B4051297C16E7539692470AC2` |
+| 构建目录 | `firmware_workspace/build/standard-2.1.3` | `firmware_workspace/build/certified-2.1.3.1` |
+| 源码指纹 | `B1EA9A8A58296A0E17CD8F04ACF736BCDE9193FA0FB10869713D3D8D1FC197B9` | `997319145AC0AB0549EDA96C6A02F724CC22A4E358DCFA6B30CB4F95D8F9EAE1` |
+| 全局静态RAM | 27944字节 | 27944字节 |
+| 状态 | `compiled-not-hardware-verified` | `compiled-not-hardware-verified` |
+
+最新源码指纹见本文件顶部当前版本表。两次构建均使用正式`Build-Firmware.ps1`的
+variant入口编译；本机CMD入口仍因Windows PowerShell的`Get-FileHash`解析失败，
+因此使用PowerShell 7运行同一脚本，不手工切换源码或修改工具链。
+
+本轮复用旧LCD／远程端JSON字段作为LED协议兼容层，MCU使用独立LED配置；
+新配置默认开启两区域模式，旧文件的“保存数据／远程控制”值不自动迁移为LED选项。
+LED每5秒连续紧凑分页，颗粒物、气象／噪声、气体依次显示；缺少或无效因子跳过，
+无有效数据时不新增提示。关闭、四切二与尾页空位发送空格清除，实际效果待实机验证。
+加热开关支持规范字段与旧别名，保存后关闭立即LOW，开启允许原温湿度控制；
+SHT30和风扇独立继续运行。
+
+2026-10-09针对“41区域换内容、其余空白且缓存14项”的反馈，修正同页区域帧无间隔
+连续发送的问题；每次仅发送一帧，串口发送完成后至少50ms再发下一帧，清屏／模式
+切换同样遵守。固定4条待发送文本保证一页不混批；失败目标保留并约5秒后重试。
+新增`LED_TX`区域／发送起止时间诊断，`ok=1`仅表示串口写成功，不代表控制卡ACK。
+控制卡接收能力是最符合现象的解释，仍须实机确认，不据此关闭硬件待验收问题。
+
+两版静态RAM相对2.1.2系列增加424字节，其中本次修复比2026-10-08首版增加80字节
+（27944→28024），LED管理器固定占用416字节。没有增加任务或队列。
+温控任务改为始终存在，原来关闭后不创建任务的场景会多占用其原有约4KB任务栈
+及RTOS任务开销；LED仍使用原有4KB栈、深度5队列，及时释放处理数据包。
+内存长跑、LED控制卡接收／清屏、LCD／远程配置回读和加热输出待硬件验收。
+详见[开关配置协议](docs/protocols/lcd/LCD_SWITCH_CONFIG_PROTOCOL.md)。
+两版各17组控制离线回归通过，包括帧间隔、发送中切换／关闭、失败重试、批次更新、
+计时回绕、2万次并发加热开关及满队列通知；原有气体／SD
+故障注入和`get_data`兼容／容量回归也通过，均不替代硬件验收。
+
+继承2.1.2系列可靠性修改，实验版、已发布Release及旧构建不变。
+本构建未烧录、未擦除、未操作设备FFat，未生成新的正式Release。
 
 ## 使用规则
 

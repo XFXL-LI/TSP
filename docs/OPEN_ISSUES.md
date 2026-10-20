@@ -74,7 +74,7 @@ Description:
 
 The latest published 2.0.22 standard and 2.0.22.1 certified releases are
 packaged and file-level verified, but neither is recorded as hardware verified.
-The current 2.1.1 and 2.1.1.1 source builds are compiled but not yet packaged
+The current 2.1.3 and 2.1.3.1 source builds are compiled but not yet packaged
 or hardware verified.
 
 Evidence:
@@ -238,10 +238,13 @@ Area: Development tooling
 
 Description:
 
-On the 2026-09-14 baseline host, `status-standard.cmd` and
+On the baseline host, `status-standard.cmd` and
 `status-certified.cmd` launch Windows PowerShell and fail because
 `Get-FileHash` is not resolved. Running `Get-FirmwareStatus.ps1` directly
 under PowerShell 7 succeeds.
+The same command-resolution failure also reproduced for the two build CMD
+entries in the 2026-10-08 upgrade; the unchanged official variant build scripts
+succeeded under PowerShell 7. Fixing the launcher remains separately scoped.
 
 Evidence:
 
@@ -453,8 +456,9 @@ Evidence:
 
 Both canonical variants compile successfully. Date, sequence and monotonic-age
 compile-time regression assertions pass. The response encoder checks its
-1024-byte buffer and 800-byte extended wire limit. The full native runtime
-response test and physical LCD/DTU/SD/time-recovery cases are not yet qualified.
+1024-byte buffer and 800-byte extended wire limit. Native host response-encoder
+tests now pass on both variants, but the physical LCD/DTU/SD/time-recovery
+cases are not yet qualified.
 
 Risk:
 
@@ -470,6 +474,63 @@ without network, failed SD mount/write, true zero/invalid factors, first batch,
 time recovery without backdating, 14-factor replies, legacy clients and OTA.
 Do not close this issue, pending first-sector corruption, or pump timing based
 only on source/build validation.
+
+## LED compatibility controls and heating master require hardware qualification
+
+Status: Implemented; needs verification
+
+Priority: High
+
+Area: LCD/remote configuration, LED control card, and heating output
+
+Description:
+
+Versions 2.1.3/2.1.3.1 repurpose the legacy `enable_remote_dtu` and
+`save_raw_data` wire names as LED enable and four-region mode. Internally the
+LED has separate canonical persisted/runtime state. Heating accepts the
+canonical LCD Boolean field and the old alias, and switch-off immediately
+forces LOW without disabling SHT30 sampling or the fan. The LED uses continuous
+five-second compact pages rather than retaining one processed packet through
+the former rotation window.
+
+Evidence:
+
+The user reports region 41 cycling while all other regions remain blank with
+`LED_CACHE items=14 bytes=336`. The first 2.1.3-series implementation issued
+same-page region writes back-to-back, without a quiet interval. On 2026-10-09,
+both variants were changed to one frame per poll and a minimum 50 ms gap after
+UART completion, including clears. This is the leading software explanation,
+not a hardware-confirmed root cause; repeated field verification is still pending.
+
+Both updated variants compile and pass 17 current-source control test groups,
+including transmission latency, mid-burst controls and timer wrap. ELF static
+RAM is 28024 bytes: 80 more than the first 2.1.3-series builds and 424 more than
+the 2.1.2-series baseline. The existing
+thermal 4 KB task is now always present, so configurations which previously
+omitted it must also budget its stack/RTOS allocation. Host tests use actual
+configuration helpers, LED encoding/cache, heating implementation, and EventBus
+publishing with mocked peripherals; they do not establish electrical behavior.
+
+Risk:
+
+The LED card may not clear on a one-space update, and its autonomous template
+timing/receive capacity must be checked with the new spaced region writes.
+UART write success has no card ACK. Legacy clients retaining old widget values
+can unintentionally select a mode on their first save; they should query first.
+Heating actuation under concurrent activity and long-run heap/task-stack margin
+still require target-device evidence. Do not close pre-existing SD/gas issues
+based on this control upgrade.
+
+Suggested next action:
+
+Use the `led-gap-20261009` builds. Check `LED_CONFIG` region mode and
+`LED_TX` entries for all active regions; confirm at least 50 ms from the prior
+frame's end to the next start and observe actual screen content/clearing.
+Then complete the [switch protocol matrix](protocols/lcd/LCD_SWITCH_CONFIG_PROTOCOL.md)
+on standard and certified: LCD/remote get/set/reboot, 2/4 modes, partial factors,
+empty/invalid data, LED disable, heating off during active heating, re-enable,
+SHT30/fan independence, SD/network activity and long running stability. Keep
+minute/hour/day switch business semantics for a separately authorized change.
 
 ## Source scan found no TODO or FIXME markers
 

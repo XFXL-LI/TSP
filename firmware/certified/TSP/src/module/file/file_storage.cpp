@@ -158,29 +158,29 @@ int file_storage::writeFFATAtomic(const char *path, const char *config_content) 
 }
 
 bool file_storage::SDcardInit() {
+    if (isSDcardReady()) return true;
+    const bool isRetry = sd_mount_attempted.load(std::memory_order_acquire);
+    const uint32_t startedMs = millis();
+    const uint32_t freeBefore = ESP.getFreeHeap();
     DeviceRuntimeStatus::sdMountStarted();
-    sdmmc_card_t *sdmmc_card = NULL;
-    esp_vfs_fat_sdmmc_mount_config_t mount_config = {
-        .format_if_mount_failed = false,
-        .max_files = 5,
-        .allocation_unit_size = 8 * 1024};
-    sdmmc_host_t sdmmc_host = SDMMC_HOST_DEFAULT();
-    sdmmc_slot_config_t slot_config = SDMMC_SLOT_CONFIG_DEFAULT();
-    slot_config.width = 1;
-    slot_config.clk = SD_CLK_IO;
-    slot_config.cmd = SD_CMD_IO;
-    slot_config.d0 = SD_DAT0_IO;
-    slot_config.flags |= SDMMC_SLOT_FLAG_INTERNAL_PULLUP;
-    esp_err_t ret =  esp_vfs_fat_sdmmc_mount(SD_MOUNT_POINT, &sdmmc_host, &slot_config, &mount_config, &sdmmc_card);
+    const esp_err_t ret = sd_mount_session.mount(
+        SD_MOUNT_POINT, SD_CLK_IO, SD_CMD_IO, SD_DAT0_IO);
+    sd_mount_finished_ms.store(millis(), std::memory_order_release);
+    sd_mount_attempted.store(true, std::memory_order_release);
+    sd_card_initialized.store(ret == ESP_OK, std::memory_order_release);
     DeviceRuntimeStatus::sdMountFinished(ret);
+    LOG_INFO("[DIAG] SD_MOUNT_RESULT source=%s ok=%d error=0x%X elapsed_ms=%u io_budget_ms=%u free_before=%u free_after=%u largest=%u",
+             isRetry ? "retry" : "boot", ret == ESP_OK ? 1 : 0,
+             (unsigned)ret, (unsigned)(millis() - startedMs),
+             (unsigned)SdMountPolicy::IO_BUDGET_MS, (unsigned)freeBefore,
+             (unsigned)ESP.getFreeHeap(), (unsigned)ESP.getMaxAllocHeap());
+    return ret == ESP_OK;
+}
 
-    if (ret != ESP_OK) {
-        sd_card_initialized = false;
-        return false;
-    } else {
-        sd_card_initialized = true;
-        return true;
-    }
+bool file_storage::isSDMountRetryDue(uint32_t nowMs) const {
+    return SdMountPolicy::retryDue(
+        sd_mount_attempted.load(std::memory_order_acquire), isSDcardReady(),
+        nowMs, sd_mount_finished_ms.load(std::memory_order_acquire));
 }
 
 int file_storage::writeSDCard(const char *path, const String &content, bool append) {

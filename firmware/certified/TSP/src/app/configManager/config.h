@@ -6,6 +6,7 @@
 #include "../../module/file/file_storage.h"
 #include "../../module/json/config_json.h"
 #include "../../inc/sys_init.h"
+#include "SwitchConfigPolicy.h"
 
 #define CONFIG_PATH "/config.json"
 #define MODEL_PATH "/model.json"
@@ -31,12 +32,15 @@ private:
     GLOBALCONFIG globalCfg;
     SYSTEM_SETUP systemSetup;
     QueueHandle_t _queryQueue;
+    std::atomic<uint8_t> _runtimeControlBits{2}; // Heating inhibited until config loads.
 
     void _parseSystem(cJSON *node, SYSTEMCONFIG &target);
     void _parseHJ212(cJSON *node, HJ212CONFIG &target);
     void _parseSensors(cJSON *arrayNode, COLLECTMAP &target_map);
     void _parseTempControl(cJSON *node, TEMPCONTROLCONFIG &target);
-    void _parseSwitch(cJSON *node, SYSTEMSWITCH &target);
+    bool _parseSwitch(cJSON *node, SYSTEMSWITCH &target);
+    String getSwitchConfigJson();
+    void setSwitchConfigRes(cJSON *content, configData *response);
     void _parseSystemInfo(cJSON *node, SYSTEMCONFIG &target);
     void _parseAlarm(cJSON *node, ALARMCONFIG &target);
 
@@ -79,10 +83,6 @@ public:
             func();
         }
     }
-    void runIfSaveRaw(std::function<void()> func)
-    {
-        runIf(globalCfg.systemSwitch.save_raw_data, "SaveRaw", func);
-    }
     void runIfSaveMin(std::function<void()> func)
     {
         runIf(globalCfg.systemSwitch.save_min_data, "SaveMin", func);
@@ -98,10 +98,6 @@ public:
     void runIfHJ212(std::function<void()> func)
     {
         runIf(globalCfg.systemSwitch.enable_hj212, "HJ212", func);
-    }
-    void runIfRemote(std::function<void()> func)
-    {
-        runIf(globalCfg.systemSwitch.enable_remote_dtu, "RemoteDTU", func);
     }
     void runIfSaveLog(std::function<void()> func)
     {
@@ -126,6 +122,9 @@ public:
     void updateTimeAuto(void);
 
     SYSTEM_SETUP getSetup();
+    SwitchConfigPolicy::Controls getRuntimeControls() const {
+        return SwitchConfigPolicy::unpack(_runtimeControlBits.load());
+    }
 
     int getCollectInterval() const { return globalCfg.system.collect_time; }
 

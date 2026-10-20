@@ -439,7 +439,7 @@ void collectorManager::poll()
             continue;
         }
 
-        DataPacket *packet = collector->collect();
+        DataPacket *packet = collector->collect(ReadDeadline::at(finishMs));
         if (deadlineReached(finishMs))
         {
             if (packet != nullptr) packet->release();

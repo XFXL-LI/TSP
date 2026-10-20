@@ -143,7 +143,10 @@ void EventBus::publish(EventID id, void* data) {
                 // Processed monitoring data must not use the legacy
                 // "queue full -> clear every old message" policy. Apply
                 // backpressure so REAL/MIN/HOUR/DAY packets keep their order.
-                if (id == EventID::PROCESSED_DATA_COLLECTED) {
+                // Runtime LED notifications share the processed-data queue;
+                // never drain owned packets when publishing a control change.
+                if (id == EventID::PROCESSED_DATA_COLLECTED ||
+                    id == EventID::RUNTIME_SWITCH_CHANGED) {
                     UBaseType_t waiting = uxQueueMessagesWaiting(q);
                     UBaseType_t spaces = uxQueueSpacesAvailable(q);
                     if (spaces <= 2) {

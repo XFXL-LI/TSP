@@ -8,6 +8,18 @@ namespace {
 uint32_t lastGasTransactionEndMs = 0;
 bool hasCompletedGasTransaction = false;
 
+bool gasReadFits(ReadDeadline deadline, uint32_t responseTimeoutMs) {
+    const uint32_t now = millis();
+    const uint32_t elapsed = now - lastGasTransactionEndMs;
+    const uint32_t wait = hasCompletedGasTransaction &&
+                          elapsed < GasModbusAccess::MIN_QUERY_INTERVAL_MS
+        ? GasModbusAccess::MIN_QUERY_INTERVAL_MS - elapsed : 0;
+    const uint64_t budget = static_cast<uint64_t>(wait) + responseTimeoutMs +
+                            GasModbusAccess::TRANSACTION_OVERHEAD_MS;
+    return !deadline.enabled ||
+           (budget <= UINT32_MAX && deadline.fits(now, static_cast<uint32_t>(budget)));
+}
+
 uint32_t waitForGasInterval(uint32_t &waitedMs, bool &hasPrevious)
 {
     hasPrevious = hasCompletedGasTransaction;
@@ -52,13 +64,21 @@ namespace GasModbusAccess {
 
 bool readRegisters(modbus_manager &manager, uint8_t slave, uint16_t address,
                    uint16_t count, uint16_t *values, uint8_t maxAttempts,
-                   uint32_t responseTimeoutMs, const char *source)
+                   uint32_t responseTimeoutMs, const char *source,
+                   ReadDeadline deadline)
 {
     if (values == nullptr || count == 0 || maxAttempts == 0) return false;
     for (uint8_t attempt = 1; attempt <= maxAttempts; ++attempt) {
+        if (!gasReadFits(deadline, responseTimeoutMs)) {
+            LOG_WARNING("[DIAG] GAS_READ_SKIPPED slave=%u attempt=%u reason=deadline",
+                        (unsigned)slave, (unsigned)attempt);
+            return false;
+        }
         uint32_t waitedMs = 0;
         bool hasPrevious = false;
         const uint32_t gapMs = waitForGasInterval(waitedMs, hasPrevious);
+        // Scheduler/serial contention can consume the budget while waiting.
+        if (!gasReadFits(deadline, responseTimeoutMs)) return false;
         const uint32_t startedAt = millis();
         const bool ok = manager.readModbusRegs(
             slave, address, count, values, 1, responseTimeoutMs, 0);
@@ -73,11 +93,12 @@ bool readRegisters(modbus_manager &manager, uint8_t slave, uint16_t address,
 bool readStatusAndConcentration(modbus_manager &manager, uint8_t slave,
                                 uint16_t *values, uint8_t maxAttempts,
                                 uint32_t responseTimeoutMs,
-                                const char *sensorId, const char *source)
+                                const char *sensorId, const char *source,
+                                ReadDeadline deadline)
 {
     if (values == nullptr) return false;
     if (!readRegisters(manager, slave, 0x6000, 2, values, maxAttempts,
-                       responseTimeoutMs, source)) {
+                       responseTimeoutMs, source, deadline)) {
         return false;
     }
     if ((values[0] & GasUnitConverter::STATUS_READY) != 0U) {
@@ -86,23 +107,38 @@ bool readStatusAndConcentration(modbus_manager &manager, uint8_t slave,
 
     const uint16_t firstStatus = values[0];
     const uint16_t firstConcentration = values[1];
-    uint16_t recheck[2] = {0, 0};
     LOG_INFO("[DIAG] GAS_STATUS_RECHECK id=%s slave=%u first_status=0x%04X first_raw=%u wait_ms=%u",
              sensorId != nullptr ? sensorId : "unknown", (unsigned)slave,
              firstStatus, firstConcentration,
              (unsigned)MIN_QUERY_INTERVAL_MS);
 
-    const bool recheckOk = readRegisters(
-        manager, slave, 0x6000, 2, recheck, 1, responseTimeoutMs, source);
-    if (recheckOk) {
-        values[0] = recheck[0];
-        values[1] = recheck[1];
+    for (uint8_t readIndex = 2; readIndex <= MAX_STATUS_READS; ++readIndex) {
+        if (!gasReadFits(deadline, responseTimeoutMs)) {
+            LOG_INFO("[DIAG] GAS_STATUS_RECHECK_SKIPPED id=%s slave=%u read_index=%u reason=deadline",
+                     sensorId != nullptr ? sensorId : "unknown",
+                     (unsigned)slave, (unsigned)readIndex);
+            break;
+        }
+        uint16_t recheck[2] = {0, 0};
+        const bool recheckOk = readRegisters(
+            manager, slave, 0x6000, 2, recheck, 1, responseTimeoutMs, source, deadline);
+        if (recheckOk) {
+            values[0] = recheck[0];
+            values[1] = recheck[1];
+        }
+        const bool ready = recheckOk &&
+            (recheck[0] & GasUnitConverter::STATUS_READY) != 0U;
+        if (readIndex == 2) {
+            LOG_INFO("[DIAG] GAS_STATUS_RECHECK_RESULT id=%s slave=%u second_ok=%d second_status=0x%04X second_raw=%u recovered_ready=%d",
+                     sensorId != nullptr ? sensorId : "unknown", (unsigned)slave,
+                     recheckOk ? 1 : 0, recheck[0], recheck[1], ready ? 1 : 0);
+        } else {
+            LOG_INFO("[DIAG] GAS_STATUS_THIRD_READ_RESULT id=%s slave=%u third_ok=%d third_status=0x%04X third_raw=%u recovered_ready=%d",
+                     sensorId != nullptr ? sensorId : "unknown", (unsigned)slave,
+                     recheckOk ? 1 : 0, recheck[0], recheck[1], ready ? 1 : 0);
+        }
+        if (ready) break;
     }
-    const bool ready = recheckOk &&
-        (recheck[0] & GasUnitConverter::STATUS_READY) != 0U;
-    LOG_INFO("[DIAG] GAS_STATUS_RECHECK_RESULT id=%s slave=%u second_ok=%d second_status=0x%04X second_raw=%u recovered_ready=%d",
-             sensorId != nullptr ? sensorId : "unknown", (unsigned)slave,
-             recheckOk ? 1 : 0, recheck[0], recheck[1], ready ? 1 : 0);
     return true;
 }
 

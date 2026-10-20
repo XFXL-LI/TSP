@@ -20,8 +20,8 @@ a delay. Runtime work is performed by FreeRTOS tasks and event queues.
 
 | Variant | Canonical source | Version | Build inputs | Source fingerprint |
 | --- | --- | ---: | ---: | --- |
-| standard | `firmware/standard/TSP` | 2.1.1 | 93 | `95CE6E20E3FF7DEB9DE43F76FB505EC55E194C5E354132FAC94DC4E5774605B3` |
-| certified | `firmware/certified/TSP` | 2.1.1.1 | 94 | `DCF142C5D1078957237B193A2BB80FBF5B3370E587B9C1CE4853C3C9338DD7F2` |
+| standard | `firmware/standard/TSP` | 2.1.3 | 99 | `44C174E4514E19EF7B8AC7944BF2C0BA1CFAB07B6F66D20148A00F1A5A226F45` |
+| certified | `firmware/certified/TSP` | 2.1.3.1 | 100 | `CBB8435ECDE6820AE2D5088065B32D530AE2EAC58209A037FBD1543C2F14AE44` |
 
 The certified variant adds `GasSpecificPolicy.h` and applies a 500 ppb upper
 cap to O3, NO2, and SO2. CO is not capped. Its certified calibration profile is
@@ -30,7 +30,7 @@ and SO2 250 ppb. Common changes must be evaluated for both variants; this
 certified policy must not leak into standard.
 
 The earlier migration baseline passed verification with only expected
-nondeterministic build metadata differences. Current 2.1.1/2.1.1.1 builds
+nondeterministic build metadata differences. Current 2.1.3/2.1.3.1 builds
 compiled successfully; neither result is hardware verification. The experimental
 laboratory source is separate and is not updated with this baseline.
 
@@ -125,9 +125,9 @@ The active task set is configuration-dependent:
 | Config | applies configuration requests |
 | Calibration | advances gas calibration |
 | OTA listener/worker | receives and executes remote OTA requests |
-| LED | updates displayed measurements |
+| LED | continuously pages a bounded latest-measurement text cache every 5 seconds |
 | Alarm | evaluates alarm rules when enabled |
-| Temperature control | executes enclosure temperature control when enabled |
+| Temperature control | always samples SHT30 and controls the fan; the master switch gates only heating |
 | MQTT | conditionally created; current loop is a placeholder delay |
 
 DataProcess and HJ212 run on core 0; collection and serial-control work primarily
@@ -151,7 +151,9 @@ Long-lived queue depths in the current source include:
 
 `permissionManager` also creates short-lived response queues of depth 1.
 The EventBus owns a mutex and one queue per subscriber. Processed-data events
-use blocking delivery to preserve order and backpressure; other overflowing
+use blocking delivery to preserve order and backpressure. LED runtime-control
+notifications share the LED queue and also use blocking delivery so they cannot
+discard owned processed packets; other overflowing
 event queues discard stale entries and emit an `EVENT_DROP` diagnostic.
 
 Each serial interface has a mutex. Additional synchronization protects SD,
@@ -179,8 +181,10 @@ once with function 03, start register `0x0010`, count 8, followed by enabled gas
 modules. The pump cutoff remains independent of slow Modbus retries. Gas Modbus
 transactions use a 500 ms operational interval between the end of one request
 and the start of the next, including calibration and retry paths. A successful
-`0x6000/0x6001` response whose ready bit is clear is rechecked exactly once
-after that shared interval.
+`0x6000/0x6001` response whose ready bit is clear may be rechecked twice
+after that shared interval (up to three successful status/concentration reads).
+Follow-up ready checks use one communication attempt each and obey the
+remaining second-70 collection deadline; this does not extend the pump period.
 
 The particulate response contains PM1, PM2.5, PM10, and TSP. Only enabled
 logical factors are emitted; when all particulate factors are disabled, no
@@ -227,6 +231,15 @@ and create no extra task; LCD absence does not gate startup. See
 FFat stores configuration. Missing configuration files are seeded from embedded
 defaults. SDMMC uses 1-bit mode with CLK GPIO 47, CMD GPIO 48, and D0 GPIO 21;
 automatic format-on-mount-failure is disabled.
+
+Since 2.1.2/2.1.2.1, startup mount failure is retried about every 60 seconds
+by the existing maintenance task under the SD mutex, independent of network,
+RTC, and LCD availability. Failed attempts release acquired resources; a
+successful mount ends retries. The initialization I/O budget is 3 seconds and
+the per-command timeout parameter is capped at 1 second, not a hard bound on
+SDK scheduling/cleanup wall time. This does not support runtime card removal
+or backfill records from the unmounted period, and does not fix the pending
+first-sector corruption issue.
 
 Measurement records use:
 
@@ -304,6 +317,43 @@ Embedded headers seed files that do not yet exist. Runtime requests are routed
 through the EventBus, and sensor configuration supports selection, subsets, and
 merging.
 
+In 2.1.3/2.1.3.1, `switchConfig` keeps the LCD/remote-DTU legacy wire names
+but gives `enable_remote_dtu` the LED enable meaning and `save_raw_data` the
+four-region meaning. They no longer exist as internal storage/DTU flags;
+the actual SD record path and remote communication are not gated by these
+aliases. Canonical `/switch.json` stores `led.enabled` and `led.region_count`
+(2 or 4), while replies expose the old Boolean aliases. An old file without
+canonical LED settings defaults to enabled/two regions, ignoring unrelated
+old alias values. Booting does not rewrite existing files. Other switch business
+semantics remain deferred; omitted values are preserved when saving.
+
+`tempControlSwitch` is the canonical heating name, with `tempConSwitch` as a
+fallback legacy alias. Valid configuration is saved before atomically publishing
+the three runtime controls. Disabling heating immediately drives GPIO42 LOW
+and clears the active flag under the same cross-core critical section as heater
+decisions. Enabling allows the unchanged temperature/humidity logic; task
+notification wakes it without changing the 30-second sample cadence. Invalid
+SHT30 readings inhibit heating. Fan control and readings remain active while
+heating is off. The original 4 KB thermal task is now always created, so a
+previously disabled configuration has that task's stack/RTOS overhead again.
+
+The LED task keeps its existing 4 KB stack and depth-5 queue. It promptly
+releases aggregate/older packets and retains only 14 bounded wire-text items,
+not a full packet across paging sleeps. Order is particulate, meteorological
+and noise, then gases. Missing/invalid factors are skipped as before; no new
+waiting or error text is introduced. New snapshots preserve a valid page
+cursor. Two regions use 41/42 and four use 41--44; disabling, shrinking mode,
+and partial pages clear unused slots with a space, pending hardware confirmation.
+Identical successfully written slot contents/colors are suppressed. Business
+guards and serial mutexes are not held across the five-second queue wait.
+Region writes and clears are scheduled one frame per poll, with at least 50 ms
+after synchronous UART completion. A fixed four-item pending snapshot keeps
+an in-flight page coherent across collection updates. Mode changes cancel old
+pending content without resetting the quiet gap; incomplete writes retain their
+target and retry after about five seconds. Waiting reuses the existing event
+queue outside business guards and serial mutexes. UART success is not a card ACK.
+See [the switch contract](protocols/lcd/LCD_SWITCH_CONFIG_PROTOCOL.md).
+
 The firmware version is currently repeated in:
 
 - `TSP.ino`
@@ -344,11 +394,13 @@ Both packages remain `packaged-not-hardware-verified`. A Git tag identifies
 the canonical repository state after migration; binary provenance is defined by
 the committed release metadata and recorded source fingerprint.
 
-The 2.1.1 standard and 2.1.1.1 certified offline-snapshot/status builds have
+The 2.1.3 standard and 2.1.3.1 certified LED/heating-control builds have
 compiled successfully but are not yet packaged or hardware verified. Output
-directories are `firmware_workspace/build/standard-2.1.1` and
-`firmware_workspace/build/certified-2.1.1.1`; existing INFO test packages remain
-unchanged.
+directories are `firmware_workspace/build/standard-2.1.3-led-gap-20261009` and
+`firmware_workspace/build/certified-2.1.3.1-led-gap-20261009`. These same-version
+2026-10-09 builds add inter-frame scheduling; the 2026-10-08 builds and prior
+INFO test packages remain unchanged. Use build fingerprints, not version alone,
+to distinguish the LED timing fix.
 
 ## Important Constraints
 
@@ -388,6 +440,7 @@ unchanged.
 - Certified-only gas policy:
   [GasSpecificPolicy.h](../firmware/certified/TSP/src/module/gas/GasSpecificPolicy.h)
 - Outstanding work: [OPEN_ISSUES](OPEN_ISSUES.md)
+- LED/heating compatibility: [switch contract](protocols/lcd/LCD_SWITCH_CONFIG_PROTOCOL.md)
 - AI-relevant history: [AI_CHANGELOG](AI_CHANGELOG.md)
 
 When a statement here conflicts with current code, trust the current code and
