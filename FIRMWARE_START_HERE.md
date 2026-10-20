@@ -1,6 +1,6 @@
 # TSP Firmware 从这里开始
 
-最后更新：2026-10-09
+最后更新：2026-10-20
 
 本文件是当前固件源码、构建和发布入口。详细版本关系见
 [固件版本与目录说明](FIRMWARE_VERSION_LOCATIONS.md)，仓库整体说明见
@@ -17,24 +17,24 @@ AI辅助开发应同时读取：
 
 | Variant | 版本 | 正式源码 | 构建输入 | 源码指纹 |
 |---|---:|---|---:|---|
-| standard | 2.1.3 | `firmware/standard/TSP` | 99 | `D490FACFB83CC839F004B30781B882F70E236EF7484A2891D497804A847C13BF` |
-| certified | 2.1.3.1 | `firmware/certified/TSP` | 100 | `5F50F4FBF848D450EE7E90842DF6E1D18EADC38889F4103420357FB150DB2700` |
+| standard | 2.1.4 | `firmware/standard/TSP` | 101 | `8424426CB18ABB91A23E2E92E9E3A4E3741CAEB103872A591D848B36F3F1AC68` |
+| certified | 2.1.4.1 | `firmware/certified/TSP` | 102 | `5C19FA75848458D7F474113D1E2CE0B02BA21F022627C6FBA044AD7766F90BF7` |
 
-两套2.1.3系列源码均已编译通过，状态为
+两套2.1.4系列源码均已编译通过，状态为
 `compiled-not-hardware-verified`。实时数据固定每120秒形成一批；有空气通道因子时气泵
 固定运行70秒，其他传感器从第45秒采集，颗粒物与气体在通气60秒后且泵仍运行时采集。
 颗粒物改为一次读取四通道，小时统计改为纳入每个有效实时批次。
 当前版保留无有效时间时的本地快照、可选状态查询、最多3次气体状态读取及
 SD启动挂载失败后的约60秒重试；不支持运行中热拔卡。
-本次增加LED两／四区域连续5秒翻页及兼容开关映射，修复加热总开关即时生效。
-2026-10-09修正LED区域帧连续发送：每帧完成后至少间隔50ms，清屏也遵守；
-版本号未再次递增，旧2.1.3系列构建保留，须按构建日期／指纹区分新旧包。
-未修改采集／上传时序、认证气体策略或实验版；LCD／LED／加热实机验收仍待完成。
+本次增加HJ212软件串口写字节优先级保护，失败报文异步交给存储任务；存储队列满时
+明确拒收新存储项，防止其阻塞上传投递。臭氧出口使用平台指定的w34011，旧有效pending
+在内存迁移因子名并更新CRC。保留2.1.3的LED／加热行为；不改变采集周期、波特率或认证策略。
+入队不等于落盘；底层SD卡住和中断造成的UART时延仍需实机验证，多通道适配尚未实现。
 
 当前构建产物位于：
 
-- standard：`firmware_workspace/build/standard-2.1.3-atmospheric-pressure-20261009`
-- certified：`firmware_workspace/build/certified-2.1.3.1-atmospheric-pressure-20261009`
+- standard：`firmware_workspace/build/standard-2.1.4-hj-uart-20261020`
+- certified：`firmware_workspace/build/certified-2.1.4.1-hj-uart-20261020`
 
 迁移前的两个 `tmp` 历史源码副本已退出主工作树；需要追溯时使用仓库外历史归档和
 迁移安全备份。当前开发与构建只使用上表中的 `firmware/` 正式源码。

@@ -1,5 +1,6 @@
 #include "eventBus.h"
 #include <algorithm>
+#include "../../inc/sys_init.h"
 #include "../../module/log/log_manager.h"
 EventCall::EventCall() : internalQueue(NULL) {
     busMutex = xSemaphoreCreateMutex();
@@ -137,6 +138,22 @@ void EventBus::publish(EventID id, void* data) {
                 auto nameIt = queueNames.find(q);
                 if (nameIt != queueNames.end()) {
                     queueName = nameIt->second.c_str();
+                }
+
+                // A blocked/slow SD consumer must not hold this bus mutex and
+                // stall delivery to the live uploader. Preserve queued items;
+                // release exactly the rejected subscriber's retained reference.
+                if (strcmp(queueName, "STORAGE") == 0) {
+                    if (xQueueSend(q, &msg, 0) != pdTRUE) {
+                        droppedMessages.fetch_add(1, std::memory_order_relaxed);
+                        LOG_ERROR("[DIAG] STORAGE_QUEUE_REJECT event=%d outcome=not_queued waiting=%u",
+                                  (int)id, (unsigned)uxQueueMessagesWaiting(q));
+                        if (data && id == EventID::PROCESSED_DATA_COLLECTED)
+                            static_cast<AllProcessedDataPacket*>(data)->release();
+                        else if (data && id == EventID::RECORD_QUERY_REQ)
+                            static_cast<JSONCmdData*>(data)->release();
+                    }
+                    continue;
                 }
 
                 // Firmware 2.0.1 (2026-07-30):

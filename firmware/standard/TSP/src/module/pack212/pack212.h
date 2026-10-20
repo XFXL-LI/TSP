@@ -12,6 +12,8 @@ public:
     String build2017Hj212Packet(const AllProcessedDataPacket* allData, const HJ212CONFIG& sysCfg);
     String build2025Hj212Packet(const AllProcessedDataPacket* allData, const HJ212CONFIG& sysCfg);
     static bool isValidPacket(const String& packet);
+    // Rewrite only ozone CP field names in an already valid cached frame.
+    static bool rewriteLegacyOzoneCode(String& packet);
 
 private:
     static unsigned int calculateCRC(const char* data, int len);

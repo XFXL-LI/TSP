@@ -295,10 +295,12 @@ void filesysManager::retrySDMountIfDue() {
 
 filesysManager::filesysManager() {
     _sdMutex = xSemaphoreCreateMutex();
+    _pendingWriteQueue = xQueueCreate(PendingWritePolicy::CAPACITY,
+                                     sizeof(PendingWriteRequest*));
     if (SaveDataFileTaskQueue == nullptr) {
-        SaveDataFileTaskQueue = EventBus::getInstance().createReceiverQueue(20, "STORAGE");
+        SaveDataFileTaskQueue = EventBus::getInstance().createReceiverQueue(PendingWritePolicy::STORAGE_QUEUE_DEPTH, "STORAGE");
     }
-    if (!_sdMutex || !SaveDataFileTaskQueue) {
+    if (!_sdMutex || !SaveDataFileTaskQueue || !_pendingWriteQueue) {
         DeviceRuntimeStatus::criticalInitFailed();
     }
     EventBus::getInstance().subscribe(EventID::PROCESSED_DATA_COLLECTED, SaveDataFileTaskQueue);
@@ -420,8 +422,105 @@ String filesysManager::getPendingFilePath(DataTime type, uint64_t ts) {
     return "/sdcard/pending/" + String((int)type) + "/" + String(ts) + ".pkt";
 }
 
-bool filesysManager::savePendingPacket(const AllProcessedDataPacket* data, const String& packet) {
-    if (data == nullptr || packet.length() == 0 ||
+bool filesysManager::queuePendingPacket(const AllProcessedDataPacket* data,
+                                         String& packet) {
+    if (!data || !_pendingWriteQueue) {
+        LOG_ERROR("[DIAG] PENDING_STORE_REJECT outcome=unprotected reason=not_ready");
+        return false;
+    }
+    const size_t bytes = packet.length();
+    if (_pendingWriteCount.fetch_add(1, std::memory_order_acq_rel) >=
+        PendingWritePolicy::CAPACITY) {
+        _pendingWriteCount.fetch_sub(1, std::memory_order_release);
+        LOG_ERROR("[DIAG] PENDING_STORE_REJECT trace=%u type=%u timestamp=%llu outcome=unprotected reason=queue_full",
+                  (unsigned)data->trace_id, (unsigned)data->dataTime, data->last_update);
+        return false;
+    }
+    const size_t previousBytes = _pendingWriteBytes.fetch_add(bytes, std::memory_order_acq_rel);
+    if (bytes > PendingWritePolicy::MAX_BYTES ||
+        previousBytes > PendingWritePolicy::MAX_BYTES - bytes) {
+        _pendingWriteBytes.fetch_sub(bytes, std::memory_order_release);
+        _pendingWriteCount.fetch_sub(1, std::memory_order_release);
+        LOG_ERROR("[DIAG] PENDING_STORE_REJECT trace=%u type=%u timestamp=%llu outcome=unprotected reason=byte_budget bytes=%u",
+                  (unsigned)data->trace_id, (unsigned)data->dataTime,
+                  data->last_update, (unsigned)bytes);
+        return false;
+    }
+    PendingWriteRequest* request = new (std::nothrow) PendingWriteRequest;
+    if (!request) {
+        _pendingWriteBytes.fetch_sub(bytes, std::memory_order_release);
+        _pendingWriteCount.fetch_sub(1, std::memory_order_release);
+        LOG_ERROR("[DIAG] PENDING_STORE_REJECT trace=%u type=%u timestamp=%llu outcome=unprotected reason=allocation_failed",
+                  (unsigned)data->trace_id, (unsigned)data->dataTime, data->last_update);
+        return false;
+    }
+    request->dataTime = data->dataTime;
+    request->timestamp = data->last_update;
+    request->trace = data->trace_id;
+    request->nextTryAt = millis();
+    request->packet = std::move(packet);
+    if (xQueueSend(_pendingWriteQueue, &request, 0) != pdTRUE) {
+        releasePendingWrite(request);
+        LOG_ERROR("[DIAG] PENDING_STORE_REJECT trace=%u type=%u timestamp=%llu outcome=unprotected reason=queue_send_failed",
+                  (unsigned)data->trace_id, (unsigned)data->dataTime, data->last_update);
+        return false;
+    }
+    // Consumer can already have completed/deleted the request: use caller-owned
+    // identity only, never dereference the transferred request after queue send.
+    LOG_INFO("[DIAG] PENDING_STORE_QUEUED trace=%u type=%u timestamp=%llu bytes=%u durable=0",
+             (unsigned)data->trace_id, (unsigned)data->dataTime,
+             data->last_update, (unsigned)bytes);
+    return true;
+}
+
+void filesysManager::releasePendingWrite(PendingWriteRequest* request) {
+    const size_t bytes = request->packet.length();
+    delete request;
+    _pendingWriteBytes.fetch_sub(bytes, std::memory_order_release);
+    _pendingWriteCount.fetch_sub(1, std::memory_order_release);
+}
+
+void filesysManager::servicePendingWrites() {
+    if (!_pendingWriteQueue) return;
+    for (uint32_t checked = 0; checked < PendingWritePolicy::CAPACITY; ++checked) {
+        PendingWriteRequest* request = nullptr;
+        if (xQueueReceive(_pendingWriteQueue, &request, 0) != pdTRUE) return;
+        if (!PendingWritePolicy::due(millis(), request->nextTryAt)) {
+            if (xQueueSend(_pendingWriteQueue, &request, 0) != pdTRUE) {
+                LOG_ERROR("[DIAG] PENDING_STORE_RESULT trace=%u outcome=unprotected reason=retry_queue_full",
+                          (unsigned)request->trace);
+                releasePendingWrite(request);
+            }
+            continue;
+        }
+        RemoteOtaManager::BusinessActivityGuard businessActivity;
+        ++request->attempts;
+        const uint32_t started = millis();
+        const PendingProtectResult result = protectPendingPacket(
+            request->dataTime, request->timestamp, request->packet);
+        const uint32_t finished = millis();
+        const bool retry = result == PendingProtectResult::UNPROTECTED &&
+                           request->attempts < PendingWritePolicy::MAX_ATTEMPTS;
+        LOG_INFO("[DIAG] PENDING_STORE_RESULT trace=%u type=%u timestamp=%llu attempt=%u outcome=%s storage_ms=%u",
+                 (unsigned)request->trace, (unsigned)request->dataTime,
+                 request->timestamp, (unsigned)request->attempts,
+                 result == PendingProtectResult::FULL_PACKET_SAVED ? "full_saved" :
+                 result == PendingProtectResult::REBUILD_MARKER_SAVED ? "rebuild_marker_saved" :
+                 retry ? "retry_scheduled" : "unprotected",
+                 (unsigned)(finished - started));
+        if (retry) {
+            request->nextTryAt = finished + PendingWritePolicy::RETRY_MS;
+            if (xQueueSend(_pendingWriteQueue, &request, 0) == pdTRUE) return;
+            LOG_ERROR("[DIAG] PENDING_STORE_RESULT trace=%u outcome=unprotected reason=retry_queue_full",
+                      (unsigned)request->trace);
+        }
+        releasePendingWrite(request);
+        return; // At most one actual disk attempt per storage-task iteration.
+    }
+}
+
+bool filesysManager::savePendingPacket(DataTime dataTime, uint64_t timestamp, const String& packet) {
+    if (packet.length() == 0 ||
         !file_storage::getInstance().isSDcardReady()) {
         return false;
     }
@@ -434,12 +533,12 @@ bool filesysManager::savePendingPacket(const AllProcessedDataPacket* data, const
     // as the observed 14-byte "##0002&&..." frame.
     if (!HJ212_DataCenter::isValidPacket(packet)) {
         LOG_ERROR("[DIAG] PENDING_REJECT type=%u timestamp=%llu bytes=%u reason=invalid_hj212",
-                  (unsigned)data->dataTime, data->last_update,
+                  (unsigned)dataTime, timestamp,
                   (unsigned)packet.length());
         return false;
     }
 
-    String path = getPendingFilePath(data->dataTime, data->last_update);
+    String path = getPendingFilePath(dataTime, timestamp);
     int lastSlash = path.lastIndexOf('/');
     if (lastSlash != -1) {
         String dirPath = path.substring(0, lastSlash);
@@ -558,7 +657,7 @@ bool filesysManager::savePendingPacket(const AllProcessedDataPacket* data, const
             const RuntimeMemorySnapshot memory = observeRuntimeMemory();
             LOG_ERROR("[DIAG] PENDING_WRITE_HEALTH failures=%u zero_prefix=%u type=%u timestamp=%llu free=%u largest=%u min_free=%u min_largest=%u",
                       (unsigned)failures, (unsigned)zeroPrefixes,
-                      (unsigned)data->dataTime, data->last_update,
+                      (unsigned)dataTime, timestamp,
                       (unsigned)memory.freeHeap, (unsigned)memory.largestBlock,
                       (unsigned)memory.minimumFreeHeap,
                       (unsigned)memory.minimumLargestBlock);
@@ -597,8 +696,8 @@ bool filesysManager::savePendingPacket(const AllProcessedDataPacket* data, const
     return false;
 }
 
-bool filesysManager::savePendingRebuildMarker(const AllProcessedDataPacket* data) {
-    if (data == nullptr || !file_storage::getInstance().isSDcardReady()) {
+bool filesysManager::savePendingRebuildMarker(DataTime dataTime, uint64_t timestamp) {
+    if (!file_storage::getInstance().isSDcardReady()) {
         return false;
     }
     ScopedSdLock sdLock(_sdMutex);
@@ -607,7 +706,7 @@ bool filesysManager::savePendingRebuildMarker(const AllProcessedDataPacket* data
         return false;
     }
 
-    String path = getPendingFilePath(data->dataTime, data->last_update);
+    String path = getPendingFilePath(dataTime, timestamp);
     int lastSlash = path.lastIndexOf('/');
     if (lastSlash == -1) return false;
 
@@ -666,18 +765,18 @@ bool filesysManager::savePendingRebuildMarker(const AllProcessedDataPacket* data
         fclose(existing);
         if (markerMatches || completePacketMatches) {
             LOG_INFO("[DIAG] PENDING_MARKER_EXISTS type=%u timestamp=%llu bytes=%ld path=%s",
-                     (unsigned)data->dataTime, data->last_update,
+                     (unsigned)dataTime, timestamp,
                      existingSize, path.c_str());
             return true;
         }
         if (!existingReadable) {
             LOG_ERROR("[DIAG] PENDING_EXISTING_CHECK_FAIL type=%u timestamp=%llu bytes=%ld path=%s",
-                      (unsigned)data->dataTime, data->last_update,
+                      (unsigned)dataTime, timestamp,
                       existingSize, path.c_str());
             return false;
         }
         LOG_WARNING("[DIAG] PENDING_EXISTING_INVALID type=%u timestamp=%llu bytes=%ld action=replace_with_marker path=%s",
-                    (unsigned)data->dataTime, data->last_update,
+                    (unsigned)dataTime, timestamp,
                     existingSize, path.c_str());
         if (remove(path.c_str()) != 0) {
             LOG_ERROR("Failed to replace incomplete pending marker: %s",
@@ -716,38 +815,33 @@ bool filesysManager::savePendingRebuildMarker(const AllProcessedDataPacket* data
     if (!matches) {
         remove(path.c_str());
         LOG_ERROR("[DIAG] PENDING_REBUILD_VERIFY_FAIL type=%u timestamp=%llu path=%s",
-                  (unsigned)data->dataTime, data->last_update, path.c_str());
+                  (unsigned)dataTime, timestamp, path.c_str());
         return false;
     }
 
     LOG_INFO("[DIAG] PENDING_REBUILD_MARKER type=%u timestamp=%llu path=%s",
-             (unsigned)data->dataTime, data->last_update, path.c_str());
+             (unsigned)dataTime, timestamp, path.c_str());
     return true;
 }
 
 PendingProtectResult filesysManager::protectPendingPacket(
-    const AllProcessedDataPacket* data,
+    DataTime dataTime, uint64_t timestamp,
     const String& packet) {
-    if (data == nullptr) {
-        LOG_ERROR("[DIAG] PENDING_PROTECT outcome=unprotected reason=null_data");
-        return PendingProtectResult::UNPROTECTED;
-    }
-
-    if (packet.length() > 0 && savePendingPacket(data, packet)) {
+    if (packet.length() > 0 && savePendingPacket(dataTime, timestamp, packet)) {
         LOG_INFO("[DIAG] PENDING_PROTECT outcome=full_saved type=%u timestamp=%llu bytes=%u",
-                 (unsigned)data->dataTime, data->last_update,
+                 (unsigned)dataTime, timestamp,
                  (unsigned)packet.length());
         return PendingProtectResult::FULL_PACKET_SAVED;
     }
 
-    if (savePendingRebuildMarker(data)) {
+    if (savePendingRebuildMarker(dataTime, timestamp)) {
         LOG_WARNING("[DIAG] PENDING_PROTECT outcome=rebuild_marker_saved type=%u timestamp=%llu",
-                    (unsigned)data->dataTime, data->last_update);
+                    (unsigned)dataTime, timestamp);
         return PendingProtectResult::REBUILD_MARKER_SAVED;
     }
 
     LOG_ERROR("[DIAG] PENDING_PROTECT outcome=unprotected type=%u timestamp=%llu packet_bytes=%u",
-              (unsigned)data->dataTime, data->last_update,
+              (unsigned)dataTime, timestamp,
               (unsigned)packet.length());
     return PendingProtectResult::UNPROTECTED;
 }
@@ -1391,7 +1485,7 @@ void filesysManager::processQuery(JSONCmdData* req) {
 
 void filesysManager::poll() {
     EventMsg msg;
-    if (EventBus::waitEvent(SaveDataFileTaskQueue, msg))
+    if (EventBus::waitEvent(SaveDataFileTaskQueue, msg, PendingWritePolicy::POLL_MS))
     {
         RemoteOtaManager::BusinessActivityGuard businessActivity;
         if (msg.id == EventID::PROCESSED_DATA_COLLECTED)
@@ -1410,4 +1504,5 @@ void filesysManager::poll() {
             req->release();
         }
     }
+    servicePendingWrites();
 }

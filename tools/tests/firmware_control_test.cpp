@@ -64,7 +64,8 @@ struct SHT30 {
 #include "thermal_source.h"
 
 struct ProcessedDataPacket { float value; bool is_valid; };
-struct AllProcessedDataPacket { std::map<String, ProcessedDataPacket> processed_data_map; };
+struct AllProcessedDataPacket { std::map<String, ProcessedDataPacket> processed_data_map; unsigned released = 0; void release() { ++released; } };
+struct JSONCmdData { unsigned released = 0; void release() { ++released; } };
 struct CollectSetting { int alarmLimit = 100; String unit = "ppb"; };
 using COLLECTMAP = std::map<String, CollectSetting>;
 // Gas unit conversion is unchanged and is outside these control tests.
@@ -105,7 +106,7 @@ struct SerialManager {
 };
 #include "led_source.h"
 
-enum class EventID { PROCESSED_DATA_COLLECTED, RUNTIME_SWITCH_CHANGED, OTHER };
+enum class EventID { PROCESSED_DATA_COLLECTED, RUNTIME_SWITCH_CHANGED, RECORD_QUERY_REQ, OTHER };
 struct EventMsg { EventID id; void *data; };
 struct HostQueue {
     std::deque<EventMsg> items;
@@ -231,6 +232,24 @@ static void testControlQueue() {
     }
     assert(queue.items.size() == 1 && queue.items.front().id == EventID::RUNTIME_SWITCH_CHANGED);
     pass("full LED queue preserves all owned packets when publishing control changes");
+}
+static void testStorageBackpressure() {
+    HostQueue storage, upload; storage.capacity = 4;
+    EventBus bus; bus.queueNames[&storage] = "STORAGE"; bus.queueNames[&upload] = "HJ212";
+    bus.subscribers[EventID::PROCESSED_DATA_COLLECTED] = {&storage, &upload};
+    AllProcessedDataPacket packet;
+    for (unsigned i = 0; i < 4; ++i)
+        storage.items.push_back({EventID::PROCESSED_DATA_COLLECTED, nullptr});
+    bus.publish(EventID::PROCESSED_DATA_COLLECTED, &packet);
+    assert(packet.released == 1 && storage.items.size() == 4);
+    assert(storage.resetCount == 0 && storage.consumed.empty());
+    assert(upload.items.size() == 1 && upload.items.front().data == &packet);
+    JSONCmdData query;
+    bus.subscribers[EventID::RECORD_QUERY_REQ] = {&storage};
+    bus.publish(EventID::RECORD_QUERY_REQ, &query);
+    assert(query.released == 1 && storage.items.size() == 4);
+    assert(bus.droppedMessages.load() == 2);
+    pass("stalled SD queue preserves owned work, releases rejected references and never blocks live delivery");
 }
 static void testHeating() {
     auto &heat = TempManager::getInstance();
@@ -436,6 +455,6 @@ static void testLed() {
     std::printf("Host sizeof LED manager=%zu, cache=%zu (firmware ELF is RAM authority)\n", sizeof(LedManager), sizeof(LedDisplayPolicy::Cache));
 }
 int main() {
-    testSwitches(); testCache(); testControlQueue(); testHeating(); testLed();
+    testSwitches(); testCache(); testControlQueue(); testStorageBackpressure(); testHeating(); testLed();
     std::printf("All %u control regression groups passed; hardware not verified.\n", cases);
 }

@@ -1,6 +1,6 @@
 # TSP 固件版本与目录说明
 
-最后更新：2026-10-09
+最后更新：2026-10-20
 
 本文件用于区分“正式实机验证固件”“对应的可编译源码”和“当前开发源码”。
 不要只根据目录名或 `TSP.ino` 文件名判断版本。
@@ -9,8 +9,8 @@
 
 | Variant | 版本 | 当前正式源码 | 构建输入 | 源码指纹 |
 |---|---:|---|---:|---|
-| standard | 2.1.3 | `firmware/standard/TSP` | 99 | `D490FACFB83CC839F004B30781B882F70E236EF7484A2891D497804A847C13BF` |
-| certified | 2.1.3.1 | `firmware/certified/TSP` | 100 | `5F50F4FBF848D450EE7E90842DF6E1D18EADC38889F4103420357FB150DB2700` |
+| standard | 2.1.4 | `firmware/standard/TSP` | 101 | `8424426CB18ABB91A23E2E92E9E3A4E3741CAEB103872A591D848B36F3F1AC68` |
+| certified | 2.1.4.1 | `firmware/certified/TSP` | 102 | `5C19FA75848458D7F474113D1E2CE0B02BA21F022627C6FBA044AD7766F90BF7` |
 
 当前构建入口为 `firmware_workspace/build-standard.cmd`、
 `firmware_workspace/build-certified.cmd`和兼容standard的
@@ -23,7 +23,7 @@
 
 该结论不是bit-identical；新旧BIN的差异已由编译时间及其派生镜像元数据完整解释。
 
-当前2.1.3/2.1.3.1已编译通过，均为 `compiled-not-hardware-verified`；
+当前2.1.4/2.1.4.1已编译通过，均为 `compiled-not-hardware-verified`；
 实验版不随本次更新。新构建不覆盖已有INFO测试目录，也未生成新的正式Release。
 
 当前最新已发布的2026-09-07正式Release分别为：
@@ -712,9 +712,9 @@ SD启动挂载失败后，在现有维护任务中约每60秒重试，独立于�
 以及现有 `get_data` 兼容性和回复容量测试；软件模拟不替代硬件验收。
 实验版与既有INFO包未修改。本次未烧录、未擦除、未操作设备FFat、未创建正式Release。
 
-## Firmware 2.1.3／2.1.3.1：当前正式源码
+## Firmware 2.1.3／2.1.3.1：上一版编译基线
 
-当前源码指纹与2026-10-09下午的`atmospheric-pressure`构建记录一致，版本号仍为2.1.3／2.1.3.1；上午LED帧间隔构建保留供追溯：
+升级前2.1.3／2.1.3.1源码与2026-10-09下午的`atmospheric-pressure`构建记录一致；上午LED帧间隔构建保留供追溯：
 
 | 项目 | standard 2.1.3 | certified 2.1.3.1 |
 |---|---|---|
@@ -740,7 +740,7 @@ SD启动挂载失败后，在现有维护任务中约每60秒重试，独立于�
 | 全局静态RAM | 27944字节 | 27944字节 |
 | 状态 | `compiled-not-hardware-verified` | `compiled-not-hardware-verified` |
 
-最新源码指纹见本文件顶部当前版本表。两次构建均使用正式`Build-Firmware.ps1`的
+该历史基线的源码指纹以各自构建manifest为准。两次构建均使用正式`Build-Firmware.ps1`的
 variant入口编译；本机CMD入口仍因Windows PowerShell的`Get-FileHash`解析失败，
 因此使用PowerShell 7运行同一脚本，不手工切换源码或修改工具链。
 
@@ -769,6 +769,36 @@ SHT30和风扇独立继续运行。
 
 继承2.1.2系列可靠性修改，实验版、已发布Release及旧构建不变。
 本构建未烧录、未擦除、未操作设备FFat，未生成新的正式Release。
+
+## Firmware 2.1.4／2.1.4.1：当前正式源码
+
+| 项目 | standard 2.1.4 | certified 2.1.4.1 |
+|---|---|---|
+| 编译时间（UTC+8） | 2026-10-20T11:02:09+08:00 | 2026-10-20T11:03:45+08:00 |
+| 构建输入 | 101 | 102 |
+| 应用BIN字节 | 695920 | 696400 |
+| 应用BIN SHA-256 | `00DF84B69BBC62BBEF07A611FE97AB3CE3CC5E58B885F8D08869CD68ED838D26` | `975DFD34137A0E1536C57C8C835AA57C5321174F7859CE5060BE5054A5A72455` |
+| 构建目录 | `firmware_workspace/build/standard-2.1.4-hj-uart-20261020` | `firmware_workspace/build/certified-2.1.4.1-hj-uart-20261020` |
+| 全局静态RAM | 28032字节 | 28032字节 |
+| 状态 | `compiled-not-hardware-verified` | `compiled-not-hardware-verified` |
+
+HJ212软件串口仅在同步写字节期间临时提高任务优先级，随后恢复原基础优先级；
+中断仍开启，ACK等待、发送间隔与存储操作不在该保护窗口内。失败报文转交现有存储
+任务，最多2项／总报文字节2048（含写入中的项）；失败后隔60秒重试一次，入队不等于
+持久化。存储事件队列深度4，满时拒绝新项并正确释放引用，避免SD积压阻塞上传投递。
+旧pending扫描／读取／删除仍有同步SD操作，底层SDK卡住不能由外层计时强行取消。
+
+臭氧HJ212出口按用户指定的平台要求使用 `w34011`，兼容两个内部别名；
+旧有效报文补传时仅在内存替换CP因子名并重算CRC。数值、单位、精度和认证气体策略不变。
+保持Flag语义、9600波特率、120秒采集、70秒气泵、3000ms包间隔；多通道和LCD修改留待后续。
+
+两版各18组控制回归、现有气体／SD／get_data回归及新增上传故障测试通过。
+新增测试覆盖写串口优先级／恢复、ACK窗口、SD慢／失败／未挂载、容量／字节上限、
+60秒重试及计时回绕、2017／2025实时和统计臭氧字段、旧报文CRC迁移。
+使用两版CMD入口编译，进程内补足Windows PowerShell模块路径；未修改工具链。
+
+本地应用BIN可用于后续明确授权的OTA测试；尚未生成正式Release、尚未实机验证。
+先做Flag=4单地址两小时接收对照，再做跨午夜24小时验证，同时保存MCU日志和原始TCP。
 
 ## 使用规则
 

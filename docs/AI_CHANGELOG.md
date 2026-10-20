@@ -62,3 +62,18 @@ history or firmware release changelogs.
 - Left interval, certified gas policy, experimental firmware, and deferred
   statistic/storage/upload switch semantics unchanged. Hardware qualification
   remains pending; no device or published-release operation was performed.
+
+## 2026-10-20 — HJ212 transmit scheduling and bounded storage baseline
+
+- Advanced canonical standard/certified to 2.1.4/2.1.4.1 on explicit request.
+- Added a temporary base-priority guard for synchronous HJ software-UART writes
+  only, restoring base priority before ACK/gap/SD work; interrupts stay enabled.
+- Moved failed live-packet persistence to the existing storage task using bounded
+  job/byte reservations, explicit queued-versus-durable diagnostics and one
+  delayed retry. Storage event admission is nonblocking and ownership-safe on
+  overflow, so SD backpressure cannot hold EventBus delivery to live uploads.
+- Changed project O3 HJ212 output to w34011 on explicit request; CRC-valid old
+  cached frames migrate only in memory. Internal IDs, units and certified policy
+  remain compatible. No LCD, multi-channel, baud or ACK-policy change.
+- Host tests and builds do not establish field UART integrity or SD durability;
+  synchronous idle recovery I/O and SDK stalls remain qualification limits.

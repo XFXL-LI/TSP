@@ -21,6 +21,7 @@ private:
     Stream* _stream;
     String  _name;
     int     _id;
+    size_t writeWire(const uint8_t* data, size_t length, bool newline = false);
 
 public:
     DTUDriver(String name, int id);

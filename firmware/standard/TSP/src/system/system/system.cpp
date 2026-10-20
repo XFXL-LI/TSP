@@ -586,7 +586,8 @@ static void TempControlTask(void *pvParameters)
 static void servicePendingRecoveryIfIdle(QueueHandle_t hjQueue)
 {
     if (!pendingRecoveryRequested.load(std::memory_order_acquire) ||
-        uxQueueMessagesWaiting(hjQueue) != 0)
+        uxQueueMessagesWaiting(hjQueue) != 0 ||
+        filesysManager::getInstance().hasPendingStoreJobs())
     {
         return;
     }
@@ -659,7 +660,7 @@ static void Hj212_2017SendTask(void *pvParameters)
                         if (!result)
                         {
                             LOG_WARNING("Failed to send HJ212 packet, saving for retry...");
-                            filesys.protectPendingPacket(allData, HJ212_str);
+                            filesys.queuePendingPacket(allData, HJ212_str);
                         }
                     }
                     else
@@ -667,7 +668,7 @@ static void Hj212_2017SendTask(void *pvParameters)
                         if (CalendarClock::isValidTimestamp(allData->last_update))
                         {
                             LOG_WARNING("HJ212 Packet construction failed or empty.");
-                            filesys.protectPendingPacket(allData, HJ212_str);
+                            filesys.queuePendingPacket(allData, HJ212_str);
                         }
                     }
                 }
@@ -677,7 +678,7 @@ static void Hj212_2017SendTask(void *pvParameters)
                     {
                         String HJ212_str = HJ212.build2017Hj212Packet(allData, config);
                         LOG_WARNING("Network unavailable, saving HJ212 packet for retry.");
-                        filesys.protectPendingPacket(allData, HJ212_str);
+                        filesys.queuePendingPacket(allData, HJ212_str);
                     }
                 }
                 if (allData != nullptr)
@@ -703,12 +704,12 @@ static void Hj212_2017SendTask(void *pvParameters)
                     if (!result)
                     {
                         LOG_WARNING("Failed to send HJ212 packet, saving for retry...");
-                        filesys.protectPendingPacket(allData, HJ212_str);
+                        filesys.queuePendingPacket(allData, HJ212_str);
                     }
                 }
                 else if (CalendarClock::isValidTimestamp(allData->last_update))
                 {
-                    filesys.protectPendingPacket(allData, HJ212_str);
+                    filesys.queuePendingPacket(allData, HJ212_str);
                 }
                 if (allData != nullptr)
                 {
@@ -767,7 +768,7 @@ static void Hj212_2025SendTask(void *pvParameters)
                         if (!result)
                         {
                             LOG_WARNING("Failed to send HJ212 packet, saving for retry...");
-                            filesys.protectPendingPacket(allData, HJ212_str);
+                            filesys.queuePendingPacket(allData, HJ212_str);
                         }
                     }
                     else
@@ -775,7 +776,7 @@ static void Hj212_2025SendTask(void *pvParameters)
                         if (CalendarClock::isValidTimestamp(allData->last_update))
                         {
                             LOG_WARNING("HJ212 Packet construction failed or empty.");
-                            filesys.protectPendingPacket(allData, HJ212_str);
+                            filesys.queuePendingPacket(allData, HJ212_str);
                         }
                     }
                 }
@@ -785,7 +786,7 @@ static void Hj212_2025SendTask(void *pvParameters)
                     {
                         String HJ212_str = HJ212.build2025Hj212Packet(allData, config);
                         LOG_WARNING("Network unavailable, saving HJ212 packet for retry.");
-                        filesys.protectPendingPacket(allData, HJ212_str);
+                        filesys.queuePendingPacket(allData, HJ212_str);
                     }
                 }
                 if (allData != nullptr)
@@ -811,12 +812,12 @@ static void Hj212_2025SendTask(void *pvParameters)
                     if (!result)
                     {
                         LOG_WARNING("Failed to send HJ212 packet, saving for retry...");
-                        filesys.protectPendingPacket(allData, HJ212_str);
+                        filesys.queuePendingPacket(allData, HJ212_str);
                     }
                 }
                 else if (CalendarClock::isValidTimestamp(allData->last_update))
                 {
-                    filesys.protectPendingPacket(allData, HJ212_str);
+                    filesys.queuePendingPacket(allData, HJ212_str);
                 }
                 if (allData != nullptr)
                 {   
@@ -1177,6 +1178,11 @@ static PendingRecoveryResult recoverPendingPacket(
             "pending_packet_invalid");
     }
 
+    if (HJ212_DataCenter::rewriteLegacyOzoneCode(packet)) {
+        LOG_INFO("[DIAG] PENDING_CODE_REFRESH type=%u timestamp=%llu ozone=w34011",
+                 (unsigned)pending.dataTime, pending.timestamp);
+    }
+
     // File reads/rebuilds can take long enough for a new live/statistical
     // event to arrive after the idle check. Re-check immediately before the
     // serial call so old data still yields to the newly queued packet.
@@ -1203,11 +1209,11 @@ static PendingRecoveryResult recoverPendingPacket(
         {
             return finishPendingRecovery(
                 pending, PendingRecoveryResult::DELIVERED,
-                "ack_and_delete_ok");
+                "send_and_delete_ok");
         }
         return finishPendingRecovery(
             pending, PendingRecoveryResult::ACKED_DELETE_FAILED,
-            "ack_ok_delete_failed");
+            "send_ok_delete_failed");
     }
     LOG_WARNING("Pending delivery failed, marker retained: %s",
                 pending.filePath.c_str());

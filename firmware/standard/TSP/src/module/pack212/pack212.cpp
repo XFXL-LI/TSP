@@ -46,7 +46,7 @@ static String configuredHj212GasUnit(const String &sensorId)
 
 static String hj212OutputCode(const String &sensorId)
 {
-    if (sensorId == "w34011") return "a05024";
+    if (sensorId == "a05024") return "w34011";
     if (sensorId == "L90") return "LA";
     return sensorId;
 }
@@ -309,6 +309,31 @@ String HJ212_DataCenter::finalizePacket(const String& cp, const String& qn,
         return "";
     }
     return packet;
+}
+
+bool HJ212_DataCenter::rewriteLegacyOzoneCode(String& packet) {
+    if (!isValidPacket(packet)) return false;
+    const int cpToken = packet.indexOf(";CP=&&");
+    if (cpToken < 0) return false;
+    const unsigned int first = static_cast<unsigned int>(cpToken) + 6U;
+    const unsigned int contentLength = packet.length() - 12U;
+    const unsigned int last = 6U + contentLength - 2U;
+    bool changed = false;
+    for (unsigned int pos = first; pos + 7U <= last; ++pos) {
+        if (pos != first && packet.charAt(pos - 1U) != ';' &&
+            packet.charAt(pos - 1U) != ',') continue;
+        if (strncmp(packet.c_str() + pos, "a05024-", 7) != 0) continue;
+        static const char target[] = "w34011";
+        for (unsigned int i = 0; i < 6U; ++i) packet.setCharAt(pos + i, target[i]);
+        changed = true;
+    }
+    if (changed) {
+        char text[5];
+        snprintf(text, sizeof(text), "%04X", calculateCRC(packet.c_str() + 6, contentLength));
+        for (unsigned int i = 0; i < 4U; ++i)
+            packet.setCharAt(6U + contentLength + i, text[i]);
+    }
+    return changed;
 }
 
 bool HJ212_DataCenter::isValidPacket(const String& packet) {

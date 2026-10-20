@@ -20,8 +20,8 @@ a delay. Runtime work is performed by FreeRTOS tasks and event queues.
 
 | Variant | Canonical source | Version | Build inputs | Source fingerprint |
 | --- | --- | ---: | ---: | --- |
-| standard | `firmware/standard/TSP` | 2.1.3 | 99 | `44C174E4514E19EF7B8AC7944BF2C0BA1CFAB07B6F66D20148A00F1A5A226F45` |
-| certified | `firmware/certified/TSP` | 2.1.3.1 | 100 | `CBB8435ECDE6820AE2D5088065B32D530AE2EAC58209A037FBD1543C2F14AE44` |
+| standard | `firmware/standard/TSP` | 2.1.4 | 101 | `8424426CB18ABB91A23E2E92E9E3A4E3741CAEB103872A591D848B36F3F1AC68` |
+| certified | `firmware/certified/TSP` | 2.1.4.1 | 102 | `5C19FA75848458D7F474113D1E2CE0B02BA21F022627C6FBA044AD7766F90BF7` |
 
 The certified variant adds `GasSpecificPolicy.h` and applies a 500 ppb upper
 cap to O3, NO2, and SO2. CO is not capped. Its certified calibration profile is
@@ -30,7 +30,7 @@ and SO2 250 ppb. Common changes must be evaluated for both variants; this
 certified policy must not leak into standard.
 
 The earlier migration baseline passed verification with only expected
-nondeterministic build metadata differences. Current 2.1.3/2.1.3.1 builds
+nondeterministic build metadata differences. Current 2.1.4/2.1.4.1 builds
 compiled successfully; neither result is hardware verification. The experimental
 laboratory source is separate and is not updated with this baseline.
 
@@ -144,17 +144,20 @@ Long-lived queue depths in the current source include:
 - gas calibration 10
 - remote DTU command 5
 - HJ212 20
-- Storage 20
+- Storage 4 (nonblocking admission; rejected owned references are released)
 - LED 5
 - Alarm task 5
 - OTA 5
 
 `permissionManager` also creates short-lived response queues of depth 1.
-The EventBus owns a mutex and one queue per subscriber. Processed-data events
-use blocking delivery to preserve order and backpressure. LED runtime-control
+The EventBus owns a mutex and one queue per subscriber. Storage is the exception
+for processed/query events: enqueue without waiting, keep existing queued items,
+and release exactly the rejected subscriber reference on overflow. It emits
+`STORAGE_QUEUE_REJECT` and increments the drop counter. Other processed-data
+queues retain blocking delivery to preserve ownership/order. LED runtime-control
 notifications share the LED queue and also use blocking delivery so they cannot
-discard owned processed packets; other overflowing
-event queues discard stale entries and emit an `EVENT_DROP` diagnostic.
+discard owned processed packets; other overflowing event queues discard stale
+entries and emit an `EVENT_DROP` diagnostic.
 
 Each serial interface has a mutex. Additional synchronization protects SD,
 configuration/setup/system state, data statistics, calibration state, log
@@ -257,6 +260,17 @@ a verified temporary file is renamed to the final `.pkt`. If both attempts
 fail, the existing rebuild marker and raw-record reconstruction remain the
 fallback. Recovery scans are bounded and yield to live data.
 
+From 2.1.4/2.1.4.1, failed live packets are handed off without taking the SD
+mutex or performing I/O in the HJ212 sender. The existing storage task processes
+a pointer queue with two jobs and a 2048-byte aggregate packet limit, including
+in-flight writes. Jobs keep only identity and the moved String, not a retained
+processed map. Empty frames still request a rebuild marker. The worker preserves
+the verified stdio/POSIX/marker chain, retries total failure once after 60 seconds,
+and logs queued (`durable=0`), full_saved, rebuild_marker_saved, or unprotected.
+Overload/allocation failure is explicit and bounded; RAM admission is not durable.
+No new task is created. These limits cannot interrupt a blocked SD SDK call;
+pending scans/reads/deletes still perform synchronous I/O during idle recovery.
+
 ## HJ212 Upload Flow
 
 The configured HJ212 task subscribes to processed and resume events through a
@@ -275,6 +289,26 @@ Important compatibility settings:
 - acknowledgement modes: standard, compatible, and legacy;
 - acknowledgement checks include command, framing/CRC, QN/MN, and response
   result as required by the selected mode.
+
+Only the synchronous HJ212 software-UART `Stream::write` window temporarily
+raises the caller's base priority to at least 11 (above storage 9 and processing
+10 on core 0), restoring its original base priority afterward even if inherited
+priority was active. Interrupts remain enabled. Flush, ACK waits, retries, gaps,
+logging and SD operations are outside the boost. HJ212 config/CSQ writes use the
+same guard; Remote hardware UART does not. `HJ_UART_TX` records actual byte-write
+start/end and elapsed times. This mitigates task preemption; it is not proof of
+correct GPIO timing under all interrupt load.
+
+Flag=4 still sends CN=2011 but skips ACK waiting. A successful UART write does
+not prove server receipt and cannot detect the observed truncated/garbled frames.
+Flag=5 uses the configured ACK checks. ACK/pending state is not per platform.
+
+The project now emits O3 as `w34011` for either internal ozone alias (`w34011`
+or `a05024`) in both packers and all record types, per the requested platform
+mapping; this is not a claim about national-standard factor naming. Units,
+precision and certified policy are unchanged. CRC-valid cached old frames are
+rewritten only at CP factor boundaries in RAM and receive a new CRC; the durable
+original remains until the existing send/delete policy succeeds.
 
 QN values are generated uniquely. Split-packet flags are rejected. CSQ polling
 and time synchronization defer around active uploads. Both HJ212-2017 and
@@ -394,13 +428,15 @@ Both packages remain `packaged-not-hardware-verified`. A Git tag identifies
 the canonical repository state after migration; binary provenance is defined by
 the committed release metadata and recorded source fingerprint.
 
-The 2.1.3 standard and 2.1.3.1 certified LED/heating-control builds have
-compiled successfully but are not yet packaged or hardware verified. Output
-directories are `firmware_workspace/build/standard-2.1.3-led-gap-20261009` and
-`firmware_workspace/build/certified-2.1.3.1-led-gap-20261009`. These same-version
-2026-10-09 builds add inter-frame scheduling; the 2026-10-08 builds and prior
-INFO test packages remain unchanged. Use build fingerprints, not version alone,
-to distinguish the LED timing fix.
+The 2.1.4 standard and 2.1.4.1 certified builds compile successfully but are
+not yet packaged or hardware verified. Outputs are under
+`firmware_workspace/build/standard-2.1.4-hj-uart-20261020` and
+`firmware_workspace/build/certified-2.1.4.1-hj-uart-20261020`. Both pass 18
+control regression groups, gas/SD/get_data regressions, and actual-source upload
+fault tests (`tools/tests/Run-FirmwareUploadTests.ps1`). Static RAM is 28032
+bytes each; pending-job metadata/queue and up to 2048 packet bytes use heap.
+Historical LED-gap/atmospheric-pressure builds and published packages remain.
+Use recorded fingerprints to identify exact source/binary baselines.
 
 ## Important Constraints
 

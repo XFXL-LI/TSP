@@ -5,6 +5,7 @@
 #include <vector>
 #include "../../module/file/file_storage.h"
 #include "../../inc/sys_init.h" 
+#include "PendingWritePolicy.h"
 
 #pragma pack(push, 1)
 struct fileStorage {
@@ -51,11 +52,16 @@ public:
         int type,
         uint64_t timestamp,
         PendingReadStatus* status = nullptr);
-    bool savePendingPacket(const AllProcessedDataPacket* data, const String& packet);
-    bool savePendingRebuildMarker(const AllProcessedDataPacket* data);
+    bool savePendingPacket(DataTime dataTime, uint64_t timestamp, const String& packet);
+    bool savePendingRebuildMarker(DataTime dataTime, uint64_t timestamp);
     PendingProtectResult protectPendingPacket(
-        const AllProcessedDataPacket* data,
-        const String& packet);
+        DataTime dataTime, uint64_t timestamp, const String& packet);
+    // Admission never takes the SD lock or waits for file I/O. Ownership moves
+    // only after bounded metadata/byte reservations have succeeded.
+    bool queuePendingPacket(const AllProcessedDataPacket* data, String& packet);
+    bool hasPendingStoreJobs() const {
+        return _pendingWriteCount.load(std::memory_order_acquire) != 0;
+    }
     std::vector<PendingPacketInfo> scanPendingPackets(
         size_t maxPackets = 3,
         const PendingPacketInfo* after = nullptr);
@@ -76,6 +82,19 @@ private:
 
     QueueHandle_t SaveDataFileTaskQueue;
     SemaphoreHandle_t _sdMutex;
+    struct PendingWriteRequest {
+        DataTime dataTime = DataTime::REAL_DATA;
+        uint64_t timestamp = 0;
+        uint32_t trace = 0;
+        uint32_t nextTryAt = 0;
+        uint8_t attempts = 0;
+        String packet;
+    };
+    QueueHandle_t _pendingWriteQueue = nullptr;
+    std::atomic<uint32_t> _pendingWriteCount{0};
+    std::atomic<size_t> _pendingWriteBytes{0};
+    void servicePendingWrites();
+    void releasePendingWrite(PendingWriteRequest* request);
     filesysManager();
     void traversePendingDirectory(
         const char* dirPath,

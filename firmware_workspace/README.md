@@ -1,6 +1,6 @@
 # TSP ESP32-S3 固件工作区
 
-最后更新：2026-10-09
+最后更新：2026-10-20
 
 本目录是固件状态查看、构建、Release验证和受保护烧录入口。正式业务源码已迁移到
 仓库根目录的 `firmware/`，不再从 `tmp/` 或根目录旧 `TSP/` 构建。
@@ -9,22 +9,24 @@
 
 | Variant | 版本 | 源码路径 | 构建输入 | 源码指纹 |
 |---|---:|---|---:|---|
-| standard | 2.1.3 | `../firmware/standard/TSP` | 99 | `D490FACFB83CC839F004B30781B882F70E236EF7484A2891D497804A847C13BF` |
-| certified | 2.1.3.1 | `../firmware/certified/TSP` | 100 | `5F50F4FBF848D450EE7E90842DF6E1D18EADC38889F4103420357FB150DB2700` |
+| standard | 2.1.4 | `../firmware/standard/TSP` | 101 | `8424426CB18ABB91A23E2E92E9E3A4E3741CAEB103872A591D848B36F3F1AC68` |
+| certified | 2.1.4.1 | `../firmware/certified/TSP` | 102 | `5C19FA75848458D7F474113D1E2CE0B02BA21F022627C6FBA044AD7766F90BF7` |
 
-两版2.1.3系列构建均已通过，状态为
+两版2.1.4系列构建均已通过，状态为
 `compiled-not-hardware-verified`。当前构建目录分别为：
 
-- `build/standard-2.1.3-atmospheric-pressure-20261009`
-- `build/certified-2.1.3.1-atmospheric-pressure-20261009`
+- `build/standard-2.1.4-hj-uart-20261020`
+- `build/certified-2.1.4.1-hj-uart-20261020`
 
-本次公共改动为LED兼容开关映射、两／四区域连续翻页，以及加热总开关即时生效；
-保留上一版的气体读取／SD挂载可靠性修改。120秒采集、70秒气泵及认证气体策略不变。
-未烧录、未实机验收；不宣称支持SD热拔卡。
-2026-10-09在同版本下修复LED帧间隔：发送完成后至少等待50ms，再发下一区域，
-清屏／模式切换同样分帧；每版静态RAM比2026-10-08构建增加80字节。
-旧`build/standard-2.1.3`及`build/certified-2.1.3.1`保留，不是本次修复产物。
-接口与验收要求见[开关配置协议](../docs/protocols/lcd/LCD_SWITCH_CONFIG_PROTOCOL.md)。
+本次公共改动为HJ212软件串口写字节期间临时提高优先级、失败报文有界异步存储，
+以及存储事件队列满时不阻塞上传投递。臭氧HJ212出口统一使用平台指定的w34011，
+有效旧缓存报文在RAM中改名并重算CRC，内部因子与单位不变。
+120秒采集、70秒气泵、9600波特率、ACK策略及认证气体策略不变。
+两版静态RAM均为28032字节；新pending队列/任务元数据与最多2048报文字节占动态堆，
+存储事件队列由20减为4，其他任务／队列沿用旧版。未烧录、未实机验收。
+保留2.1.3系列LED／加热及此前可靠性修改和旧构建。SD SDK卡住不能由重试计时器取消；
+UART波形／中断时延仍须现场对照原始TCP验证。详细行为与验证入口见
+[项目背景](../docs/PROJECT_CONTEXT.md)和[版本记录](../FIRMWARE_VERSION_LOCATIONS.md)。
 
 ## 目录职责
 

@@ -74,7 +74,7 @@ Description:
 
 The latest published 2.0.22 standard and 2.0.22.1 certified releases are
 packaged and file-level verified, but neither is recorded as hardware verified.
-The current 2.1.3 and 2.1.3.1 source builds are compiled but not yet packaged
+The current 2.1.4 and 2.1.4.1 source builds are compiled but not yet packaged
 or hardware verified.
 
 Evidence:
@@ -558,3 +558,48 @@ Suggested next action:
 
 Continue recording confirmed long-lived work in this file instead of scattering
 temporary markers or task-summary documents.
+
+## HJ212 software-UART integrity and bounded SD decoupling need field validation
+
+Status: Mitigation insufficient; field test still loses realtime frame prefixes
+
+Priority: High
+
+Area: HJ212 transport, FreeRTOS scheduling, and storage overload
+
+The 2026-10-19/20 JCKJ123 Flag=4 test has 523 live TX batches in the aligned
+window and 399 unique valid server frames (124 missing). All missing batches
+have MCU collect/store/TX-success logs; many are visible as truncated or garbled
+raw TCP payloads. Storage activity overlaps 123 of the 124 missing TX windows.
+This strongly suggests software-UART task preemption, but timing correlation is
+not a waveform-level root-cause proof. Flag=4 cannot detect remote corruption.
+
+Versions 2.1.4/2.1.4.1 boost only synchronous HJ UART writes to priority 11,
+then restore the original base priority with interrupts enabled. Failed live
+packet writes move to the existing storage task (two jobs/2048 packet bytes,
+one retry after 60 seconds). The four-entry storage event queue never waits
+on EventBus delivery; overflow releases the rejected owned reference and logs
+loss explicitly. Queued is not durable, and SD failure can still lose history
+or pending protection. Existing pending scans/reads/deletes remain synchronous;
+a blocked SDK call cannot be cancelled by the outer retry policy.
+
+Both variants pass current-source host tests including storage saturation,
+priority restoration/ACK separation, slow/unmounted/double-failing write mocks,
+byte/job limits, retry wrap, ozone packing and cached-frame migration. The host
+model does not prove FreeRTOS GPIO waveforms, SD electrical behavior, or IRQ
+latency. The first-sector-zero issue remains open independently.
+
+The 2026-10-20 certified 2.1.4.1 field test still has 32 missing valid realtime
+frames among 122 aligned TX batches (90 received), while all 24 minute frames
+arrived. Raw TCP confirms 23 timestamp-identifiable truncated prefixes; six
+other expected slots contain only 0xFF, and three have no identifiable live
+payload. No complete missing frame was recovered by source-IP reassembly.
+Priority boosting is therefore not an established fix. The priority_tx log
+currently prints the target, not a measured effective priority; SD start/end
+and actual-priority diagnostics plus a controlled SD-I/O comparison are needed.
+
+Validate Flag=4 with one destination at 9600: first two hours, then 24 hours
+including midnight, matching each MCU batch to raw TCP and CRC-valid frames.
+Include storage-failure/slow-card cases and check new HJ_UART_TX and
+PENDING_STORE diagnostics. Keep 120-second batches and the 70-second pump
+schedule. Multi-channel configuration and baud-rate changes are deferred.
