@@ -15,6 +15,7 @@
 #include "app/configManager/SwitchConfigPolicy.h"
 #include "app/ledManager/LedDisplayPolicy.h"
 #include "app/tempManager/HeatingControlPolicy.h"
+#include "module/diagnostics/SdIoDiagnostics.h"
 
 using String = std::string;
 struct SYSTEMSWITCH {
@@ -43,6 +44,12 @@ using portMUX_TYPE = std::mutex;
 #define taskENTER_CRITICAL(x) (x)->lock()
 #define taskEXIT_CRITICAL(x) (x)->unlock()
 static std::atomic<uint32_t> taskNow{0};
+namespace SdIoDiagnostics {
+static bool testBlocked = false;
+static unsigned testSkips = 0;
+bool blocked() { return testBlocked; }
+void noteSkip(Skip) { ++testSkips; }
+}
 static std::atomic<int> pins[64];
 static unsigned notifications = 0;
 unsigned long millis() { return taskNow.load(); }
@@ -250,6 +257,14 @@ static void testStorageBackpressure() {
     assert(query.released == 1 && storage.items.size() == 4);
     assert(bus.droppedMessages.load() == 2);
     pass("stalled SD queue preserves owned work, releases rejected references and never blocks live delivery");
+    storage.items.clear(); upload.items.clear();
+    SdIoDiagnostics::testBlocked = true;
+    bus.publish(EventID::PROCESSED_DATA_COLLECTED, &packet);
+    SdIoDiagnostics::testBlocked = false;
+    assert(packet.released == 2 && storage.items.empty());
+    assert(upload.items.size() == 1 && upload.items.front().data == &packet);
+    assert(SdIoDiagnostics::testSkips == 1 && bus.droppedMessages.load() == 2);
+    pass("SD diagnostic pause rejects history admission without retaining maps or dropping live delivery");
 }
 static void testHeating() {
     auto &heat = TempManager::getInstance();

@@ -74,7 +74,7 @@ Description:
 
 The latest published 2.0.22 standard and 2.0.22.1 certified releases are
 packaged and file-level verified, but neither is recorded as hardware verified.
-The current 2.1.4 and 2.1.4.1 source builds are compiled but not yet packaged
+The current 2.1.5 and 2.1.5.1 diagnostic source builds are compiled but not yet packaged
 or hardware verified.
 
 Evidence:
@@ -594,9 +594,33 @@ frames among 122 aligned TX batches (90 received), while all 24 minute frames
 arrived. Raw TCP confirms 23 timestamp-identifiable truncated prefixes; six
 other expected slots contain only 0xFF, and three have no identifiable live
 payload. No complete missing frame was recovered by source-IP reassembly.
-Priority boosting is therefore not an established fix. The priority_tx log
-currently prints the target, not a measured effective priority; SD start/end
-and actual-priority diagnostics plus a controlled SD-I/O comparison are needed.
+Priority boosting is therefore not an established fix. The 2.1.4 priority_tx
+log prints the target rather than a measured effective priority.
+
+Versions 2.1.5/2.1.5.1 add the approved per-boot 30/60/30-minute SD comparison,
+with a draining phase before the full quiet hour, monotonic operation windows,
+measured priority and bounded skip/release behavior. The intentional pause
+loses local history/pending durability and returns NG for historical queries;
+this is diagnostic behavior, not a fix.
+
+The 2026-10-20/21 certified 2.1.5.1 field comparison received 4/15 valid live
+frames before the pause, 30/30 during the full quiet hour, and 11/15 after
+resumption. All 15 unmatched live batches overlap measured SD operation
+windows and report effective UART priority 9 instead of the intended 11.
+All 44 priority-11 batches in this two-hour comparison arrived. Existing old
+pending frames are excluded from those live counts. This strongly narrows the
+issue to SD concurrency and ineffective scheduling protection, without proving
+that every transport failure has the same cause. The longer overnight window
+also has two unmatched batches reporting priority 11.
+
+The current host priority double updates effective priority as max(new base,
+inherited), unlike ESP-IDF 5.5.2 when inheritance is already active, and the
+mock stream checks base rather than effective priority. Passing those tests
+does not qualify the current guard. Correct the model/assertions and review
+priority changes with serial/log mutex ownership before the next firmware fix.
+A blocked SDK call cannot be cancelled and must not be labelled off_b until it
+actually returns. Confirm the expected SD on/off/on markers and zero admitted
+operations in off_b before comparing server-valid realtime counts.
 
 Validate Flag=4 with one destination at 9600: first two hours, then 24 hours
 including midnight, matching each MCU batch to raw TCP and CRC-valid frames.

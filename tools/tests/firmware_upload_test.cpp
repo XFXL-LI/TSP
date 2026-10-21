@@ -53,6 +53,7 @@ template<class... Args> void logLine(const char* fmt, Args... args) {
 static uint32_t nowMs;
 uint32_t millis() { return nowMs; }
 using UBaseType_t = unsigned;
+using TickType_t = uint32_t;
 using BaseType_t = int;
 using SemaphoreHandle_t = void*;
 constexpr int pdTRUE = 1, pdFALSE = 0, eInvalid = 0;
@@ -61,22 +62,30 @@ static unsigned basePriority = 8, effectivePriority = 8, inheritedPriority = 0;
 struct TaskStatus_t { unsigned uxBasePriority; };
 void vTaskGetInfo(void*, TaskStatus_t* s, int, int) { s->uxBasePriority = basePriority; }
 void vTaskPrioritySet(void*, unsigned p) { basePriority = p; effectivePriority = std::max(p, inheritedPriority); }
+unsigned uxTaskPriorityGet(void*) { return effectivePriority; }
+static unsigned heldSdMutexes = 0;
+int xSemaphoreTake(void*, unsigned) { ++heldSdMutexes; return pdTRUE; }
+void xSemaphoreGive(void*) { assert(heldSdMutexes); --heldSdMutexes; }
 void yield() { assert(basePriority < 11); }
 void vTaskDelay(unsigned ms) { assert(basePriority < 11); nowMs += ms; }
 using portMUX_TYPE = int;
 #define portMUX_INITIALIZER_UNLOCKED 0
 #define portENTER_CRITICAL(x) ((void)0)
 #define portEXIT_CRITICAL(x) ((void)0)
+#include "module/diagnostics/SdIoDiagnostics.h"
+#include "diagnostic_source.h"
 struct { unsigned getFreeHeap() { return 100000; } unsigned getMaxAllocHeap() { return 90000; } } ESP;
 namespace CalendarClock { bool isValidTimestamp(uint64_t t) { return t >= 20200101000000ULL && t < 21000101000000ULL; } }
 enum class DataTime { REAL_DATA, MIN_DATA, HOUR_DATA, DAY_DATA };
-struct ProcessedDataPacket { float value = 10, min_val = 5, max_val = 15; bool is_valid = true; char status = 'N'; };
+struct ProcessedDataPacket { float value = 10, min_val = 5, max_val = 15, cou_val = 0; bool is_valid = true; char status = 'N'; };
 char dataStatusCode(char c) { return c; }
 struct AllProcessedDataPacket {
     DataTime dataTime = DataTime::REAL_DATA;
     uint64_t last_update = 20261020120000ULL;
     uint32_t trace_id = 42;
     std::map<String, ProcessedDataPacket> processed_data_map;
+    void retain() {}
+    void release() {}
 };
 struct HJ212CONFIG { String st = "22", pw = "123456", mn = "JCKJ123", flag = "4"; };
 struct CollectSetting { String unit = "ug/m3"; };
@@ -117,7 +126,7 @@ int xQueueReceive(QueueHandle_t q, void** job, unsigned timeout) {
     assert(timeout == 0); if (q->jobs.empty()) return 0;
     *job = q->jobs.front(); q->jobs.pop_front(); return pdTRUE;
 }
-struct JSONCmdData {};
+struct JSONCmdData { String arguments; };
 namespace RemoteOtaManager { struct BusinessActivityGuard {}; }
 // Expose internals only to inspect bounded ownership and inject filesystem faults.
 #define private public
@@ -126,10 +135,54 @@ namespace RemoteOtaManager { struct BusinessActivityGuard {}; }
 int xQueueSend(QueueHandle_t q, filesysManager::PendingWriteRequest* const* p, unsigned t) { void* v = *p; return xQueueSend(q, &v, t); }
 int xQueueReceive(QueueHandle_t q, filesysManager::PendingWriteRequest** p, unsigned t) { void* v = nullptr; int r = xQueueReceive(q, &v, t); *p = static_cast<filesysManager::PendingWriteRequest*>(v); return r; }
 static HostQueue pendingQueue;
-filesysManager::filesysManager() { _pendingWriteQueue = &pendingQueue; }
+filesysManager::filesysManager() { _pendingWriteQueue = &pendingQueue; _sdMutex = reinterpret_cast<void*>(1); }
 static bool sdReady = true, fullWrite = true, markerWrite = true;
 static unsigned diskCalls, diskLatency;
 static std::function<void()> diskHook;
+static unsigned measurementWrites = 0, mounts = 0;
+namespace DeviceRuntimeStatus {
+void measurementWriteFinished(bool) { ++measurementWrites; }
+void sdMountStarted() {}
+void sdMountFinished(int) {}
+}
+constexpr int ESP_OK = 0, SD_CLK_IO = 47, SD_CMD_IO = 48, SD_DAT0_IO = 21;
+using esp_err_t = int;
+#define SD_MOUNT_POINT "/host-only-test"
+namespace SdMountPolicy { constexpr unsigned IO_BUDGET_MS = 3000; }
+struct file_storage {
+    std::atomic<bool> sd_mount_attempted{false}, sd_card_initialized{false};
+    std::atomic<uint32_t> sd_mount_finished_ms{0};
+    struct Session { int mount(const char*, int, int, int) { ++mounts; return ESP_OK; } } sd_mount_session;
+    static file_storage& getInstance() { static file_storage value; return value; }
+    bool isSDcardReady() const { return sdReady; }
+    bool SDcardInit();
+    int writeSDCard(const char*, const String&, bool append = false);
+    int readSDCard(const char*, String&);
+    int makeDirs(const char*) { ++diskCalls; return 0; }
+};
+String filesysManager::getFilePath(int, uint64_t) { return "/host-only-test/history"; }
+bool filesysManager::writeToFile(const String&, const std::vector<fileStorage>&) { ++diskCalls; return fullWrite; }
+#include "storage_source.h"
+#include "sd_file_source.h"
+struct cJSON {};
+struct config_json {
+    explicit config_json(const char*) {}
+    bool isValid() const { return false; }
+    cJSON* getJsonObject() { return nullptr; }
+};
+String getJsonStringOrNumber(cJSON*, const char*) { return ""; }
+bool parseTimestamp10(const String&, uint64_t&) { return false; }
+uint64_t nextQueryTimestamp(uint64_t value, int) { return value + 1; }
+enum class EventID { RECORD_QUERY_RES };
+struct EventBus {
+    static inline unsigned replies = 0;
+    static inline void* lastReply = reinterpret_cast<void*>(1);
+    static EventBus& getInstance() { static EventBus bus; return bus; }
+    unsigned getSubscriberCount(EventID) { return 0; }
+    void publish(EventID, void* data) { ++replies; lastReply = data; }
+};
+AllProcessedDataPacket* filesysManager::readPendingPacket(int, uint64_t, PendingReadStatus*) { ++diskCalls; return nullptr; }
+#include "query_source.h"
 bool filesysManager::savePendingPacket(DataTime, uint64_t, const String&) {
     ++diskCalls; nowMs += diskLatency; if (diskHook) diskHook();
     return sdReady && fullWrite;
@@ -155,6 +208,9 @@ static void testTransmission() {
     basePriority = effectivePriority = 12;
     { Hj212TxGuard g(true); assert(basePriority == 12); } assert(basePriority == 12);
     basePriority = effectivePriority = 8;
+    assert(std::any_of(logs.begin(), logs.end(), [](auto& l) {
+        return l.find("priority_tx=11 priority_end=11 sd_begin=0 sd_end=0") != l.npos;
+    }));
     std::puts("PASS UART boost covers writes only, restores inherited base, ACK/flush normal, partial writes fail, hardware UART unchanged");
 }
 static void testOzone() {
@@ -235,4 +291,71 @@ static void testPending() {
     assert(std::any_of(logs.begin(), logs.end(), [](auto& l) { return l.find("outcome=unprotected") != l.npos; }));
     std::puts("PASS pending admission has no I/O/waits; count+byte limits include in-flight; slow/unmounted/failing SD, marker, 60s retry, wrap and cleanup");
 }
-int main() { testTransmission(); testOzone(); testPending(); std::puts("All upload fault tests passed; hardware not verified."); }
+static void testSdComparison() {
+    using namespace SdIoDiagnostics;
+    // Pure policy: wrap, repeated begin and no false quiet phase during I/O.
+    State policy;
+    uint32_t start = 0xfffffff0U;
+    policy.begin(start);
+    assert(policy.enter(start + FIRST_ON_MS - 1U, Skip::Other));
+    policy.advance(start + FIRST_ON_MS);
+    assert(policy.phase == Phase::Draining && policy.active == 1);
+    for (Skip s : {Skip::History, Skip::Pending, Skip::Query, Skip::Mount, Skip::Other})
+        assert(!policy.enter(start + FIRST_ON_MS + 1U, s));
+    policy.leave(start + FIRST_ON_MS + 5000U);
+    const uint32_t quietStart = policy.since;
+    assert(policy.phase == Phase::OffB && policy.active == 0);
+    policy.begin(quietStart + 1U); assert(policy.since == quietStart);
+    policy.advance(quietStart + OFF_MS - 1U); assert(policy.blocked());
+    policy.advance(quietStart + OFF_MS); assert(policy.phase == Phase::OnA2);
+    policy.advance(quietStart + OFF_MS + SECOND_ON_MS); assert(policy.phase == Phase::Complete);
+    policy.advance(quietStart + OFF_MS + SECOND_ON_MS + 123456U); assert(!policy.blocked());
+    for (unsigned value : policy.skipped) assert(value == 1);
+
+    // Real diagnostic module + actual filesystem admission and storage function.
+    nowMs = 100; begin();
+    filesysManager fs; AllProcessedDataPacket d; d.processed_data_map["a01001"] = {};
+    sdReady = fullWrite = markerWrite = true; diskLatency = 0; diskCalls = 0;
+    fs.storeProcessedPacket(&d); assert(diskCalls == 1 && measurementWrites == 1);
+    String pending = "already_queued"; assert(fs.queuePendingPacket(&d, pending));
+    nowMs = 100 + FIRST_ON_MS - 1U;
+    Guard slow("simulated_slow_sd"); assert(slow.entered());
+    nowMs += 100; poll(); assert(snapshot().phase == Phase::Draining);
+    const unsigned ioBefore = diskCalls;
+    { ScopedSdLock denied(reinterpret_cast<void*>(1), "blocked_sd"); assert(!denied.locked()); }
+    assert(heldSdMutexes == 0);
+    // Live UART proceeds while the test waits for a genuinely quiet SD phase.
+    Stream stream; DTUDriver hj("HJ212", 2); hj.setStream(stream);
+    assert(hj.sendData("##example", false) == "TX_OK");
+    slow.finish(); assert(snapshot().phase == Phase::OffB && snapshot().active == 0);
+    const uint32_t offStart = snapshot().since;
+    fs.storeProcessedPacket(&d); assert(diskCalls == ioBefore && measurementWrites == 1);
+    String rejected = "must_not_accumulate";
+    assert(!fs.queuePendingPacket(&d, rejected) && rejected == "must_not_accumulate");
+    fs.servicePendingWrites();
+    assert(fs._pendingWriteCount == 0 && fs._pendingWriteBytes == 0 && pendingQueue.jobs.empty());
+    assert(diskCalls == ioBefore);
+    auto& rawStorage = file_storage::getInstance();
+    sdReady = false; String content;
+    assert(!rawStorage.SDcardInit() && mounts == 0);
+    assert(rawStorage.readSDCard("/does-not-exist", content) == 4);
+    assert(rawStorage.writeSDCard("/does-not-exist", "data") == 4);
+    assert(diskCalls == ioBefore && snapshot().active == 0);
+    JSONCmdData query; query.arguments = "query-during-pause";
+    const uint32_t beforeQuery = nowMs;
+    fs.processQuery(&query);
+    assert(EventBus::replies == 1 && EventBus::lastReply == nullptr);
+    assert(nowMs == beforeQuery && diskCalls == ioBefore);
+    nowMs = offStart + OFF_MS - 1U; poll(); assert(blocked());
+    ++nowMs; poll(); assert(snapshot().phase == Phase::OnA2);
+    sdReady = true; fs.storeProcessedPacket(&d);
+    assert(diskCalls == ioBefore + 1 && measurementWrites == 2);
+    assert(fs._pendingWriteCount == 0 && heldSdMutexes == 0);
+    nowMs += SECOND_ON_MS; poll(); assert(snapshot().phase == Phase::Complete);
+    begin(); assert(snapshot().phase == Phase::Complete);
+    assert(std::any_of(logs.begin(), logs.end(), [](auto& l) { return l.find("phase=off_b") != l.npos; }));
+    assert(std::any_of(logs.begin(), logs.end(), [](auto& l) { return l.find("phase=draining") != l.npos; }));
+    assert(std::any_of(logs.begin(), logs.end(), [](auto& l) { return l.find("reason=sd_aba_pause") != l.npos; }));
+    std::puts("PASS real SD comparison: 30/60/30, drain before quiet, timer wrap, history/raw/mount gate, pending release, UART continues, normal resumes");
+}
+int main() { testTransmission(); testOzone(); testPending(); testSdComparison(); std::puts("All upload fault tests passed; hardware not verified."); }

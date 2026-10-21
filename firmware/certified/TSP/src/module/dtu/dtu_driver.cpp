@@ -1,6 +1,7 @@
 #include "dtu_Driver.h"
 #include "../../module/log/log_manager.h"
 #include "Hj212TxGuard.h"
+#include "../diagnostics/SdIoDiagnostics.h"
 
 DTUDriver::DTUDriver(String name, int id) : _name(name), _id(id), _stream(nullptr) {
 }
@@ -11,10 +12,23 @@ size_t DTUDriver::writeWire(const uint8_t* data, size_t length, bool newline) {
     const bool protect = _name == "HJ212";
     size_t written = 0;
     uint32_t started = 0, finished = 0;
-    UBaseType_t originalPriority = 0;
+    UBaseType_t originalPriority = 0, priorityTx = 0, priorityEnd = 0;
+    const UBaseType_t effectiveBefore = uxTaskPriorityGet(nullptr);
+    SdIoDiagnostics::Snapshot sdBegin{}, sdEnd{};
+    char prefix[17] = {};
+    if (protect) {
+        const size_t bytes = length < 8U ? length : 8U;
+        static const char hex[] = "0123456789ABCDEF";
+        for (size_t i = 0; i < bytes; ++i) {
+            prefix[2U * i] = hex[data[i] >> 4U];
+            prefix[2U * i + 1U] = hex[data[i] & 15U];
+        }
+    }
     {
         Hj212TxGuard guard(protect);
         originalPriority = guard.originalPriority();
+        priorityTx = uxTaskPriorityGet(nullptr);
+        sdBegin = SdIoDiagnostics::snapshot();
         started = millis();
         written = _stream->write(data, length);
         if (newline) {
@@ -22,14 +36,19 @@ size_t DTUDriver::writeWire(const uint8_t* data, size_t length, bool newline) {
             written += _stream->write(ending, sizeof(ending));
         }
         finished = millis();
+        priorityEnd = uxTaskPriorityGet(nullptr);
+        sdEnd = SdIoDiagnostics::snapshot();
     } // Restore base priority before logging, flush, ACK waits or caller SD I/O.
     if (protect) {
-        LOG_INFO("[DIAG] HJ_UART_TX bytes=%u written=%u start_ms=%u end_ms=%u elapsed_ms=%u priority_before=%u priority_tx=%u",
+        LOG_INFO("[DIAG] HJ_UART_TX bytes=%u written=%u start_ms=%u end_ms=%u elapsed_ms=%u priority_before=%u priority_tx=%u priority_end=%u sd_begin=%u sd_end=%u",
                  (unsigned)(length + (newline ? 2U : 0U)), (unsigned)written,
                  (unsigned)started, (unsigned)finished,
                  (unsigned)(finished - started), (unsigned)originalPriority,
-                 (unsigned)(originalPriority < Hj212TxGuard::PRIORITY
-                     ? Hj212TxGuard::PRIORITY : originalPriority));
+                 (unsigned)priorityTx, (unsigned)priorityEnd,
+                 (unsigned)sdBegin.active, (unsigned)sdEnd.active);
+        LOG_INFO("[DIAG] HJ_UART_CONTEXT start_ms=%u phase=%s effective_before=%u effective_after=%u prefix=%s",
+                 (unsigned)started, SdIoDiagnostics::phaseName(sdBegin.phase),
+                 (unsigned)effectiveBefore, (unsigned)uxTaskPriorityGet(nullptr), prefix);
     }
     return written;
 }

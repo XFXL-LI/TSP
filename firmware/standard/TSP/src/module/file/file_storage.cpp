@@ -11,6 +11,7 @@
 #include "../log/log_manager.h"
 #include <Arduino.h>
 #include "../diagnostics/DeviceRuntimeStatus.h"
+#include "../diagnostics/SdIoDiagnostics.h"
 
 file_storage::file_storage() : sd_card_initialized(false), ffat_initialized(false) {}
 file_storage::~file_storage() {}
@@ -159,6 +160,8 @@ int file_storage::writeFFATAtomic(const char *path, const char *config_content) 
 
 bool file_storage::SDcardInit() {
     if (isSDcardReady()) return true;
+    SdIoDiagnostics::Guard diagnostic("mount", SdIoDiagnostics::Skip::Mount);
+    if (!diagnostic.entered()) return false;
     const bool isRetry = sd_mount_attempted.load(std::memory_order_acquire);
     const uint32_t startedMs = millis();
     const uint32_t freeBefore = ESP.getFreeHeap();
@@ -184,6 +187,8 @@ bool file_storage::isSDMountRetryDue(uint32_t nowMs) const {
 }
 
 int file_storage::writeSDCard(const char *path, const String &content, bool append) {
+    SdIoDiagnostics::Guard diagnostic("sd_write");
+    if (!diagnostic.entered()) return 4;
     if (!sd_card_initialized) return 1;
 
     makeDirs(path); 
@@ -203,6 +208,8 @@ int file_storage::writeSDCard(const char *path, const String &content, bool appe
 }
 
 int file_storage::readSDCard(const char *path, String &content) {
+    SdIoDiagnostics::Guard diagnostic("sd_read");
+    if (!diagnostic.entered()) return 4;
     if (!sd_card_initialized) return 1;
 
     FILE *f = fopen(path, "rb");

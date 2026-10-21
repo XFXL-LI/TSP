@@ -9,8 +9,8 @@
 
 | Variant | 版本 | 当前正式源码 | 构建输入 | 源码指纹 |
 |---|---:|---|---:|---|
-| standard | 2.1.4 | `firmware/standard/TSP` | 101 | `8424426CB18ABB91A23E2E92E9E3A4E3741CAEB103872A591D848B36F3F1AC68` |
-| certified | 2.1.4.1 | `firmware/certified/TSP` | 102 | `5C19FA75848458D7F474113D1E2CE0B02BA21F022627C6FBA044AD7766F90BF7` |
+| standard | 2.1.5 | `firmware/standard/TSP` | 104 | `A8CE98F1F83A084691BCFB2B4311B513B6FAC1844A7201AE2C9AE9AD66317F95` |
+| certified | 2.1.5.1 | `firmware/certified/TSP` | 105 | `7414A1CCDB3B84B384FAA6E75F99D9AE3038935B92B2AB5A391EAF764FCBDDA3` |
 
 当前构建入口为 `firmware_workspace/build-standard.cmd`、
 `firmware_workspace/build-certified.cmd`和兼容standard的
@@ -23,7 +23,7 @@
 
 该结论不是bit-identical；新旧BIN的差异已由编译时间及其派生镜像元数据完整解释。
 
-当前2.1.4/2.1.4.1已编译通过，均为 `compiled-not-hardware-verified`；
+当前2.1.5/2.1.5.1诊断版已编译通过，均为 `compiled-not-hardware-verified`；
 实验版不随本次更新。新构建不覆盖已有INFO测试目录，也未生成新的正式Release。
 
 当前最新已发布的2026-09-07正式Release分别为：
@@ -770,7 +770,7 @@ SHT30和风扇独立继续运行。
 继承2.1.2系列可靠性修改，实验版、已发布Release及旧构建不变。
 本构建未烧录、未擦除、未操作设备FFat，未生成新的正式Release。
 
-## Firmware 2.1.4／2.1.4.1：当前正式源码
+## Firmware 2.1.4／2.1.4.1：上一版测试基线
 
 | 项目 | standard 2.1.4 | certified 2.1.4.1 |
 |---|---|---|
@@ -799,6 +799,48 @@ HJ212软件串口仅在同步写字节期间临时提高任务优先级，随后
 
 本地应用BIN可用于后续明确授权的OTA测试；尚未生成正式Release、尚未实机验证。
 先做Flag=4单地址两小时接收对照，再做跨午夜24小时验证，同时保存MCU日志和原始TCP。
+
+## Firmware 2.1.5／2.1.5.1：当前SD对照诊断源码
+
+| 项目 | standard 2.1.5 | certified 2.1.5.1 |
+|---|---|---|
+| 编译时间（UTC+8） | 2026-10-20T16:18:35+08:00 | 2026-10-20T16:20:15+08:00 |
+| 构建输入 | 104 | 105 |
+| 应用BIN字节 | 699408 | 699888 |
+| 应用BIN SHA-256 | `92131DC02B1768099DEA9CFA6AF9ED327A28A138951CCEF392E35C9D9FD86F25` | `186A7290BFC3EB65E52D6F3D7D3F1A9B91158D03529BFC53447DAA3890948607` |
+| 构建目录 | `firmware_workspace/build/standard-2.1.5-sd-aba-20261020` | `firmware_workspace/build/certified-2.1.5.1-sd-aba-20261020` |
+| 全局静态RAM | 28080字节 | 28080字节 |
+| 状态 | `compiled-not-hardware-verified` | `compiled-not-hardware-verified` |
+
+本版用于定位2.1.4.1仍存在的实时缺头问题，尚非正式修复。每次启动后自动执行一次：
+
+| 日志阶段 | 行为／持续时间 |
+|---|---|
+| `on_a` | 正常SD业务30分钟 |
+| `draining` | 禁止新SD业务，等待已有操作返回；不强制取消SDK调用 |
+| `off_b` | 在途计数归零后，完整暂停SD业务60分钟 |
+| `on_a2` | 恢复正常SD业务30分钟 |
+| `complete` | 保持正常，不重复循环；下次启动重新执行 |
+
+阶段切换不重启、不卸载／格式化SD、不改写FFat配置。暂停覆盖历史存盘和查询、
+pending写入／重建／扫描／读取／删除及挂载重试。跳过的新历史事件即时释放引用；
+待存RAM请求被拒收／清理并记录unprotected，既有卡内文件不因暂停被删除或重写。
+历史查询走原有NG响应；暂停前已开始的范围查询在下次循环停止，不持续积压任务。
+采集、统计、公网上传及LCD实时查询继续；恢复后新生成的统计记录仍可能跨越暂停边界。
+被跳过的历史／pending项不作补写，不承诺暂停期间的本地持久化。
+
+`SD_ABA_START/PHASE/STATUS/SKIPS`标明真实阶段时间和跳过计数。`SD_IO_BEGIN/END`
+记录取得SD互斥锁后的逻辑操作窗口（目录／读写／校验／清理），并非每条SDK事务波形。
+`HJ_UART_TX`测量真实优先级和发送两端的SD在途数；`HJ_UART_CONTEXT`给出阶段和
+前8字节。诊断均复用现有任务、固定大小状态；没有新增RTOS任务／队列／大型缓存。
+
+两版各19组控制回归、气体／SD挂载／get_data回归及实际源码上传测试通过。
+新增用例覆盖30／60／30边界、慢I/O排空、计时回绕、一次执行、SD暂停时UART继续、
+普通历史／原始SD／挂载拒收、待存队列清理及历史查询即时返回。构建前后指纹一致。
+测试不替代现场证据；本版本未自动烧录、提交或发布。
+
+后续测试保持Flag=4、9600、单地址，连续收集至少一个完整对照周期的MCU日志、
+原始TCP和有效报文导出，按每个采集批次核对长度、CRC及缺头数量，分别统计各阶段。
 
 ## 使用规则
 

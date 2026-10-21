@@ -3,7 +3,7 @@
 
 //�°汾
 // Firmware 2.1.2: bounded gas status rechecks and startup SD mount recovery.
-#define VERSION2 "2.1.4"
+#define VERSION2 "2.1.5"
 
 void setup()
 {

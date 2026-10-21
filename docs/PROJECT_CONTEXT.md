@@ -20,8 +20,8 @@ a delay. Runtime work is performed by FreeRTOS tasks and event queues.
 
 | Variant | Canonical source | Version | Build inputs | Source fingerprint |
 | --- | --- | ---: | ---: | --- |
-| standard | `firmware/standard/TSP` | 2.1.4 | 101 | `8424426CB18ABB91A23E2E92E9E3A4E3741CAEB103872A591D848B36F3F1AC68` |
-| certified | `firmware/certified/TSP` | 2.1.4.1 | 102 | `5C19FA75848458D7F474113D1E2CE0B02BA21F022627C6FBA044AD7766F90BF7` |
+| standard | `firmware/standard/TSP` | 2.1.5 | 104 | `A8CE98F1F83A084691BCFB2B4311B513B6FAC1844A7201AE2C9AE9AD66317F95` |
+| certified | `firmware/certified/TSP` | 2.1.5.1 | 105 | `7414A1CCDB3B84B384FAA6E75F99D9AE3038935B92B2AB5A391EAF764FCBDDA3` |
 
 The certified variant adds `GasSpecificPolicy.h` and applies a 500 ppb upper
 cap to O3, NO2, and SO2. CO is not capped. Its certified calibration profile is
@@ -30,7 +30,7 @@ and SO2 250 ppb. Common changes must be evaluated for both variants; this
 certified policy must not leak into standard.
 
 The earlier migration baseline passed verification with only expected
-nondeterministic build metadata differences. Current 2.1.4/2.1.4.1 builds
+nondeterministic build metadata differences. Current diagnostic 2.1.5/2.1.5.1 builds
 compiled successfully; neither result is hardware verification. The experimental
 laboratory source is separate and is not updated with this baseline.
 
@@ -271,6 +271,31 @@ Overload/allocation failure is explicit and bounded; RAM admission is not durabl
 No new task is created. These limits cannot interrupt a blocked SD SDK call;
 pending scans/reads/deletes still perform synchronous I/O during idle recovery.
 
+The 2.1.5/2.1.5.1 diagnostic baseline adds `SdIoDiagnostics` with fixed-size
+state and no new task/queue. Each boot starts one on_a (30 min), draining,
+off_b (60 min), on_a2 (30 min), complete sequence. off_b starts only after
+all admitted SD operations leave; a stuck SDK call keeps draining visible rather
+than falsely claiming a quiet phase. complete keeps normal I/O indefinitely;
+reboot resets the diagnostic, with no persisted control or LCD/remote command.
+
+Top-level FAT operations enter the diagnostic after the SD mutex. Raw SD
+read/write and mount have equivalent admission; mkdir/verify/cleanup helpers
+share their caller's admission. Blocked history events release only storage's
+owned reference at publish; pending admission is rejected and queued RAM jobs
+are released explicitly as unprotected. Disk pending files are untouched during
+the pause, recovery is deferred, mount retries skip, and history queries reply
+through the existing NG path. There is no pause-period backlog or raw-history
+backfill. Collection/statistics/transmission continue, so newly closed aggregate
+windows after resumption may include measurements taken in off_b.
+
+`SD_IO_BEGIN/END` record the admitted logical operation scope, not individual
+hardware transactions. Phase and skip markers use monotonic MCU milliseconds.
+UART logs now measure actual effective priority at both wire boundaries and
+SD active counts, with a separate phase/first-eight-byte hex context; they are
+printed after transmission. Prior 2.1.4 priority_tx logs were target values.
+This diagnostic intentionally creates a local-history gap and is not a proven
+fix for prefix loss. No SD unmount/format or FFat configuration change is added.
+
 ## HJ212 Upload Flow
 
 The configured HJ212 task subscribes to processed and resume events through a
@@ -428,13 +453,14 @@ Both packages remain `packaged-not-hardware-verified`. A Git tag identifies
 the canonical repository state after migration; binary provenance is defined by
 the committed release metadata and recorded source fingerprint.
 
-The 2.1.4 standard and 2.1.4.1 certified builds compile successfully but are
-not yet packaged or hardware verified. Outputs are under
-`firmware_workspace/build/standard-2.1.4-hj-uart-20261020` and
-`firmware_workspace/build/certified-2.1.4.1-hj-uart-20261020`. Both pass 18
-control regression groups, gas/SD/get_data regressions, and actual-source upload
-fault tests (`tools/tests/Run-FirmwareUploadTests.ps1`). Static RAM is 28032
-bytes each; pending-job metadata/queue and up to 2048 packet bytes use heap.
+The 2.1.5 standard and 2.1.5.1 certified diagnostic builds compile successfully
+but are not yet packaged or hardware verified. Outputs are under
+`firmware_workspace/build/standard-2.1.5-sd-aba-20261020` and
+`firmware_workspace/build/certified-2.1.5.1-sd-aba-20261020`. Both pass 19
+control groups, gas/SD/get_data regressions, and actual-source upload/SD-phase
+tests (`tools/tests/Run-FirmwareUploadTests.ps1`). Static RAM is 28080 bytes
+each (48 more than 2.1.4); existing pending jobs still use at most 2048 packet
+bytes plus metadata on heap. No new task or queue was added for diagnostics.
 Historical LED-gap/atmospheric-pressure builds and published packages remain.
 Use recorded fingerprints to identify exact source/binary baselines.
 

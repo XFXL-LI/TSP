@@ -20,6 +20,7 @@
 #include "../../module/gas/GasUnitConverter.h"
 #include "../../module/diagnostics/CalendarClock.h"
 #include "../../module/diagnostics/DeviceRuntimeStatus.h"
+#include "../../module/diagnostics/SdIoDiagnostics.h"
 #include "../call/base_call.h"
 #include "../../module/json/config_json.h"
 #include "../../module/file/file_storage.h"
@@ -306,6 +307,7 @@ void System::SystemSetupInit(void)
 void System::SystemTaskInit(void)
 {
     LOG_INFO("System Task Init Start!");
+    SdIoDiagnostics::begin();
 
     createCheckedTask(CollectTask, "CollectTask", 4 * 1024, NULL, TASK_PRIORITY_COLLECT, NULL, 1);
 
@@ -346,6 +348,7 @@ static void updateSetupTask(void *pvParameters)
     while (true)
     {
         uint32_t loopDelayMs = CSQ_POLL_INTERVAL_MS;
+        SdIoDiagnostics::poll();
         {
             RemoteOtaManager::BusinessActivityGuard businessActivity;
         // Firmware 2.0.4: pending maintenance must not depend on the current
@@ -585,7 +588,8 @@ static void TempControlTask(void *pvParameters)
 
 static void servicePendingRecoveryIfIdle(QueueHandle_t hjQueue)
 {
-    if (!pendingRecoveryRequested.load(std::memory_order_acquire) ||
+    if (SdIoDiagnostics::blocked() ||
+        !pendingRecoveryRequested.load(std::memory_order_acquire) ||
         uxQueueMessagesWaiting(hjQueue) != 0 ||
         filesysManager::getInstance().hasPendingStoreJobs())
     {
@@ -1186,9 +1190,9 @@ static PendingRecoveryResult recoverPendingPacket(
     // File reads/rebuilds can take long enough for a new live/statistical
     // event to arrive after the idle check. Re-check immediately before the
     // serial call so old data still yields to the newly queued packet.
-    if (uxQueueMessagesWaiting(hjQueue) != 0)
+    if (SdIoDiagnostics::blocked() || uxQueueMessagesWaiting(hjQueue) != 0)
     {
-        LOG_INFO("[DIAG] PENDING_TX_DEFER reason=live_queue_before_send");
+        LOG_INFO("[DIAG] PENDING_TX_DEFER reason=live_queue_or_sd_aba_pause");
         return finishPendingRecovery(
             pending, PendingRecoveryResult::DEFERRED,
             "live_queue_before_send");

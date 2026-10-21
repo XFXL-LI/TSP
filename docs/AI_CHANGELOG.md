@@ -77,3 +77,18 @@ history or firmware release changelogs.
   remain compatible. No LCD, multi-channel, baud or ACK-policy change.
 - Host tests and builds do not establish field UART integrity or SD durability;
   synchronous idle recovery I/O and SDK stalls remain qualification limits.
+
+## 2026-10-20 — Per-boot SD comparison diagnostic baseline
+
+- Advanced canonical standard/certified to 2.1.5/2.1.5.1 on approval.
+- Added a one-shot 30-minute on / 60-minute off / 30-minute on diagnostic with
+  SD admission tracking. The quiet hour starts after admitted operations drain;
+  completed runs keep normal I/O, while a reboot restarts the diagnostic.
+- Covered history, pending, queries, mount retries and raw SD entry points.
+  Excluded events/requests release memory rather than accumulating; existing
+  disk pending files survive the pause. This intentionally sacrifices pause-
+  period local persistence while collection/statistics/uploads continue.
+- Added monotonic logical SD-operation windows, measured UART priority/SD
+  activity and phase/prefix context without new tasks or persisted controls.
+- Both builds and host regressions pass; prefix-loss diagnosis still requires
+  field comparison. This diagnostic is not a qualified transport fix.

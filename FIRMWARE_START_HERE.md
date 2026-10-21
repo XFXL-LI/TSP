@@ -17,24 +17,31 @@ AI辅助开发应同时读取：
 
 | Variant | 版本 | 正式源码 | 构建输入 | 源码指纹 |
 |---|---:|---|---:|---|
-| standard | 2.1.4 | `firmware/standard/TSP` | 101 | `8424426CB18ABB91A23E2E92E9E3A4E3741CAEB103872A591D848B36F3F1AC68` |
-| certified | 2.1.4.1 | `firmware/certified/TSP` | 102 | `5C19FA75848458D7F474113D1E2CE0B02BA21F022627C6FBA044AD7766F90BF7` |
+| standard | 2.1.5 | `firmware/standard/TSP` | 104 | `A8CE98F1F83A084691BCFB2B4311B513B6FAC1844A7201AE2C9AE9AD66317F95` |
+| certified | 2.1.5.1 | `firmware/certified/TSP` | 105 | `7414A1CCDB3B84B384FAA6E75F99D9AE3038935B92B2AB5A391EAF764FCBDDA3` |
 
-两套2.1.4系列源码均已编译通过，状态为
+两套2.1.5系列诊断源码均已编译通过，状态为
 `compiled-not-hardware-verified`。实时数据固定每120秒形成一批；有空气通道因子时气泵
 固定运行70秒，其他传感器从第45秒采集，颗粒物与气体在通气60秒后且泵仍运行时采集。
 颗粒物改为一次读取四通道，小时统计改为纳入每个有效实时批次。
 当前版保留无有效时间时的本地快照、可选状态查询、最多3次气体状态读取及
 SD启动挂载失败后的约60秒重试；不支持运行中热拔卡。
-本次增加HJ212软件串口写字节优先级保护，失败报文异步交给存储任务；存储队列满时
+继承2.1.4系列的HJ212软件串口写字节优先级保护，失败报文异步交给存储任务；存储队列满时
 明确拒收新存储项，防止其阻塞上传投递。臭氧出口使用平台指定的w34011，旧有效pending
 在内存迁移因子名并更新CRC。保留2.1.3的LED／加热行为；不改变采集周期、波特率或认证策略。
 入队不等于落盘；底层SD卡住和中断造成的UART时延仍需实机验证，多通道适配尚未实现。
 
+本版每次启动自动执行一次SD对照：`on_a`正常30分钟 → `draining`等待在途操作
+结束 → `off_b`暂停SD业务60分钟 → `on_a2`恢复30分钟 → `complete`保持正常。
+阶段切换不重启；重启会重新开始。暂停阶段覆盖历史存盘／查询、pending读写／扫描／
+删除和挂载重试，跳过项不会在恢复后补写；采集、统计、LCD实时查询和公网发送继续。
+以日志`SD_ABA_PHASE`实际时刻计时，`SD_IO_BEGIN/END`使用与`HJ_UART_TX`相同的
+MCU毫秒时钟。此诊断版会产生预期的SD历史空档，实时报文缺头问题仍未宣称解决。
+
 当前构建产物位于：
 
-- standard：`firmware_workspace/build/standard-2.1.4-hj-uart-20261020`
-- certified：`firmware_workspace/build/certified-2.1.4.1-hj-uart-20261020`
+- standard：`firmware_workspace/build/standard-2.1.5-sd-aba-20261020`
+- certified：`firmware_workspace/build/certified-2.1.5.1-sd-aba-20261020`
 
 迁移前的两个 `tmp` 历史源码副本已退出主工作树；需要追溯时使用仓库外历史归档和
 迁移安全备份。当前开发与构建只使用上表中的 `firmware/` 正式源码。
@@ -88,7 +95,7 @@ flash-verified.cmd       受保护烧录入口，必须明确授权后使用
 
 ## 当前版本文档
 
-- [当前2.1.3/2.1.3.1构建与版本记录](FIRMWARE_VERSION_LOCATIONS.md)
+- [当前2.1.5/2.1.5.1构建与版本记录](FIRMWARE_VERSION_LOCATIONS.md)
 - [LCD/远程端开关配置协议](docs/protocols/lcd/LCD_SWITCH_CONFIG_PROTOCOL.md)
 - [Firmware 2.1.0 变更记录](docs/changelog/CHANGELOG_2.1.0.md)
 - [Firmware 2.1.0.1 变更记录](docs/changelog/CHANGELOG_2.1.0.1.md)

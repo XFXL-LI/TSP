@@ -1,6 +1,7 @@
 #include "eventBus.h"
 #include <algorithm>
 #include "../../inc/sys_init.h"
+#include "../../module/diagnostics/SdIoDiagnostics.h"
 #include "../../module/log/log_manager.h"
 EventCall::EventCall() : internalQueue(NULL) {
     busMutex = xSemaphoreCreateMutex();
@@ -144,6 +145,14 @@ void EventBus::publish(EventID id, void* data) {
                 // stall delivery to the live uploader. Preserve queued items;
                 // release exactly the rejected subscriber's retained reference.
                 if (strcmp(queueName, "STORAGE") == 0) {
+                    if (id == EventID::PROCESSED_DATA_COLLECTED && SdIoDiagnostics::blocked()) {
+                        SdIoDiagnostics::noteSkip(SdIoDiagnostics::Skip::History);
+                        auto* packet = static_cast<AllProcessedDataPacket*>(data);
+                        if (packet) packet->release();
+                        // Intentional diagnostic exclusion, not a queue overflow.
+                        LOG_INFO("[DIAG] SD_HISTORY_SKIP reason=sd_aba_pause");
+                        continue;
+                    }
                     if (xQueueSend(q, &msg, 0) != pdTRUE) {
                         droppedMessages.fetch_add(1, std::memory_order_relaxed);
                         LOG_ERROR("[DIAG] STORAGE_QUEUE_REJECT event=%d outcome=not_queued waiting=%u",

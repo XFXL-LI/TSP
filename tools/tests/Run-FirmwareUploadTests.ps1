@@ -5,7 +5,7 @@ param(
 )
 $ErrorActionPreference = 'Stop'
 $repoRoot = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
-if (-not $OutputPath) { $OutputPath = Join-Path $repoRoot 'firmware_workspace/build/verification-2.1.4' }
+if (-not $OutputPath) { $OutputPath = Join-Path $repoRoot 'firmware_workspace/build/verification-2.1.5' }
 $utf8 = [Text.UTF8Encoding]::new($false)
 $prefix = @()
 if ([IO.Path]::GetFileNameWithoutExtension($CxxPath) -eq 'zig') { $prefix = @('c++') }
@@ -26,6 +26,16 @@ foreach ($variant in @('standard', 'certified')) {
     $filesys = Read-Source $root 'app/filesysManager/filesysManager.cpp'
     $queue = [regex]::Match($filesys, '(?s)(bool filesysManager::queuePendingPacket\(.*?)(?=bool filesysManager::savePendingPacket\()')
     $protect = [regex]::Match($filesys, '(?ms)^(PendingProtectResult filesysManager::protectPendingPacket\(.*?^})')
+    $sdLock = [regex]::Match($filesys, '(?ms)^(class ScopedSdLock.*?^};)')
+    $store = [regex]::Match($filesys, '(?ms)^(void filesysManager::storeProcessedPacket\(.*?^})')
+    $query = [regex]::Match($filesys, '(?ms)^(void filesysManager::processQuery\(.*?^})')
+    $sdFile = Read-Source $root 'module/file/file_storage.cpp'
+    $sdBodies = foreach ($name in @('SDcardInit', 'writeSDCard', 'readSDCard')) {
+        $body = [regex]::Match($sdFile, "(?ms)^((?:bool|int) file_storage::$name\(.*?^})")
+        if (-not $body.Success) { throw "Cannot extract $name" }
+        $body.Groups[1].Value
+    }
+    if (-not $sdLock.Success -or -not $store.Success -or -not $query.Success) { throw 'Cannot extract SD admission/store/query implementation' }
     if (-not $queue.Success -or -not $protect.Success) { throw 'Cannot extract pending implementations' }
     $sections = @{
         'pack_source.h' = (Without-Includes (Read-Source $root 'module/pack212/pack212.h')) + "`n" + $pack
@@ -33,6 +43,10 @@ foreach ($variant in @('standard', 'certified')) {
         'guard_source.h' = Without-Includes (Read-Source $root 'module/dtu/Hj212TxGuard.h')
         'pending_decl.h' = Without-Includes (Read-Source $root 'app/filesysManager/filesysManager.h')
         'pending_source.h' = $queue.Groups[1].Value + "`n" + $protect.Groups[1].Value
+        'diagnostic_source.h' = Without-Includes (Read-Source $root 'module/diagnostics/SdIoDiagnostics.cpp')
+        'storage_source.h' = $sdLock.Groups[1].Value + "`n" + $store.Groups[1].Value
+        'sd_file_source.h' = $sdBodies -join "`n"
+        'query_source.h' = $query.Groups[1].Value
     }
     foreach ($entry in $sections.GetEnumerator()) { [IO.File]::WriteAllText((Join-Path $generated $entry.Key), $entry.Value, $utf8) }
     $binary = Join-Path $generated 'firmware-upload.exe'

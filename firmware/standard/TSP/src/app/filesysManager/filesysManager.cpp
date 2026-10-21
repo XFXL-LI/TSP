@@ -5,6 +5,7 @@
 #include "../../module/diagnostics/RuntimeMemoryDiagnostics.h"
 #include "../../module/diagnostics/DeviceRuntimeStatus.h"
 #include "../../module/diagnostics/CalendarClock.h"
+#include "../../module/diagnostics/SdIoDiagnostics.h"
 #include "../../system/event/eventBus.h"
 #include "../../module/json/config_json.h"
 #include <sys/dirent.h>
@@ -270,13 +271,25 @@ static void setPendingReadStatus(PendingReadStatus* status,
 
 class ScopedSdLock {
 public:
-    explicit ScopedSdLock(SemaphoreHandle_t mutex, TickType_t timeout = pdMS_TO_TICKS(3000))
-        : _mutex(mutex), _locked(mutex != nullptr && xSemaphoreTake(mutex, timeout) == pdTRUE) {}
-    ~ScopedSdLock() { if (_locked) xSemaphoreGive(_mutex); }
+    explicit ScopedSdLock(SemaphoreHandle_t mutex, const char* operation,
+                          SdIoDiagnostics::Skip reason = SdIoDiagnostics::Skip::Other,
+                          TickType_t timeout = pdMS_TO_TICKS(3000),
+                          uint32_t trace = 0, int type = -1, uint64_t timestamp = 0)
+        : _mutex(mutex), _locked(mutex != nullptr && xSemaphoreTake(mutex, timeout) == pdTRUE) {
+        if (_locked && operation && !_diagnostic.start(operation, reason, trace, type, timestamp)) {
+            xSemaphoreGive(_mutex);
+            _locked = false;
+        }
+    }
+    ~ScopedSdLock() {
+        _diagnostic.finish();
+        if (_locked) xSemaphoreGive(_mutex);
+    }
     bool locked() const { return _locked; }
 private:
     SemaphoreHandle_t _mutex;
     bool _locked;
+    SdIoDiagnostics::Guard _diagnostic;
 };
 
 filesysManager& filesysManager::getInstance() {
@@ -285,10 +298,11 @@ filesysManager& filesysManager::getInstance() {
 }
 
 void filesysManager::retrySDMountIfDue() {
+    if (SdIoDiagnostics::blocked()) return;
     auto &storage = file_storage::getInstance();
     if (!storage.isSDMountRetryDue(millis())) return;
     // Defer rather than holding up an ongoing history/write/recovery operation.
-    ScopedSdLock sdLock(_sdMutex, 0);
+    ScopedSdLock sdLock(_sdMutex, nullptr, SdIoDiagnostics::Skip::Mount, 0);
     if (!sdLock.locked() || !storage.isSDMountRetryDue(millis())) return;
     storage.SDcardInit();
 }
@@ -348,9 +362,9 @@ void filesysManager::storeProcessedPacket(AllProcessedDataPacket* pkg) {
     if (!CalendarClock::isValidTimestamp(pkg->last_update)) return;
     // Firmware 2.0.3: serialize FAT access across storage, LCD history reads,
     // and pending recovery. Concurrent stdio calls produced zero-filled files.
-    ScopedSdLock sdLock(_sdMutex);
+    ScopedSdLock sdLock(_sdMutex, "history_write", SdIoDiagnostics::Skip::History, pdMS_TO_TICKS(3000), pkg->trace_id, (int)pkg->dataTime, pkg->last_update);
     if (!sdLock.locked()) {
-        LOG_WARNING("[DIAG] SD_LOCK_BUSY operation=store");
+        LOG_WARNING("[DIAG] SD_IO_UNAVAILABLE operation=store");
         return;
     }
     if (!file_storage::getInstance().isSDcardReady()) {
@@ -428,6 +442,12 @@ bool filesysManager::queuePendingPacket(const AllProcessedDataPacket* data,
         LOG_ERROR("[DIAG] PENDING_STORE_REJECT outcome=unprotected reason=not_ready");
         return false;
     }
+    if (SdIoDiagnostics::blocked()) {
+        SdIoDiagnostics::noteSkip(SdIoDiagnostics::Skip::Pending);
+        LOG_WARNING("[DIAG] PENDING_STORE_REJECT trace=%u type=%u timestamp=%llu outcome=unprotected reason=sd_aba_pause",
+                    (unsigned)data->trace_id, (unsigned)data->dataTime, data->last_update);
+        return false;
+    }
     const size_t bytes = packet.length();
     if (_pendingWriteCount.fetch_add(1, std::memory_order_acq_rel) >=
         PendingWritePolicy::CAPACITY) {
@@ -485,6 +505,13 @@ void filesysManager::servicePendingWrites() {
     for (uint32_t checked = 0; checked < PendingWritePolicy::CAPACITY; ++checked) {
         PendingWriteRequest* request = nullptr;
         if (xQueueReceive(_pendingWriteQueue, &request, 0) != pdTRUE) return;
+        if (SdIoDiagnostics::blocked()) {
+            SdIoDiagnostics::noteSkip(SdIoDiagnostics::Skip::Pending);
+            LOG_WARNING("[DIAG] PENDING_STORE_RESULT trace=%u type=%u timestamp=%llu outcome=unprotected reason=sd_aba_pause",
+                        (unsigned)request->trace, (unsigned)request->dataTime, request->timestamp);
+            releasePendingWrite(request);
+            continue;
+        }
         if (!PendingWritePolicy::due(millis(), request->nextTryAt)) {
             if (xQueueSend(_pendingWriteQueue, &request, 0) != pdTRUE) {
                 LOG_ERROR("[DIAG] PENDING_STORE_RESULT trace=%u outcome=unprotected reason=retry_queue_full",
@@ -524,9 +551,9 @@ bool filesysManager::savePendingPacket(DataTime dataTime, uint64_t timestamp, co
         !file_storage::getInstance().isSDcardReady()) {
         return false;
     }
-    ScopedSdLock sdLock(_sdMutex);
+    ScopedSdLock sdLock(_sdMutex, "pending_write", SdIoDiagnostics::Skip::Pending);
     if (!sdLock.locked()) {
-        LOG_WARNING("[DIAG] SD_LOCK_BUSY operation=save_pending");
+        LOG_WARNING("[DIAG] SD_IO_UNAVAILABLE operation=save_pending");
         return false;
     }
     // Firmware 2.0.2 (2026-07-30): never persist truncated/OOM packets such
@@ -700,9 +727,9 @@ bool filesysManager::savePendingRebuildMarker(DataTime dataTime, uint64_t timest
     if (!file_storage::getInstance().isSDcardReady()) {
         return false;
     }
-    ScopedSdLock sdLock(_sdMutex);
+    ScopedSdLock sdLock(_sdMutex, "pending_marker", SdIoDiagnostics::Skip::Pending);
     if (!sdLock.locked()) {
-        LOG_WARNING("[DIAG] SD_LOCK_BUSY operation=save_rebuild_marker");
+        LOG_WARNING("[DIAG] SD_IO_UNAVAILABLE operation=save_rebuild_marker");
         return false;
     }
 
@@ -851,9 +878,9 @@ AllProcessedDataPacket* filesysManager::readPendingPacket(
     uint64_t timestamp,
     PendingReadStatus* status) {
     setPendingReadStatus(status, PendingReadStatus::TEMPORARY_ERROR);
-    ScopedSdLock sdLock(_sdMutex);
+    ScopedSdLock sdLock(_sdMutex, "history_read", SdIoDiagnostics::Skip::Query);
     if (!sdLock.locked()) {
-        LOG_WARNING("[DIAG] SD_LOCK_BUSY operation=read_record");
+        LOG_WARNING("[DIAG] SD_IO_UNAVAILABLE operation=read_record");
         return nullptr;
     }
     if (!file_storage::getInstance().isSDcardReady()) {
@@ -1070,9 +1097,9 @@ std::vector<PendingPacketInfo> filesysManager::scanPendingPackets(
     const PendingPacketInfo* after) {
     std::vector<PendingPacketInfo> result;
     if (maxPackets == 0) return result;
-    ScopedSdLock sdLock(_sdMutex);
+    ScopedSdLock sdLock(_sdMutex, "pending_scan", SdIoDiagnostics::Skip::Pending);
     if (!sdLock.locked()) {
-        LOG_WARNING("[DIAG] SD_LOCK_BUSY operation=scan_pending");
+        LOG_WARNING("[DIAG] SD_IO_UNAVAILABLE operation=scan_pending");
         return result;
     }
 
@@ -1113,9 +1140,9 @@ String filesysManager::loadPendingPacketContent(
         setPendingReadStatus(status, PendingReadStatus::INVALID_DATA);
         return String();
     }
-    ScopedSdLock sdLock(_sdMutex);
+    ScopedSdLock sdLock(_sdMutex, "pending_read", SdIoDiagnostics::Skip::Pending);
     if (!sdLock.locked()) {
-        LOG_WARNING("[DIAG] SD_LOCK_BUSY operation=load_pending");
+        LOG_WARNING("[DIAG] SD_IO_UNAVAILABLE operation=load_pending");
         return String();
     }
 
@@ -1195,7 +1222,7 @@ String filesysManager::loadPendingPacketContent(
 }
 
 bool filesysManager::quarantinePendingPacket(const PendingPacketInfo& pending) {
-    ScopedSdLock sdLock(_sdMutex);
+    ScopedSdLock sdLock(_sdMutex, "pending_quarantine", SdIoDiagnostics::Skip::Pending);
     if (!sdLock.locked()) return false;
 
     String invalidDir = "/sdcard/pending_bad/" +
@@ -1232,9 +1259,9 @@ bool filesysManager::quarantinePendingPacket(const PendingPacketInfo& pending) {
 
 bool filesysManager::deletePendingPacket(const PendingPacketInfo& pending) {
     if (!file_storage::getInstance().isSDcardReady()) return false;
-    ScopedSdLock sdLock(_sdMutex);
+    ScopedSdLock sdLock(_sdMutex, "pending_delete", SdIoDiagnostics::Skip::Pending);
     if (!sdLock.locked()) {
-        LOG_WARNING("[DIAG] SD_LOCK_BUSY operation=delete_pending");
+        LOG_WARNING("[DIAG] SD_IO_UNAVAILABLE operation=delete_pending");
         return false;
     }
 
@@ -1394,6 +1421,13 @@ static uint64_t nextQueryTimestamp(uint64_t current, int dataType)
 
 void filesysManager::processQuery(JSONCmdData* req) {
     if (req == nullptr) return;
+    SdIoDiagnostics::poll();
+    if (SdIoDiagnostics::blocked()) {
+        SdIoDiagnostics::noteSkip(SdIoDiagnostics::Skip::Query);
+        LOG_INFO("[DIAG] SD_QUERY_SKIP reason=sd_aba_pause");
+        EventBus::getInstance().publish(EventID::RECORD_QUERY_RES, nullptr);
+        return;
+    }
     LOG_INFO("Processing record query request arguments: %s", req->arguments.c_str());
     config_json jsonParser(req->arguments.c_str());
     if (!jsonParser.isValid()) {
@@ -1456,6 +1490,12 @@ void filesysManager::processQuery(JSONCmdData* req) {
     }
 
     for (uint64_t current_ts = start_ts; current_ts <= end_ts;) {
+        SdIoDiagnostics::poll();
+        if (SdIoDiagnostics::blocked()) {
+            SdIoDiagnostics::noteSkip(SdIoDiagnostics::Skip::Query);
+            EventBus::getInstance().publish(EventID::RECORD_QUERY_RES, nullptr);
+            break;
+        }
         pendingData = readPendingPacket(dataType, current_ts);
         if (pendingData == nullptr) {
             pendingData = new AllProcessedDataPacket(); 
@@ -1484,6 +1524,7 @@ void filesysManager::processQuery(JSONCmdData* req) {
 }
 
 void filesysManager::poll() {
+    SdIoDiagnostics::poll();
     EventMsg msg;
     if (EventBus::waitEvent(SaveDataFileTaskQueue, msg, PendingWritePolicy::POLL_MS))
     {
