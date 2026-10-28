@@ -349,7 +349,11 @@ void collectParticleChannels(const std::vector<BaseCollector *> &collectors,
     }
 
     const bool withinDeadline = !deadlineReached(deadlineMs);
-    LOG_INFO("[DIAG] PM_BATCH read_ok=%d within_deadline=%d duration_limit_ms=%u",
+    if (!readOk || !withinDeadline) {
+        LOG_WARNING("[DIAG] PM_BATCH_INVALID read_ok=%d within_deadline=%d",
+                    readOk ? 1 : 0, withinDeadline ? 1 : 0);
+    }
+    LOG_DEBUG("[DIAG] PM_BATCH read_ok=%d within_deadline=%d duration_limit_ms=%u",
              readOk ? 1 : 0, withinDeadline ? 1 : 0,
              (unsigned)BATCH_FINISH_OFFSET_MS);
     for (size_t i = 0; i < 4; ++i)
@@ -395,7 +399,7 @@ void collectorManager::poll()
 
     AllDataPacket *allData = new AllDataPacket();
     allData->trace_id = nextTraceId.fetch_add(1, std::memory_order_relaxed);
-    LOG_INFO("[DIAG] COLLECT_STAGE trace=%u stage=non_air offset_ms=45000",
+    LOG_DEBUG("[DIAG] COLLECT_STAGE trace=%u stage=non_air offset_ms=45000",
              (unsigned)allData->trace_id);
 
     for (BaseCollector *collector : _collectors)
@@ -415,7 +419,7 @@ void collectorManager::poll()
     {
         LOG_WARNING("System clock is invalid; local values remain available, dated outputs paused");
     }
-    LOG_INFO("[DIAG] COLLECT_STAGE trace=%u stage=air_path offset_ms=60000",
+    LOG_DEBUG("[DIAG] COLLECT_STAGE trace=%u stage=air_path offset_ms=60000",
              (unsigned)allData->trace_id);
 
     collectParticleChannels(_collectors, allData, finishMs);

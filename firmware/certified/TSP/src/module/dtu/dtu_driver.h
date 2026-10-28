@@ -16,22 +16,28 @@
 #define SET_IP_END              ",0,0,0,0,0,0,0,0"
 
 
+class Hj212PriorityScope;
+
 class DTUDriver {
 private:
     Stream* _stream;
     String  _name;
     int     _id;
-    size_t writeWire(const uint8_t* data, size_t length, bool newline = false);
+    size_t writeWire(const uint8_t* data, size_t length, bool newline = false,
+                     Hj212PriorityScope* priorityScope = nullptr);
 
 public:
     DTUDriver(String name, int id);
     ~DTUDriver();
     void setStream(Stream& stream) { _stream = &stream; };
     
-    String sendCommand(const char* cmd, uint32_t timeout = 3000);
+    String sendCommand(const char* cmd, uint32_t timeout = 3000,
+                       Hj212PriorityScope* priorityScope = nullptr,
+                       bool* commandWritten = nullptr);
     String sendData(const String& data,
                     bool waitForResponse = true,
-                    uint32_t responseTimeoutMs = 5000);
+                    uint32_t responseTimeoutMs = 5000,
+                    Hj212PriorityScope* priorityScope = nullptr);
     int readCSQ();
     bool checkOnline();
     

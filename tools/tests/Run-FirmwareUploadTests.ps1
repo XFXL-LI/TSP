@@ -5,7 +5,7 @@ param(
 )
 $ErrorActionPreference = 'Stop'
 $repoRoot = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
-if (-not $OutputPath) { $OutputPath = Join-Path $repoRoot 'firmware_workspace/build/verification-2.1.5' }
+if (-not $OutputPath) { $OutputPath = Join-Path $repoRoot 'firmware_workspace/build/verification-2.1.7' }
 $utf8 = [Text.UTF8Encoding]::new($false)
 $prefix = @()
 if ([IO.Path]::GetFileNameWithoutExtension($CxxPath) -eq 'zig') { $prefix = @('c++') }
@@ -37,6 +37,14 @@ foreach ($variant in @('standard', 'certified')) {
     }
     if (-not $sdLock.Success -or -not $store.Success -or -not $query.Success) { throw 'Cannot extract SD admission/store/query implementation' }
     if (-not $queue.Success -or -not $protect.Success) { throw 'Cannot extract pending implementations' }
+    $manager = Read-Source $root 'app/dtuManager/dtuManager.cpp'
+    $helpers = [regex]::Match($manager, '(?s)(namespace \{.*?} // namespace)')
+    $managerBodies = foreach ($name in @('sendHJ212PacketInternal', 'hjSystemTime', 'hj212DTUCSQ', 'updateHJDtuGoalIP')) {
+        $body = [regex]::Match($manager, "(?ms)^((?:Hj212SendResult|uint64_t|int|bool) DTUManager::$name\(.*?^})")
+        if (-not $body.Success) { throw "Cannot extract $name" }
+        $body.Groups[1].Value
+    }
+    if (-not $helpers.Success) { throw 'Cannot extract manager ACK helpers' }
     $sections = @{
         'pack_source.h' = (Without-Includes (Read-Source $root 'module/pack212/pack212.h')) + "`n" + $pack
         'driver_source.h' = (Without-Includes (Read-Source $root 'module/dtu/dtu_driver.h')) + "`n" + (Without-Includes (Read-Source $root 'module/dtu/dtu_driver.cpp'))
@@ -47,6 +55,8 @@ foreach ($variant in @('standard', 'certified')) {
         'storage_source.h' = $sdLock.Groups[1].Value + "`n" + $store.Groups[1].Value
         'sd_file_source.h' = $sdBodies -join "`n"
         'query_source.h' = $query.Groups[1].Value
+        'manager_helpers.h' = $helpers.Groups[1].Value
+        'manager_source.h' = $managerBodies -join "`n"
     }
     foreach ($entry in $sections.GetEnumerator()) { [IO.File]::WriteAllText((Join-Path $generated $entry.Key), $entry.Value, $utf8) }
     $binary = Join-Path $generated 'firmware-upload.exe'

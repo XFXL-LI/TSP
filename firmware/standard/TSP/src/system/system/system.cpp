@@ -230,7 +230,7 @@ System::~System()
 void System::SystemInit(void)
 {
 
-    LogManager::getInstance().setLevel(LOG_LEVEL_DEBUG);
+    LogManager::getInstance().setLevel(LOG_LEVEL_INFO);
     LOG_INFO("Firmware version: %s", VERSION2);
     LOG_DEBUG("System init start");
 

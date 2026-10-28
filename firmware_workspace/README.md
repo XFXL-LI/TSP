@@ -1,6 +1,6 @@
 # TSP ESP32-S3 固件工作区
 
-最后更新：2026-10-20
+最后更新：2026-10-23
 
 本目录是固件状态查看、构建、Release验证和受保护烧录入口。正式业务源码已迁移到
 仓库根目录的 `firmware/`，不再从 `tmp/` 或根目录旧 `TSP/` 构建。
@@ -9,14 +9,14 @@
 
 | Variant | 版本 | 源码路径 | 构建输入 | 源码指纹 |
 |---|---:|---|---:|---|
-| standard | 2.1.5 | `../firmware/standard/TSP` | 104 | `A8CE98F1F83A084691BCFB2B4311B513B6FAC1844A7201AE2C9AE9AD66317F95` |
-| certified | 2.1.5.1 | `../firmware/certified/TSP` | 105 | `7414A1CCDB3B84B384FAA6E75F99D9AE3038935B92B2AB5A391EAF764FCBDDA3` |
+| standard | 2.1.7 | `../firmware/standard/TSP` | 104 | `2B481FE81D0ECEA02FEA1F81DA523DF422157CCC622A267113D71A2FE32D321A` |
+| certified | 2.1.7.1 | `../firmware/certified/TSP` | 105 | `4894E25D48D29E62BE4D30EEDF1A393F9AEC563B3BD36926F5CB4D952F59F5B2` |
 
-两版2.1.5系列SD对照诊断构建均已通过，状态为
+两版2.1.7系列恢复常规流程的构建均已通过，状态为
 `compiled-not-hardware-verified`。当前构建目录分别为：
 
-- `build/standard-2.1.5-sd-aba-20261020`
-- `build/certified-2.1.5.1-sd-aba-20261020`
+- `build/standard-2.1.7-normal-sd-20261023`
+- `build/certified-2.1.7.1-normal-sd-20261023`
 
 继承2.1.4系列的HJ212软件串口写字节期间临时提高优先级、失败报文有界异步存储，
 以及存储事件队列满时不阻塞上传投递。臭氧HJ212出口统一使用平台指定的w34011，
@@ -28,12 +28,17 @@
 UART波形／中断时延仍须现场对照原始TCP验证。详细行为与验证入口见
 [项目背景](../docs/PROJECT_CONTEXT.md)和[版本记录](../FIRMWARE_VERSION_LOCATIONS.md)。
 
-本次新增每次启动一次的SD 30／60／30分钟对照；等待在途I/O结束后才开始60分钟
-暂停，之后保持正常。暂停业务覆盖历史和pending读写／查询／扫描及挂载重试，跳过的
-数据及时释放，不积压或恢复后补写；统计与上传继续。历史查询返回原有NG响应。
-`priority_tx`改为实际测量值，并记录发送开始／结束时SD在途计数和前8字节。
-两版静态RAM均为28080字节，比2.1.4系列增加48字节；没有新增任务、队列或持久化配置。
-这是诊断固件，卡内会出现预期的历史空档；重新启动会重新执行对照，尚未现场验证。
+2.1.7取消SD自动对照，启动记录`SD_MODE mode=normal comparison=off`；历史和pending
+读写／查询／扫描以及挂载重试持续正常执行。旧诊断版跳过的历史不恢复补写。
+默认INFO，正常LED、气体查询、JSON回显、UART保护上下文和SD操作细节留在DEBUG。
+保留采集／发送／存盘结果和故障信息，SDK操作返回时耗时至少3秒提示`SD_IO_SLOW`。
+两版静态RAM均为28072字节，无新增任务、队列或持久化开关；没有改变既有Flag配置。
+现场残帧及小时／日历史读取异常仍为已知问题。
+
+2.1.6系列修正已发生优先级继承时HJ212发送保护未达到实际优先级11的问题。
+写字节前核验实际等级，写完恢复进入前的有效等级，串口事务释放互斥锁后再恢复原基础
+等级；未达到保护等级时明确返回失败。2.1.7保留此保护并取消SD对照，等待现场复测。
+`HJ_UART_CONTEXT`增加`guard_ok`，`HJ_PRIORITY_RESTORE`记录事务结束后的基础／有效等级。
 
 ## 目录职责
 

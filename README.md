@@ -2,7 +2,7 @@
 
 本项目是基于 ESP32-S3 的空气微站/TSP 环境监测终端固件，用于采集颗粒物、气态污染物、气象和噪声数据，并通过 HJ 212 协议上传到监控平台。项目同时提供本地显示、历史存储、断点续传、远程配置、传感器标定、告警和 OTA 升级等功能。
 
-当前开发源码为SD对照诊断版：standard `2.1.5`，certified `2.1.5.1`。
+当前开发源码：standard `2.1.7`，certified `2.1.7.1`；恢复SD持续正常业务，默认INFO日志。
 
 正式源码分别位于 `firmware/standard/TSP` 和 `firmware/certified/TSP`。2.1.0系列将
 实时批次固定为120秒、气泵固定运行70秒，并在通气60秒后于泵运行期间读取颗粒物和
@@ -37,6 +37,17 @@ MCU已编译通过；LCD解析与实机联调仍待验收，实验版不随此�
 暂停时继续采集和公网发送，不缓存／补写跳过的历史和待传项；已有卡内文件不因测试
 清空，历史查询返回NG。阶段切换不重启MCU、不持久化设置；再次启动会重新执行测试。
 两版主机测试和编译通过，不能把本版本当作缺头问题的正式修复。
+
+2.1.6系列修正已发生优先级继承时HJ212发送保护未达到实际优先级11的问题。
+写字节前核验实际等级，写完恢复进入前的有效等级，串口事务释放互斥锁后再恢复原基础
+等级；未达到保护等级时明确返回失败。保留2.1.5的SD对照，等待现场重复验证。
+`HJ_UART_CONTEXT`增加`guard_ok`，`HJ_PRIORITY_RESTORE`记录事务结束后的基础／有效等级。
+
+2.1.7系列取消30／60／30分钟SD自动对照，历史／pending／查询／挂载不再因诊断而暂停；
+继承2.1.6发送保护。默认INFO，LED逐帧、气体查询、JSON回显和详细UART／SD过程留在DEBUG；
+保留采集、发送、存盘结果及异常提示。SDK操作返回时若耗时至少3秒，会记录SD_IO_SLOW。
+两版主机回归及编译通过，现场残帧和小时／日历史读取异常仍待解决，不代表零丢失验收。
+逐版本记录见[2.1.7](docs/changelog/CHANGELOG_2.1.7.md)和[2.1.7.1](docs/changelog/CHANGELOG_2.1.7.1.md)。
 
 当前最新已发布的2026-09-07正式打包Release：
 
@@ -311,8 +322,8 @@ python tools/export_sd_history_to_excel.py D:\sdcard_backup -o output\history_ra
 
 ```text
 firmware/
-├─ standard/TSP/                   Firmware 2.1.5通用诊断源码
-└─ certified/TSP/                  Firmware 2.1.5.1认证诊断源码
+├─ standard/TSP/                   Firmware 2.1.7通用源码
+└─ certified/TSP/                  Firmware 2.1.7.1认证源码
 
 firmware_workspace/
 ├─ build/                          可再生构建产物

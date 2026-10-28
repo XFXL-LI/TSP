@@ -295,7 +295,7 @@ void DataManager::dispatchRealPacket(const AllDataPacket* rawData) {
         pkg->processed_data_map[id] = data;
     }
 
-    LOG_INFO("[DIAG] PROCESS trace=%u type=%u timestamp=%llu records=%u",
+    LOG_DEBUG("[DIAG] PROCESS trace=%u type=%u timestamp=%llu records=%u",
              (unsigned)pkg->trace_id,
              (unsigned)pkg->dataTime,
              pkg->last_update,
@@ -325,7 +325,7 @@ void DataManager::dispatchPacket(DataTime type, uint64_t ts, std::map<String, St
         p.status = item.second.getStatus();
         pkg->processed_data_map[item.first] = p;
     }
-    LOG_INFO("[DIAG] PROCESS trace=%u type=%u timestamp=%llu records=%u",
+    LOG_DEBUG("[DIAG] PROCESS trace=%u type=%u timestamp=%llu records=%u",
              (unsigned)pkg->trace_id,
              (unsigned)pkg->dataTime,
              pkg->last_update,

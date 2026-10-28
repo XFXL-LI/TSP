@@ -1,4 +1,5 @@
 #include "dtuManager.h"
+#include "../../module/dtu/Hj212TxGuard.h"
 #include "../../module/pack212/pack212.h"
 #include "../../system/event/eventBus.h"
 #include "../../module/json/config_json.h"
@@ -380,6 +381,7 @@ uint64_t DTUManager::dtuSystemTime() {
 }
 
 uint64_t DTUManager::hjSystemTime() {
+    Hj212PriorityScope priorityScope;
     // Live and pending HJ212 packets always take priority over maintenance
     // time queries. A deferred query is retried by the maintenance scheduler.
     uint32_t now = millis();
@@ -402,7 +404,7 @@ uint64_t DTUManager::hjSystemTime() {
         LOG_INFO("[DIAG] TIME_SYNC_DEFER reason=upload_waiting");
         return 0;
     }
-    String res = _hj212DTU->sendCommand(GET_TIME_COMM);
+    String res = _hj212DTU->sendCommand(GET_TIME_COMM, 3000, &priorityScope);
     clearHjSerialOwner();
     xSemaphoreGive(mutex);
     LOG_DEBUG("Send GET_TIME_COMM res: %s", res.c_str());
@@ -444,6 +446,7 @@ int DTUManager::remoteDTUCSQ() {
     return CSQ_COUNT;
 }
 int DTUManager::hj212DTUCSQ() {
+    Hj212PriorityScope priorityScope;
     // Firmware 2.0.3: live data always wins over maintenance commands. A
     // deferred CSQ keeps the last known value and is retried next cycle.
     uint32_t now = millis();
@@ -466,7 +469,7 @@ int DTUManager::hj212DTUCSQ() {
         LOG_INFO("[DIAG] CSQ_DEFER reason=upload_waiting");
         return CSQ_DEFERRED;
     }
-    String res = _hj212DTU->sendCommand(GET_CSQ_COMM);
+    String res = _hj212DTU->sendCommand(GET_CSQ_COMM, 3000, &priorityScope);
     clearHjSerialOwner();
     xSemaphoreGive(mutex);
     int CSQ_COUNT = 99;
@@ -505,6 +508,7 @@ bool DTUManager::updateReDtuGoalIP(String newIP){
 }
 
 bool DTUManager::updateHJDtuGoalIP(String newIP){
+    Hj212PriorityScope priorityScope;
     int sep = newIP.indexOf(':');
     if (sep < 0) return false;
     String ip = newIP.substring(0, sep);
@@ -518,14 +522,16 @@ bool DTUManager::updateHJDtuGoalIP(String newIP){
         return false;
     }
     setHjSerialOwner(HjSerialOwner::SET_IP);
-    String res = _hj212DTU->sendCommand(cmd.c_str());
+    String res = _hj212DTU->sendCommand(cmd.c_str(), 3000, &priorityScope);
     LOG_DEBUG("DTU Response: %s", res.c_str());
     if (res.indexOf("ok") != -1) { 
         LOG_DEBUG("Server set success!");
-        _hj212DTU->sendCommand(CONFIG_SAVE_COM);
+        bool saveWritten = false;
+        _hj212DTU->sendCommand(CONFIG_SAVE_COM, 3000, &priorityScope, &saveWritten);
         clearHjSerialOwner();
         xSemaphoreGive(mutex);
-        return true;
+        // SAVE may reboot without replying, but a blocked/short write is failure.
+        return saveWritten;
     } else {
         clearHjSerialOwner();
         xSemaphoreGive(mutex);
@@ -551,6 +557,7 @@ Hj212SendResult DTUManager::sendPendingHJ212Packet(
 Hj212SendResult DTUManager::sendHJ212PacketInternal(
     const String& dataContent, int maxRetry, uint32_t traceId, int dataType,
     uint64_t dataTimestamp, bool lowPriorityPending) {
+    Hj212PriorityScope priorityScope;
     uint8_t flagValue = 0;
     if (!parseHj212Flag(dataContent, flagValue)) {
         LOG_ERROR("HJ212 Flag missing or invalid");
@@ -589,7 +596,7 @@ Hj212SendResult DTUManager::sendHJ212PacketInternal(
     }
     observeRuntimeMemory();
 
-    LOG_INFO("[DIAG] HJ_POLICY trace=%u source=%s ack_mode=%s timeout_ms=%u attempts=%d",
+    LOG_DEBUG("[DIAG] HJ_POLICY trace=%u source=%s ack_mode=%s timeout_ms=%u attempts=%d",
              (unsigned)traceId,
              lowPriorityPending ? "pending" : "live",
              ackModeName(ackMode),
@@ -646,11 +653,11 @@ Hj212SendResult DTUManager::sendHJ212PacketInternal(
     bool success = false;
     for (int retry = 1; retry <= maxRetry; retry++)
     {
-        LOG_INFO("[DIAG] TX_ATTEMPT trace=%u type=%d timestamp=%llu attempt=%d bytes=%u",
+        LOG_DEBUG("[DIAG] TX_ATTEMPT trace=%u type=%d timestamp=%llu attempt=%d bytes=%u",
                  (unsigned)traceId, dataType, dataTimestamp,
                  retry, (unsigned)dataContent.length());
         String res = _hj212DTU->sendData(dataContent, requiresAck,
-                                         responseTimeoutMs);
+                                         responseTimeoutMs, &priorityScope);
         observeRuntimeMemory();
         if (!requiresAck)
         {
@@ -700,6 +707,17 @@ Hj212SendResult DTUManager::sendHJ212PacketInternal(
     _lastHjUploadEndMs.store(millis(), std::memory_order_release);
     clearHjSerialOwner();
     xSemaphoreGive(mutex);
+    priorityScope.restore();
+    const UBaseType_t restoredBase = Hj212PriorityScope::currentBasePriority();
+    const UBaseType_t restoredEffective = uxTaskPriorityGet(nullptr);
+    LOG_DEBUG("[DIAG] HJ_PRIORITY_RESTORE trace=%u original=%u base=%u effective=%u",
+             (unsigned)traceId, (unsigned)priorityScope.originalPriority(),
+             (unsigned)restoredBase, (unsigned)restoredEffective);
+    if (restoredBase != priorityScope.originalPriority()) {
+        LOG_ERROR("[DIAG] HJ_PRIORITY_RESTORE_FAILED trace=%u expected=%u actual=%u effective=%u",
+                  (unsigned)traceId, (unsigned)priorityScope.originalPriority(),
+                  (unsigned)restoredBase, (unsigned)restoredEffective);
+    }
     SerialManager::getInstance().checkAndReportOverflow(SERIAL_HJ212);
     if (!success) {
         LOG_ERROR("[DIAG] TX_RESULT trace=%u type=%d timestamp=%llu attempts=%d flag=%u ack_required=%d success=0",
@@ -727,10 +745,11 @@ void DTUManager::processQuery(JSONCmdData* req){
         String res = _remoteDTU->sendCommand(com.c_str());
         resData->content = res;
     } else if (dtuName == "HJ212") {
+        Hj212PriorityScope priorityScope;
         SemaphoreHandle_t mutex = SerialManager::getInstance().getMutex(SERIAL_HJ212);
         if (mutex != nullptr && xSemaphoreTake(mutex, pdMS_TO_TICKS(3000)) == pdTRUE) {
             setHjSerialOwner(HjSerialOwner::DTU_COMMAND);
-            resData->content = _hj212DTU->sendCommand(com.c_str());
+            resData->content = _hj212DTU->sendCommand(com.c_str(), 3000, &priorityScope);
             clearHjSerialOwner();
             xSemaphoreGive(mutex);
         } else {

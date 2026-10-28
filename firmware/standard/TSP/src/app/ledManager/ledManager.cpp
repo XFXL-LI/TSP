@@ -135,6 +135,9 @@ void LedManager::sendPending(uint32_t now)
         _lastSent[slot] = value;
         _sentMask |= 1U << slot;
         _pendingMask &= static_cast<uint8_t>(~(1U << slot));
+    } else {
+        LOG_WARNING("[DIAG] LED_TX_FAILED region=%u retry_ms=%u",
+                    41 + slot, (unsigned)LedDisplayPolicy::PAGE_INTERVAL_MS);
     }
     LOG_DEBUG("[DIAG] LED_TX region=%u ok=%d start_ms=%u end_ms=%u",
               41 + slot, sent ? 1 : 0, static_cast<unsigned>(startedAt),

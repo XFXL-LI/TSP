@@ -7,7 +7,7 @@ const char *SYSTEMINFO = R"({
     "model": "TSP_LCD",
     "manufacturingDate": 20250701,
     "manufacturer": "JCKJ",
-    "version": "2.1.5"
+    "version": "2.1.7"
 })";
 
 #endif

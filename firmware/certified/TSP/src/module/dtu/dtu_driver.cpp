@@ -8,9 +8,11 @@ DTUDriver::DTUDriver(String name, int id) : _name(name), _id(id), _stream(nullpt
 
 DTUDriver::~DTUDriver() {
 }
-size_t DTUDriver::writeWire(const uint8_t* data, size_t length, bool newline) {
+size_t DTUDriver::writeWire(const uint8_t* data, size_t length, bool newline,
+                            Hj212PriorityScope* priorityScope) {
     const bool protect = _name == "HJ212";
     size_t written = 0;
+    bool protectionOk = true;
     uint32_t started = 0, finished = 0;
     UBaseType_t originalPriority = 0, priorityTx = 0, priorityEnd = 0;
     const UBaseType_t effectiveBefore = uxTaskPriorityGet(nullptr);
@@ -25,39 +27,59 @@ size_t DTUDriver::writeWire(const uint8_t* data, size_t length, bool newline) {
         }
     }
     {
-        Hj212TxGuard guard(protect);
+        Hj212TxGuard guard(protect, priorityScope);
         originalPriority = guard.originalPriority();
         priorityTx = uxTaskPriorityGet(nullptr);
         sdBegin = SdIoDiagnostics::snapshot();
         started = millis();
-        written = _stream->write(data, length);
-        if (newline) {
-            static const uint8_t ending[] = {'\r', '\n'};
-            written += _stream->write(ending, sizeof(ending));
+        protectionOk = guard.ready();
+        if (protectionOk) {
+            written = _stream->write(data, length);
+            if (newline) {
+                static const uint8_t ending[] = {'\r', '\n'};
+                written += _stream->write(ending, sizeof(ending));
+            }
         }
         finished = millis();
         priorityEnd = uxTaskPriorityGet(nullptr);
         sdEnd = SdIoDiagnostics::snapshot();
-    } // Restore base priority before logging, flush, ACK waits or caller SD I/O.
+    } // Restore the entry effective floor before logging, flush and ACK waits.
+    if (protect && priorityEnd < Hj212TxGuard::PRIORITY) protectionOk = false;
     if (protect) {
-        LOG_INFO("[DIAG] HJ_UART_TX bytes=%u written=%u start_ms=%u end_ms=%u elapsed_ms=%u priority_before=%u priority_tx=%u priority_end=%u sd_begin=%u sd_end=%u",
+        if (written != length + (newline ? 2U : 0U)) {
+            LOG_ERROR("[DIAG] HJ_UART_SHORT expected=%u written=%u",
+                      (unsigned)(length + (newline ? 2U : 0U)), (unsigned)written);
+        }
+        LOG_DEBUG("[DIAG] HJ_UART_TX bytes=%u written=%u start_ms=%u end_ms=%u elapsed_ms=%u priority_before=%u priority_tx=%u priority_end=%u sd_begin=%u sd_end=%u",
                  (unsigned)(length + (newline ? 2U : 0U)), (unsigned)written,
                  (unsigned)started, (unsigned)finished,
                  (unsigned)(finished - started), (unsigned)originalPriority,
                  (unsigned)priorityTx, (unsigned)priorityEnd,
                  (unsigned)sdBegin.active, (unsigned)sdEnd.active);
-        LOG_INFO("[DIAG] HJ_UART_CONTEXT start_ms=%u phase=%s effective_before=%u effective_after=%u prefix=%s",
+        LOG_DEBUG("[DIAG] HJ_UART_CONTEXT start_ms=%u phase=%s effective_before=%u effective_after=%u prefix=%s scope_base=%u guard_ok=%d",
                  (unsigned)started, SdIoDiagnostics::phaseName(sdBegin.phase),
-                 (unsigned)effectiveBefore, (unsigned)uxTaskPriorityGet(nullptr), prefix);
+                 (unsigned)effectiveBefore, (unsigned)uxTaskPriorityGet(nullptr), prefix,
+                 (unsigned)(priorityScope ? priorityScope->originalPriority() : originalPriority),
+                 protectionOk ? 1 : 0);
+        if (!protectionOk) {
+            LOG_ERROR("[DIAG] HJ_UART_BLOCK reason=priority_not_reached start_ms=%u target=%u actual_start=%u actual_end=%u written=%u",
+                      (unsigned)started, (unsigned)Hj212TxGuard::PRIORITY,
+                      (unsigned)priorityTx, (unsigned)priorityEnd, (unsigned)written);
+        }
     }
-    return written;
+    return protectionOk ? written : 0;
 }
 
-String DTUDriver::sendCommand(const char* cmd, uint32_t timeout) {
+String DTUDriver::sendCommand(const char* cmd, uint32_t timeout,
+                              Hj212PriorityScope* priorityScope, bool* commandWritten) {
+    if (commandWritten) *commandWritten = false;
     if (!_stream) return "Err: No Stream";
     while (_stream->available()) { _stream->read(); }
 
-    writeWire(reinterpret_cast<const uint8_t*>(cmd), strlen(cmd), true);
+    const size_t length = strlen(cmd);
+    if (writeWire(reinterpret_cast<const uint8_t*>(cmd), length, true, priorityScope) != length + 2U)
+        return "";
+    if (commandWritten) *commandWritten = true;
     String currentLine = "";
     uint32_t start = millis();
 
@@ -87,7 +109,7 @@ String DTUDriver::sendCommand(const char* cmd, uint32_t timeout) {
     return "";
 }
 String DTUDriver::sendData(const String& data, bool waitForResponse,
-                           uint32_t responseTimeoutMs) {
+                           uint32_t responseTimeoutMs, Hj212PriorityScope* priorityScope) {
     // Firmware 2.0.1 (2026-07-30): M100M-B2 sends one transparent frame at
     // a time. Treat 600 ms without another byte as the end of its response.
     static constexpr uint32_t M100M_B2_RESPONSE_IDLE_MS = 600;
@@ -104,7 +126,7 @@ String DTUDriver::sendData(const String& data, bool waitForResponse,
 
     const char *buf = data.c_str();
     const size_t len = data.length();
-    const size_t written = writeWire((const uint8_t *)buf, len);
+    const size_t written = writeWire((const uint8_t *)buf, len, false, priorityScope);
     _stream->flush();
 
     if (written != len) {

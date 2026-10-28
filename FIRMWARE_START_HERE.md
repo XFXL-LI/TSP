@@ -1,6 +1,6 @@
 # TSP Firmware 从这里开始
 
-最后更新：2026-10-20
+最后更新：2026-10-23
 
 本文件是当前固件源码、构建和发布入口。详细版本关系见
 [固件版本与目录说明](FIRMWARE_VERSION_LOCATIONS.md)，仓库整体说明见
@@ -17,10 +17,10 @@ AI辅助开发应同时读取：
 
 | Variant | 版本 | 正式源码 | 构建输入 | 源码指纹 |
 |---|---:|---|---:|---|
-| standard | 2.1.5 | `firmware/standard/TSP` | 104 | `A8CE98F1F83A084691BCFB2B4311B513B6FAC1844A7201AE2C9AE9AD66317F95` |
-| certified | 2.1.5.1 | `firmware/certified/TSP` | 105 | `7414A1CCDB3B84B384FAA6E75F99D9AE3038935B92B2AB5A391EAF764FCBDDA3` |
+| standard | 2.1.7 | `firmware/standard/TSP` | 104 | `2B481FE81D0ECEA02FEA1F81DA523DF422157CCC622A267113D71A2FE32D321A` |
+| certified | 2.1.7.1 | `firmware/certified/TSP` | 105 | `4894E25D48D29E62BE4D30EEDF1A393F9AEC563B3BD36926F5CB4D952F59F5B2` |
 
-两套2.1.5系列诊断源码均已编译通过，状态为
+两套2.1.7系列恢复常规流程的源码均已编译通过，状态为
 `compiled-not-hardware-verified`。实时数据固定每120秒形成一批；有空气通道因子时气泵
 固定运行70秒，其他传感器从第45秒采集，颗粒物与气体在通气60秒后且泵仍运行时采集。
 颗粒物改为一次读取四通道，小时统计改为纳入每个有效实时批次。
@@ -31,17 +31,25 @@ SD启动挂载失败后的约60秒重试；不支持运行中热拔卡。
 在内存迁移因子名并更新CRC。保留2.1.3的LED／加热行为；不改变采集周期、波特率或认证策略。
 入队不等于落盘；底层SD卡住和中断造成的UART时延仍需实机验证，多通道适配尚未实现。
 
-本版每次启动自动执行一次SD对照：`on_a`正常30分钟 → `draining`等待在途操作
-结束 → `off_b`暂停SD业务60分钟 → `on_a2`恢复30分钟 → `complete`保持正常。
-阶段切换不重启；重启会重新开始。暂停阶段覆盖历史存盘／查询、pending读写／扫描／
-删除和挂载重试，跳过项不会在恢复后补写；采集、统计、LCD实时查询和公网发送继续。
-以日志`SD_ABA_PHASE`实际时刻计时，`SD_IO_BEGIN/END`使用与`HJ_UART_TX`相同的
-MCU毫秒时钟。此诊断版会产生预期的SD历史空档，实时报文缺头问题仍未宣称解决。
+2.1.6系列修正已发生优先级继承时HJ212发送保护未达到实际优先级11的问题。
+写字节前核验实际等级，写完恢复进入前的有效等级，串口事务释放互斥锁后再恢复原基础
+等级；未达到保护等级时明确返回失败。2.1.7继续沿用此保护，完整送达仍需现场验证。
+`HJ_UART_CONTEXT`增加`guard_ok`，`HJ_PRIORITY_RESTORE`记录事务结束后的基础／有效等级。
+
+本版取消30／60／30分钟SD对照。启动输出`SD_MODE mode=normal comparison=off`，
+历史保存／查询、pending和挂载重试持续按原业务规则执行，不再人为跳过一小时。
+`SdIoDiagnostics`只统计操作在途数，不执行定时阻断；旧诊断版已经跳过的历史不补写。
+
+默认`LOG_LEVEL_INFO`，保留`COLLECT`、`TX_RESULT`、`STORE`和待传结果及告警；LED逐帧、
+JSON正常回显、采集阶段和正常复读详情不再默认输出。`HJ_UART_TX/CONTEXT`、
+`HJ_PRIORITY_RESTORE`及`SD_IO_BEGIN/END`改为DEBUG，保护校验继续执行。短写、保护／
+恢复失败、LED写入失败、最终无效传感器及SD读写异常保留提示；操作返回时耗时至少3秒
+记录`SD_IO_SLOW`，不强行取消SDK调用。小时／日历史读取异常和现场残帧仍未宣称解决。
 
 当前构建产物位于：
 
-- standard：`firmware_workspace/build/standard-2.1.5-sd-aba-20261020`
-- certified：`firmware_workspace/build/certified-2.1.5.1-sd-aba-20261020`
+- standard：`firmware_workspace/build/standard-2.1.7-normal-sd-20261023`
+- certified：`firmware_workspace/build/certified-2.1.7.1-normal-sd-20261023`
 
 迁移前的两个 `tmp` 历史源码副本已退出主工作树；需要追溯时使用仓库外历史归档和
 迁移安全备份。当前开发与构建只使用上表中的 `firmware/` 正式源码。
@@ -95,8 +103,10 @@ flash-verified.cmd       受保护烧录入口，必须明确授权后使用
 
 ## 当前版本文档
 
-- [当前2.1.5/2.1.5.1构建与版本记录](FIRMWARE_VERSION_LOCATIONS.md)
+- [当前2.1.7/2.1.7.1构建与版本记录](FIRMWARE_VERSION_LOCATIONS.md)
 - [LCD/远程端开关配置协议](docs/protocols/lcd/LCD_SWITCH_CONFIG_PROTOCOL.md)
+- [Firmware 2.1.7 变更记录](docs/changelog/CHANGELOG_2.1.7.md)
+- [Firmware 2.1.7.1 变更记录](docs/changelog/CHANGELOG_2.1.7.1.md)
 - [Firmware 2.1.0 变更记录](docs/changelog/CHANGELOG_2.1.0.md)
 - [Firmware 2.1.0.1 变更记录](docs/changelog/CHANGELOG_2.1.0.1.md)
 - [Firmware 2.0.23 变更记录](docs/changelog/CHANGELOG_2.0.23.md)

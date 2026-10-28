@@ -1,6 +1,6 @@
 # TSP 固件版本与目录说明
 
-最后更新：2026-10-20
+最后更新：2026-10-23
 
 本文件用于区分“正式实机验证固件”“对应的可编译源码”和“当前开发源码”。
 不要只根据目录名或 `TSP.ino` 文件名判断版本。
@@ -9,8 +9,8 @@
 
 | Variant | 版本 | 当前正式源码 | 构建输入 | 源码指纹 |
 |---|---:|---|---:|---|
-| standard | 2.1.5 | `firmware/standard/TSP` | 104 | `A8CE98F1F83A084691BCFB2B4311B513B6FAC1844A7201AE2C9AE9AD66317F95` |
-| certified | 2.1.5.1 | `firmware/certified/TSP` | 105 | `7414A1CCDB3B84B384FAA6E75F99D9AE3038935B92B2AB5A391EAF764FCBDDA3` |
+| standard | 2.1.7 | `firmware/standard/TSP` | 104 | `2B481FE81D0ECEA02FEA1F81DA523DF422157CCC622A267113D71A2FE32D321A` |
+| certified | 2.1.7.1 | `firmware/certified/TSP` | 105 | `4894E25D48D29E62BE4D30EEDF1A393F9AEC563B3BD36926F5CB4D952F59F5B2` |
 
 当前构建入口为 `firmware_workspace/build-standard.cmd`、
 `firmware_workspace/build-certified.cmd`和兼容standard的
@@ -23,7 +23,7 @@
 
 该结论不是bit-identical；新旧BIN的差异已由编译时间及其派生镜像元数据完整解释。
 
-当前2.1.5/2.1.5.1诊断版已编译通过，均为 `compiled-not-hardware-verified`；
+当前2.1.7/2.1.7.1恢复常规流程的版本已编译通过，均为 `compiled-not-hardware-verified`；
 实验版不随本次更新。新构建不覆盖已有INFO测试目录，也未生成新的正式Release。
 
 当前最新已发布的2026-09-07正式Release分别为：
@@ -772,6 +772,8 @@ SHT30和风扇独立继续运行。
 
 ## Firmware 2.1.4／2.1.4.1：上一版测试基线
 
+逐版本记录：[standard 2.1.4](docs/changelog/CHANGELOG_2.1.4.md)、[certified 2.1.4.1](docs/changelog/CHANGELOG_2.1.4.1.md)。
+
 | 项目 | standard 2.1.4 | certified 2.1.4.1 |
 |---|---|---|
 | 编译时间（UTC+8） | 2026-10-20T11:02:09+08:00 | 2026-10-20T11:03:45+08:00 |
@@ -800,7 +802,9 @@ HJ212软件串口仅在同步写字节期间临时提高任务优先级，随后
 本地应用BIN可用于后续明确授权的OTA测试；尚未生成正式Release、尚未实机验证。
 先做Flag=4单地址两小时接收对照，再做跨午夜24小时验证，同时保存MCU日志和原始TCP。
 
-## Firmware 2.1.5／2.1.5.1：当前SD对照诊断源码
+## Firmware 2.1.5／2.1.5.1：上一版SD对照诊断基线
+
+逐版本记录：[standard 2.1.5](docs/changelog/CHANGELOG_2.1.5.md)、[certified 2.1.5.1](docs/changelog/CHANGELOG_2.1.5.1.md)。
 
 | 项目 | standard 2.1.5 | certified 2.1.5.1 |
 |---|---|---|
@@ -841,6 +845,66 @@ pending写入／重建／扫描／读取／删除及挂载重试。跳过的新�
 
 后续测试保持Flag=4、9600、单地址，连续收集至少一个完整对照周期的MCU日志、
 原始TCP和有效报文导出，按每个采集批次核对长度、CRC及缺头数量，分别统计各阶段。
+
+## Firmware 2.1.6／2.1.6.1：上一版继承优先级修正诊断基线
+
+逐版本记录：[standard 2.1.6](docs/changelog/CHANGELOG_2.1.6.md)、[certified 2.1.6.1](docs/changelog/CHANGELOG_2.1.6.1.md)。
+
+| 项目 | standard 2.1.6 | certified 2.1.6.1 |
+|---|---|---|
+| 编译时间（UTC+8） | 2026-10-21T11:19:36+08:00 | 2026-10-21T11:21:13+08:00 |
+| 构建输入 | 104 | 105 |
+| 应用BIN字节 | 700256 | 700720 |
+| 应用BIN SHA-256 | `63ED46B30810AF4EAE5B2140CED298324B71DB1447E0EABABBF5D491359F7DC3` | `1830831FED7F9EDFFFA54080FA6E0A549FD102CBF244CE1B4D7F2CCC59FF1615` |
+| 构建目录 | `firmware_workspace/build/standard-2.1.6-hj-priority-20261021` | `firmware_workspace/build/certified-2.1.6.1-hj-priority-20261021` |
+| 全局静态RAM | 28080字节 | 28080字节 |
+| 状态 | `compiled-not-hardware-verified` | `compiled-not-hardware-verified` |
+
+2.1.5.1现场对照暴露基础优先级8／实际继承9时，原保护只改变基础值，实际发送仍为9。
+本版对已有继承先对齐基础／有效等级，再提升并测量实际等级；写完恢复进入前的有效
+等级，事务释放串口锁后恢复原基础等级。保护状态只使用调用栈，不新增任务或堆缓存。
+写前未达到至少11则不写GPIO并返回失败，写后检查不足也不记为发送成功。
+既有重试／pending策略处理失败；ACK等待不保留临时11。SAVE写入失败能向调用方返回失败，
+但不把DTU保存后重启无回复当作未写入。远程硬件UART及命令格式保持兼容。
+
+新增`HJ_UART_CONTEXT scope_base/guard_ok`、`HJ_UART_BLOCK`和事务后的
+`HJ_PRIORITY_RESTORE`。两版19组控制、气体／SD／get_data及当前源码上传回归通过；
+修正测试模型后旧代码先出现实际优先级断言失败，修正代码再通过。新增场景涵盖日志＋
+串口锁继承、并发变化时拒写、较高原等级、短写／重试、ACK超时／成功、忙／补传让路、
+SET＋SAVE及CSQ／时间查询；不代替实际GPIO和服务器接收验收。
+
+保留2.1.5的每次启动30／60／30分钟SD对照及历史空档约束。现场保持Flag=4、9600、
+单地址，先记录完整对照周期，再在SD持续正常时跑24小时。检查实际发送等级至少11、
+`guard_ok=1`、事务后基础等级恢复；最终按MCU批次与服务器长度／CRC有效报文逐条验收。
+本版不宣称已解决全部缺失，尚未自动提交、发布或烧录；2.1.5基线`b730de2`已推送GitHub。
+
+## Firmware 2.1.7／2.1.7.1：当前持续正常存卡版本
+
+逐版本记录：[standard 2.1.7](docs/changelog/CHANGELOG_2.1.7.md)、[certified 2.1.7.1](docs/changelog/CHANGELOG_2.1.7.1.md)。
+
+| 项目 | standard 2.1.7 | certified 2.1.7.1 |
+|---|---|---|
+| 编译时间（UTC+8） | 2026-10-23T13:47:46+08:00 | 2026-10-23T13:49:32+08:00 |
+| 构建输入 | 104 | 105 |
+| 应用BIN字节 | 699840 | 700320 |
+| 应用BIN SHA-256 | `599916983160494B06D5F9F8A9C5B55DAD038D6FEDABAB4819336E6C3C6EA55A` | `01A2F182528ABE524F3806C1E0AA38218472F5266D6E8C83FB3EA9549CC01F98` |
+| 构建目录 | `firmware_workspace/build/standard-2.1.7-normal-sd-20261023` | `firmware_workspace/build/certified-2.1.7.1-normal-sd-20261023` |
+| 全局静态RAM | 28072字节 | 28072字节 |
+| 状态 | `compiled-not-hardware-verified` | `compiled-not-hardware-verified` |
+
+取消30／60／30分钟SD自动对照，历史和pending读写、查询、扫描及挂载重试持续正常
+执行；启动记录`SD_MODE mode=normal comparison=off`。旧诊断阶段跳过的历史不补写。
+保留2.1.6实际优先级保护和有界异步待存，原Flag配置、9600波特率、120秒采集、70秒
+气泵及认证气体策略不变。
+
+默认INFO，正常LED、气体查询、JSON回显、UART／SD详细过程留在DEBUG；采集、
+MCU发送、存储和待传结果以及故障保留。SD操作返回时，耗时至少3秒记录慢操作告警，
+不强制取消SDK。两版主机回归及编译通过；模拟48小时不是实机验收。
+现场残帧和小时／日历史读取异常尚未修复，不能以日志减少宣称完整送达或落盘可靠。
+
+识别副本为`TSP-standard-2.1.7-normal-SD.bin`和`TSP-certified-2.1.7.1-normal-SD.bin`，
+与各自同目录的`TSP.ino.bin`一致，仅供明确授权后的应用OTA使用；旧构建和正式Release
+均保留。本次未提交、推送、发布、烧录、擦除或操作设备FFat。
 
 ## 使用规则
 

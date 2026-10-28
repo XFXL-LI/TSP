@@ -45,9 +45,9 @@ using portMUX_TYPE = std::mutex;
 #define taskEXIT_CRITICAL(x) (x)->unlock()
 static std::atomic<uint32_t> taskNow{0};
 namespace SdIoDiagnostics {
-static bool testBlocked = false;
+static State testSdState;
 static unsigned testSkips = 0;
-bool blocked() { return testBlocked; }
+bool blocked() { return testSdState.blocked(); }
 void noteSkip(Skip) { ++testSkips; }
 }
 static std::atomic<int> pins[64];
@@ -258,13 +258,12 @@ static void testStorageBackpressure() {
     assert(bus.droppedMessages.load() == 2);
     pass("stalled SD queue preserves owned work, releases rejected references and never blocks live delivery");
     storage.items.clear(); upload.items.clear();
-    SdIoDiagnostics::testBlocked = true;
+    SdIoDiagnostics::testSdState.begin(0);
     bus.publish(EventID::PROCESSED_DATA_COLLECTED, &packet);
-    SdIoDiagnostics::testBlocked = false;
-    assert(packet.released == 2 && storage.items.empty());
+    assert(packet.released == 1 && storage.items.size() == 1);
     assert(upload.items.size() == 1 && upload.items.front().data == &packet);
-    assert(SdIoDiagnostics::testSkips == 1 && bus.droppedMessages.load() == 2);
-    pass("SD diagnostic pause rejects history admission without retaining maps or dropping live delivery");
+    assert(SdIoDiagnostics::testSkips == 0 && bus.droppedMessages.load() == 2);
+    pass("normal SD admits history and live delivery without diagnostic-pause drops");
 }
 static void testHeating() {
     auto &heat = TempManager::getInstance();

@@ -107,14 +107,14 @@ bool readStatusAndConcentration(modbus_manager &manager, uint8_t slave,
 
     const uint16_t firstStatus = values[0];
     const uint16_t firstConcentration = values[1];
-    LOG_INFO("[DIAG] GAS_STATUS_RECHECK id=%s slave=%u first_status=0x%04X first_raw=%u wait_ms=%u",
+    LOG_DEBUG("[DIAG] GAS_STATUS_RECHECK id=%s slave=%u first_status=0x%04X first_raw=%u wait_ms=%u",
              sensorId != nullptr ? sensorId : "unknown", (unsigned)slave,
              firstStatus, firstConcentration,
              (unsigned)MIN_QUERY_INTERVAL_MS);
 
     for (uint8_t readIndex = 2; readIndex <= MAX_STATUS_READS; ++readIndex) {
         if (!gasReadFits(deadline, responseTimeoutMs)) {
-            LOG_INFO("[DIAG] GAS_STATUS_RECHECK_SKIPPED id=%s slave=%u read_index=%u reason=deadline",
+            LOG_DEBUG("[DIAG] GAS_STATUS_RECHECK_SKIPPED id=%s slave=%u read_index=%u reason=deadline",
                      sensorId != nullptr ? sensorId : "unknown",
                      (unsigned)slave, (unsigned)readIndex);
             break;
@@ -129,15 +129,20 @@ bool readStatusAndConcentration(modbus_manager &manager, uint8_t slave,
         const bool ready = recheckOk &&
             (recheck[0] & GasUnitConverter::STATUS_READY) != 0U;
         if (readIndex == 2) {
-            LOG_INFO("[DIAG] GAS_STATUS_RECHECK_RESULT id=%s slave=%u second_ok=%d second_status=0x%04X second_raw=%u recovered_ready=%d",
+            LOG_DEBUG("[DIAG] GAS_STATUS_RECHECK_RESULT id=%s slave=%u second_ok=%d second_status=0x%04X second_raw=%u recovered_ready=%d",
                      sensorId != nullptr ? sensorId : "unknown", (unsigned)slave,
                      recheckOk ? 1 : 0, recheck[0], recheck[1], ready ? 1 : 0);
         } else {
-            LOG_INFO("[DIAG] GAS_STATUS_THIRD_READ_RESULT id=%s slave=%u third_ok=%d third_status=0x%04X third_raw=%u recovered_ready=%d",
+            LOG_DEBUG("[DIAG] GAS_STATUS_THIRD_READ_RESULT id=%s slave=%u third_ok=%d third_status=0x%04X third_raw=%u recovered_ready=%d",
                      sensorId != nullptr ? sensorId : "unknown", (unsigned)slave,
                      recheckOk ? 1 : 0, recheck[0], recheck[1], ready ? 1 : 0);
         }
         if (ready) break;
+    }
+    if ((values[0] & GasUnitConverter::STATUS_READY) == 0U) {
+        LOG_WARNING("[DIAG] GAS_NOT_READY id=%s slave=%u status=0x%04X raw=%u",
+                    sensorId != nullptr ? sensorId : "unknown", (unsigned)slave,
+                    values[0], values[1]);
     }
     return true;
 }

@@ -20,8 +20,8 @@ a delay. Runtime work is performed by FreeRTOS tasks and event queues.
 
 | Variant | Canonical source | Version | Build inputs | Source fingerprint |
 | --- | --- | ---: | ---: | --- |
-| standard | `firmware/standard/TSP` | 2.1.5 | 104 | `A8CE98F1F83A084691BCFB2B4311B513B6FAC1844A7201AE2C9AE9AD66317F95` |
-| certified | `firmware/certified/TSP` | 2.1.5.1 | 105 | `7414A1CCDB3B84B384FAA6E75F99D9AE3038935B92B2AB5A391EAF764FCBDDA3` |
+| standard | `firmware/standard/TSP` | 2.1.7 | 104 | `2B481FE81D0ECEA02FEA1F81DA523DF422157CCC622A267113D71A2FE32D321A` |
+| certified | `firmware/certified/TSP` | 2.1.7.1 | 105 | `4894E25D48D29E62BE4D30EEDF1A393F9AEC563B3BD36926F5CB4D952F59F5B2` |
 
 The certified variant adds `GasSpecificPolicy.h` and applies a 500 ppb upper
 cap to O3, NO2, and SO2. CO is not capped. Its certified calibration profile is
@@ -30,7 +30,7 @@ and SO2 250 ppb. Common changes must be evaluated for both variants; this
 certified policy must not leak into standard.
 
 The earlier migration baseline passed verification with only expected
-nondeterministic build metadata differences. Current diagnostic 2.1.5/2.1.5.1 builds
+nondeterministic build metadata differences. Current normal-SD 2.1.7/2.1.7.1 builds
 compiled successfully; neither result is hardware verification. The experimental
 laboratory source is separate and is not updated with this baseline.
 
@@ -271,30 +271,28 @@ Overload/allocation failure is explicit and bounded; RAM admission is not durabl
 No new task is created. These limits cannot interrupt a blocked SD SDK call;
 pending scans/reads/deletes still perform synchronous I/O during idle recovery.
 
-The 2.1.5/2.1.5.1 diagnostic baseline adds `SdIoDiagnostics` with fixed-size
-state and no new task/queue. Each boot starts one on_a (30 min), draining,
-off_b (60 min), on_a2 (30 min), complete sequence. off_b starts only after
-all admitted SD operations leave; a stuck SDK call keeps draining visible rather
-than falsely claiming a quiet phase. complete keeps normal I/O indefinitely;
-reboot resets the diagnostic, with no persisted control or LCD/remote command.
+Versions 2.1.5 through 2.1.6 included a per-boot 30/60/30-minute SD
+comparison. Its deliberate quiet hour skipped local history/pending durability;
+those past gaps are not backfilled by a later upgrade.
 
-Top-level FAT operations enter the diagnostic after the SD mutex. Raw SD
-read/write and mount have equivalent admission; mkdir/verify/cleanup helpers
-share their caller's admission. Blocked history events release only storage's
-owned reference at publish; pending admission is rejected and queued RAM jobs
-are released explicitly as unprotected. Disk pending files are untouched during
-the pause, recovery is deferred, mount retries skip, and history queries reply
-through the existing NG path. There is no pause-period backlog or raw-history
-backfill. Collection/statistics/transmission continue, so newly closed aggregate
-windows after resumption may include measurements taken in off_b.
+From 2.1.7/2.1.7.1, `SdIoDiagnostics` is passive accounting only. Startup moves
+Idle to Normal and reports `SD_MODE mode=normal comparison=off`; no elapsed-time
+transition blocks history, pending, query or mount admission. Existing admission
+callers remain compatible, with `blocked()` always false. Filesystem mutexes,
+OTA business exclusion, capacity limits and mount-failure retry remain active.
 
-`SD_IO_BEGIN/END` record the admitted logical operation scope, not individual
-hardware transactions. Phase and skip markers use monotonic MCU milliseconds.
-UART logs now measure actual effective priority at both wire boundaries and
-SD active counts, with a separate phase/first-eight-byte hex context; they are
-printed after transmission. Prior 2.1.4 priority_tx logs were target values.
-This diagnostic intentionally creates a local-history gap and is not a proven
-fix for prefix loss. No SD unmount/format or FFat configuration change is added.
+Normal SD operation begin/end details are DEBUG. `SD_IO_SLOW` warns after an
+operation returns if its logical scope took at least 3000 ms; it is not a hard
+SDK timeout and cannot cancel a stuck call. Failed storage/query warnings remain.
+
+Runtime logging defaults to INFO. Normal LED frames, gas query/recheck details,
+JSON echo, object release, processing stages and UART protection details remain
+available at DEBUG. `COLLECT`, `TX_RESULT`, `STORE`, pending queued-versus-durable
+results, startup/configuration and fault records remain visible. Priority/short-
+write/restoration failures, invalid final sensor status and failed LED writes
+retain explicit warning/error records. No logging queue/task or persisted
+logging switch is added. Collection cadence, wire protocols and LED timing stay
+unchanged; quieter logs do not establish complete remote receipt.
 
 ## HJ212 Upload Flow
 
@@ -315,14 +313,31 @@ Important compatibility settings:
 - acknowledgement checks include command, framing/CRC, QN/MN, and response
   result as required by the selected mode.
 
-Only the synchronous HJ212 software-UART `Stream::write` window temporarily
-raises the caller's base priority to at least 11 (above storage 9 and processing
-10 on core 0), restoring its original base priority afterward even if inherited
-priority was active. Interrupts remain enabled. Flush, ACK waits, retries, gaps,
-logging and SD operations are outside the boost. HJ212 config/CSQ writes use the
-same guard; Remote hardware UART does not. `HJ_UART_TX` records actual byte-write
-start/end and elapsed times. This mitigates task preemption; it is not proof of
-correct GPIO timing under all interrupt load.
+Only the synchronous HJ212 software-UART `Stream::write` window requests an
+actual effective priority of at least 11 (above storage 9 and processing 10 on
+core 0), with interrupts enabled. In 2.1.6, an already inherited effective
+priority is first used to align the base before raising it. The wire guard
+restores the entry effective floor after writing, while a caller-owned
+`Hj212PriorityScope` restores the original base after serial unlock. All HJ212
+manager transactions, including maintenance and commands, supply that scope.
+The scopes hold fixed-size stack state, not shared mutable driver state.
+
+Actual priority is checked before/after writing. An insufficient level returns
+failure (and writes no GPIO bytes when caught before transmission); the existing
+retry/pending policy handles failure. A direct driver call without the post-
+unlock scope refuses sub-target inherited priority. Flush, ACK waits, retries,
+logging and SD I/O do not retain the temporary priority-11 boost. A pre-existing
+inherited floor or higher priority may remain until the transaction unlocks.
+Remote hardware UART bypasses the protection. Command writes now report complete
+wire submission independently of replies, so an unwritten SAVE cannot report
+configuration success while a reboot-without-reply keeps its existing behavior.
+
+`HJ_UART_TX` measures wire start/end priority and time; `HJ_UART_CONTEXT` adds
+`scope_base`/`guard_ok`, `HJ_UART_BLOCK` reports an insufficient level, and
+`HJ_PRIORITY_RESTORE` records original/read-back base and effective priority
+after packet unlock. These normal details are DEBUG from 2.1.7; protection
+checks still run and failures remain ERROR. This mitigates task preemption, without proving correct
+GPIO timing under every interrupt load or valid remote receipt.
 
 Flag=4 still sends CN=2011 but skips ACK waiting. A successful UART write does
 not prove server receipt and cannot detect the observed truncated/garbled frames.
@@ -453,14 +468,19 @@ Both packages remain `packaged-not-hardware-verified`. A Git tag identifies
 the canonical repository state after migration; binary provenance is defined by
 the committed release metadata and recorded source fingerprint.
 
-The 2.1.5 standard and 2.1.5.1 certified diagnostic builds compile successfully
+The 2.1.7 standard and 2.1.7.1 certified normal-SD builds compile successfully
 but are not yet packaged or hardware verified. Outputs are under
-`firmware_workspace/build/standard-2.1.5-sd-aba-20261020` and
-`firmware_workspace/build/certified-2.1.5.1-sd-aba-20261020`. Both pass 19
-control groups, gas/SD/get_data regressions, and actual-source upload/SD-phase
-tests (`tools/tests/Run-FirmwareUploadTests.ps1`). Static RAM is 28080 bytes
-each (48 more than 2.1.4); existing pending jobs still use at most 2048 packet
-bytes plus metadata on heap. No new task or queue was added for diagnostics.
+`firmware_workspace/build/standard-2.1.7-normal-sd-20261023` and
+`firmware_workspace/build/certified-2.1.7.1-normal-sd-20261023`. Both pass 19 control groups,
+gas/SD/get_data regressions, and actual-source upload/normal-SD/manager tests
+(`tools/tests/Run-FirmwareUploadTests.ps1`). Continuous admission tests cross
+former pause boundaries, simulated 48-hour uptime and clock wrap; they do not
+establish target-device history readability or remote receipt.
+The priority model still follows ESP-IDF 5.5.2 base/effective behavior, including
+retained inheritance across log/serial mutexes, refusal and post-unlock restore.
+Static RAM is 28072 bytes each, 8 less than 2.1.6. Existing pending jobs still
+use at most 2048 packet bytes plus metadata on heap. No task, queue or heap
+buffer was added.
 Historical LED-gap/atmospheric-pressure builds and published packages remain.
 Use recorded fingerprints to identify exact source/binary baselines.
 
@@ -472,7 +492,7 @@ Use recorded fingerprints to identify exact source/binary baselines.
 - Keep the default HJ212 ACK timeout at 5000 ms and retry count at 3 unless
   explicitly requested.
 - Keep SHT30 independent.
-- Keep DEBUG enabled.
+- Default runtime logs to INFO; retain optional DEBUG detail and visible faults.
 - Do not globally rename internal `w34011` or `L90` identifiers.
 - Maintain standard and certified as separate variants.
 - Synchronize public fixes while keeping certified gas caps certified-only.

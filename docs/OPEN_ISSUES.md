@@ -74,7 +74,7 @@ Description:
 
 The latest published 2.0.22 standard and 2.0.22.1 certified releases are
 packaged and file-level verified, but neither is recorded as hardware verified.
-The current 2.1.5 and 2.1.5.1 diagnostic source builds are compiled but not yet packaged
+The current 2.1.7 and 2.1.7.1 normal-SD source builds are compiled but not yet packaged
 or hardware verified.
 
 Evidence:
@@ -613,17 +613,56 @@ issue to SD concurrency and ineffective scheduling protection, without proving
 that every transport failure has the same cause. The longer overnight window
 also has two unmatched batches reporting priority 11.
 
-The current host priority double updates effective priority as max(new base,
-inherited), unlike ESP-IDF 5.5.2 when inheritance is already active, and the
-mock stream checks base rather than effective priority. Passing those tests
-does not qualify the current guard. Correct the model/assertions and review
-priority changes with serial/log mutex ownership before the next firmware fix.
-A blocked SDK call cannot be cancelled and must not be labelled off_b until it
-actually returns. Confirm the expected SD on/off/on markers and zero admitted
-operations in off_b before comparing server-valid realtime counts.
+The 2.1.5 host priority double used max(new base, inherited), unlike ESP-IDF
+5.5.2, and the mock stream checked base instead of effective priority. Those
+passing tests did not qualify its guard. Version 2.1.6 corrects that model and
+asserts effective priority in actual driver/manager source tests; the corrected
+model first reproduced the old failure before the production fix.
 
-Validate Flag=4 with one destination at 9600: first two hours, then 24 hours
-including midnight, matching each MCU batch to raw TCP and CRC-valid frames.
-Include storage-failure/slow-card cases and check new HJ_UART_TX and
-PENDING_STORE diagnostics. Keep 120-second batches and the 70-second pump
-schedule. Multi-channel configuration and baud-rate changes are deferred.
+Versions 2.1.6/2.1.6.1 align inherited base/effective priority before boosting,
+restore the entry floor after writing and the original base after serial unlock,
+and refuse writes when the actual protection level is insufficient. Both builds
+and host regressions pass, including concurrent-inheritance refusal, partial
+writes, retries, ACK waits, configuration SAVE and maintenance.
+
+Two certified 2.1.6.1 Flag=4 runs matched 687/694 and 473/476 valid realtime
+frames; the latter also matched 93/95 minute frames. Residual corruption and
+unmatched records remain. All five realtime/minute anomalies in the latter run
+reported priority 11 with no recorded SD-operation overlap. This is partial
+field evidence of improvement, not proof of a single root cause or full standard/
+certified qualification. See the per-version changelog for window boundaries.
+
+Version 2.1.7 removes the per-boot SD comparison and restores continuous business
+admission while retaining the priority fix. INFO keeps batch/send/store and
+fault results; UART context and normal SD operation scopes are DEBUG. Tests
+cover continuous store/pending/query paths across former pause boundaries,
+48-hour simulated uptime and clock wrap. Quieter logging and restored admission
+have not yet completed a new target-device acceptance run.
+
+Validate Flag=4 with one destination at 9600 and normal SD across midnight,
+matching each MCU batch to raw TCP and CRC-valid frames. Check the startup
+SD_MODE normal marker, COLLECT/TX_RESULT/STORE and pending/fault records. Raw
+exports must cover the requested window; the recent export stopped at 2000
+records. Include storage-failure/slow-card cases. Keep 120-second batches and
+the 70-second pump schedule; multi-channel and baud changes remain deferred.
+
+## Newly saved hour/day history fails record validation
+
+Status: Confirmed; unresolved
+
+Priority: High
+
+Area: SD history persistence and record decoding
+
+The certified 2.1.6.1 run spanning 2026-10-22/23 reported successful writes for
+15 new hourly files and one daily file, then rejected queries for those same
+paths with an empty sensor ID. These writes occurred after the deliberate SD
+pause ended. Write-success logs therefore do not establish readable history.
+The failure is not proven to share the pending first-sector-zero root cause.
+
+Version 2.1.7 restores continuous SD admission but does not change the record
+format, serialization or validation and does not fix this issue. Preserve the
+failed files and compare written/read-back bytes, record layout and decoding
+under the same firmware; do not infer card damage or successful recovery merely
+from STORE ok=1. No device files are to be removed or reformatted as part of the
+normal-SD/logging change.
