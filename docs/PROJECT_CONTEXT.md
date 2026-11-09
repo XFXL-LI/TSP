@@ -20,8 +20,8 @@ a delay. Runtime work is performed by FreeRTOS tasks and event queues.
 
 | Variant | Canonical source | Version | Build inputs | Source fingerprint |
 | --- | --- | ---: | ---: | --- |
-| standard | `firmware/standard/TSP` | 2.1.7 | 104 | `2B481FE81D0ECEA02FEA1F81DA523DF422157CCC622A267113D71A2FE32D321A` |
-| certified | `firmware/certified/TSP` | 2.1.7.1 | 105 | `4894E25D48D29E62BE4D30EEDF1A393F9AEC563B3BD36926F5CB4D952F59F5B2` |
+| standard | `firmware/standard/TSP` | 2.2.0 | 105 | `F046593515B11BE61F41E732823169926DE0F570C17D00A0E0425EA8812F4DB7` |
+| certified | `firmware/certified/TSP` | 2.2.0.1 | 106 | `D294527487D25BFFAF12CA96A2FE1B219CFEAE9D1509D3E7358707B98198D6D3` |
 
 The certified variant adds `GasSpecificPolicy.h` and applies a 500 ppb upper
 cap to O3, NO2, and SO2. CO is not capped. Its certified calibration profile is
@@ -30,7 +30,7 @@ and SO2 250 ppb. Common changes must be evaluated for both variants; this
 certified policy must not leak into standard.
 
 The earlier migration baseline passed verification with only expected
-nondeterministic build metadata differences. Current normal-SD 2.1.7/2.1.7.1 builds
+nondeterministic build metadata differences. Current TVOC 2.2.0/2.2.0.1 builds
 compiled successfully; neither result is hardware verification. The experimental
 laboratory source is separate and is not updated with this baseline.
 
@@ -527,3 +527,32 @@ Use recorded fingerprints to identify exact source/binary baselines.
 
 When a statement here conflicts with current code, trust the current code and
 update this document after verification.
+
+## TVOC daily measurement mode (2.2.0 / 2.2.0.1)
+
+TVOC is an exclusive single-factor profile on the existing RS485 port, slave 3,
+9600/8N1. The canonical ID is a99054; a24035 is only an input alias in config/live
+queries. Old SD/pending values are not relabeled or reinterpreted as new ppb.
+The read-only adapter verifies TVOC_PID20 1.2.0, then reads 5/6 before 272..275.
+It never applies the old ADC curve or K7S calibration commands. TVOC mode rejects
+gas_calibration and legacy calibration.
+
+The existing task retains its 120-second period and independent 70-second pump
+cutoff. Only TVOC samples every five seconds in the provisional 10..70-second
+window (12 slots); the ten-second flush needs real-gas validation. Missed slots
+are not replayed. Any positive valid count permits averaging, including zero;
+invalid/uncalibrated/busy samples are excluded. Valid isolated peaks are kept.
+Above-range values retain T status and bypass certified four-gas limits.
+
+Exactly one averaged RAW_DATA_COLLECTED event feeds the existing LCD cache, SD,
+HJ212 and statistics paths per cycle. There is no fast display, per-point SD
+write, push protocol, new task or sampling queue. Air-station staging is unchanged.
+Optional ds.tvoc exposes planned/valid counts, last-slot flags and batch status;
+INFO batch and DEBUG point logs provide evidence. SD layout does not persist
+these diagnostics or full status flags.
+
+Internal/new stored values are ppb. Four configured units are supported. TVOC
+mass units are explicitly isobutylene equivalent at 25 C/101.325 kPa, M=56.1063,
+with ideal-gas volume (about 2.29329 ug/m3 per ppb), not an unknown mixture's mass
+sum. Platform unit requirements remain deployment-specific. See
+[TVOC contract](protocols/TVOC_DAILY_READ_PROTOCOL.md).

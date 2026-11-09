@@ -2,7 +2,7 @@
 
 本项目是基于 ESP32-S3 的空气微站/TSP 环境监测终端固件，用于采集颗粒物、气态污染物、气象和噪声数据，并通过 HJ 212 协议上传到监控平台。项目同时提供本地显示、历史存储、断点续传、远程配置、传感器标定、告警和 OTA 升级等功能。
 
-当前开发源码：standard `2.1.7`，certified `2.1.7.1`；恢复SD持续正常业务，默认INFO日志。
+当前开发源码：standard `2.2.0`，certified `2.2.0.1`；新增TVOC日常读取与周期平均，保留空气微站和常规SD流程。
 
 正式源码分别位于 `firmware/standard/TSP` 和 `firmware/certified/TSP`。2.1.0系列将
 实时批次固定为120秒、气泵固定运行70秒，并在通气60秒后于泵运行期间读取颗粒物和
@@ -322,8 +322,8 @@ python tools/export_sd_history_to_excel.py D:\sdcard_backup -o output\history_ra
 
 ```text
 firmware/
-├─ standard/TSP/                   Firmware 2.1.7通用源码
-└─ certified/TSP/                  Firmware 2.1.7.1认证源码
+├─ standard/TSP/                   Firmware 2.2.0通用源码
+└─ certified/TSP/                  Firmware 2.2.0.1认证源码
 
 firmware_workspace/
 ├─ build/                          可再生构建产物
@@ -373,3 +373,15 @@ tools/                             导出、诊断和厂商工具资料
 ## 项目状态
 
 项目处于持续维护和现场验证阶段。生产烧录、校准和平台参数变更应保留版本、设备 SN、操作人、日期及复测记录。
+
+## TVOC 2.2.0 / 2.2.0.1
+
+TVOC以a99054单因子互斥运行，读TVOC_PID20 v1.2.0的ppb浓度和状态。
+保持120秒周期及70秒开泵/50秒休息；候选10～70秒窗口每5秒采样，共12槽。
+有有效点即计算均值并提供数量；LCD、保存和上传均使用批次均值，
+分钟/小时/天沿用原数值统计。前10秒通气仍待标定联调确认，孤立高值不自动删除。
+质量单位按异丁烯当量、25℃、101.325kPa；默认ppb，支持ppm/ug/m3/mg/m3。
+空气微站流程、底板MCU、SD布局及认证四气体策略保持原样。
+两版主机回归与ESP32编译通过，静态RAM均为28120字节，状态为
+compiled-not-hardware-verified；没有实机烧录或验收。
+完整配置、状态及数量字段见[TVOC日常读取协议](docs/protocols/TVOC_DAILY_READ_PROTOCOL.md)。

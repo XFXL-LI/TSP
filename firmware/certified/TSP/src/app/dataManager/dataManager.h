@@ -20,8 +20,10 @@ struct StatValue {
     int count = 0;
     DataStatus invalid_status = DataStatus::SENSOR_FAULT;
     bool invalid_observed = false;
+    bool over_range_observed = false;
 
-    void update(float val) {
+    void update(float val, DataStatus status = DataStatus::NORMAL) {
+        over_range_observed = over_range_observed || status == DataStatus::OVER_RANGE;
         sum += val;
         count++;
         if (val < min_v) min_v = val;
@@ -44,6 +46,7 @@ struct StatValue {
         max_v = -1e9;
         invalid_status = DataStatus::SENSOR_FAULT;
         invalid_observed = false;
+        over_range_observed = false;
     }
 
     float getAvg() const { return count > 0 ? sum / count : 0; }
@@ -52,7 +55,7 @@ struct StatValue {
     float getCou() const { return sum; }
     DataStatus getStatus() const {
         return count > 0
-            ? DataStatus::NORMAL
+            ? (over_range_observed ? DataStatus::OVER_RANGE : DataStatus::NORMAL)
             : (invalid_observed ? invalid_status : DataStatus::SENSOR_FAULT);
     }
 };
@@ -101,6 +104,10 @@ private:
     uint64_t _l_m_s_timestamp;
     uint64_t _last_real_timestamp;
     uint32_t _last_real_seq = 0;
+    uint8_t _tvocSamples = 0;
+    uint8_t _tvocValidSamples = 0;
+    uint16_t _tvocFlags = 0;
+    char _tvocStatus = 'N';
     uint64_t _last_real_sampled_us = 0;
 
     // ʱ���¼ (��ʽ��YYYYMMDDHHMMSS)

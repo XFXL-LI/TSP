@@ -36,7 +36,7 @@ private:
 
     void _parseSystem(cJSON *node, SYSTEMCONFIG &target);
     void _parseHJ212(cJSON *node, HJ212CONFIG &target);
-    void _parseSensors(cJSON *arrayNode, COLLECTMAP &target_map);
+    bool _parseSensors(cJSON *arrayNode, COLLECTMAP &target_map);
     void _parseTempControl(cJSON *node, TEMPCONTROLCONFIG &target);
     bool _parseSwitch(cJSON *node, SYSTEMSWITCH &target);
     String getSwitchConfigJson();

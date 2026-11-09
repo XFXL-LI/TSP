@@ -240,7 +240,8 @@ bool LedManager::buildDisplayTextBySensorId(const String &sensorId, float value,
     }
     if (GasUnitConverter::isGasSensor(sensorId))
     {
-        const char *label = sensorId == "w34011" ? "O3" :
+        const char *label = GasUnitConverter::isTvocSensor(sensorId) ? "TVOC" :
+                            sensorId == "w34011" ? "O3" :
                             sensorId == "a21004" ? "NO2" :
                             sensorId == "a21005" ? "CO" : "SO2";
         const String normalizedUnit = GasUnitConverter::normalizeUnit(sensorId, unit);

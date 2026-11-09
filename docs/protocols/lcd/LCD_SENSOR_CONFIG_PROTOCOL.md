@@ -78,13 +78,13 @@
 
 | 因子 | 代码 |
 | --- | --- |
-| TVOC | `a24035` |
+| TVOC | `a99054` |
 
 ## 4. 产品版本自动判断
 
 产品版本根据最终启用因子按以下优先级计算：
 
-1. 启用 `a24035`：版本为 `tvoc`，并且启用列表只能包含 `a24035`。
+1. 启用 `a99054`：版本为 `tvoc`，并且启用列表只能包含 `a99054`。
 2. 启用任意四气体代码：版本为 `air_station`。
 3. 未启用四气体，但启用任意风速、风向、气压、温度、湿度或噪声：版本为 `dust`。
 4. 只要仍启用任意颗粒物代码：版本为 `particulate`。
@@ -167,7 +167,7 @@ LCD 收到 `code=OK` 且 `restart_required=true` 后，沿用现有安全重启�
 1. 禁止空列表。
 2. 禁止重复和未知 ID。
 3. 非 TVOC 因子同时启用数量最多为 14。
-4. `a24035` 存在时列表中不得出现其他 ID。
+4. `a99054` 存在时列表中不得出现其他 ID。
 5. 保存失败时保持原配置，不执行部分修改。
 
 ## 8. 新接口：详细参数局部查询
@@ -193,7 +193,7 @@ LCD 收到 `code=OK` 且 `restart_required=true` 后，沿用现有安全重启�
 ### 8.4 TVOC
 
 ```json
-{"operation":"get_config","config":"sensors","ids":["a24035"]}
+{"operation":"get_config","config":"sensors","ids":["a99054"]}
 ```
 
 响应只包含请求 ID 中当前已经启用的因子。例如 PM1 已关闭：
@@ -324,8 +324,16 @@ LCD 收到任何 `code=NG` 时不得重启，应保留当前页面内容并显�
    `/model.json` 仍只保存当前启用因子。
 3. 第一次建立目录时，当前已经启用的因子以设备现有配置为准，未启用因子使用内置
    默认值；以后关闭再打开时恢复目录中的值。
-4. TVOC 首次默认值为 `name=TVOC, unit=ug/m3, alarmLimit=500`。
+4. TVOC 首次默认值为 `name=TVOC, unit=ppb, alarmLimit=500`。
 5. `selection` 或 `merge` 成功后 MCU 文件已保存，但运行内存中的采集器列表要在重启
    后更新。因此 LCD 必须执行 `restart_required`，不得连续保存后跳过重启继续操作。
 6. Firmware 2.0.14 构建状态为 `compiled-not-hardware-verified`；首次联调按第 13 节
    执行并保留 MCU、LCD 和 Remote 完整日志。
+
+## Firmware 2.2.0 / 2.2.0.1 TVOC 更新
+
+TVOC 正式 ID 为 a99054，旧 a24035 仅作为输入别名；回复统一新 ID。
+默认 ppb，可选 ppm/ug/m3/mg/m3；质量单位为异丁烯当量、25℃、101.325kPa。
+LCD 仍查询批次均值，不逐点显示5秒读数，不启用主动推送。
+有效点数量可通过 with_status:true 的 ds.tvoc 读取，详见
+[TVOC 日常读取协议](../TVOC_DAILY_READ_PROTOCOL.md)。

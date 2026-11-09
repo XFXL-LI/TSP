@@ -282,11 +282,11 @@ void storePacket(AllDataPacket *allData, const String &id,
         existing->second->release();
     }
     allData->data_map[id] = packet;
-    if (packet->is_valid)
+    if (packet->is_valid && !GasUnitConverter::isTvocSensor(id))
     {
         packet->status = DataStatus::NORMAL;
     }
-    else if (reportFailure && packet->status != DataStatus::CALIBRATION)
+    else if (!packet->is_valid && reportFailure && packet->status != DataStatus::CALIBRATION)
     {
         LOG_WARNING("Invalid data collected - Sensor ID: %s, status=%c",
                     id.c_str(), dataStatusCode(packet->status));
@@ -405,7 +405,7 @@ void collectorManager::poll()
     for (BaseCollector *collector : _collectors)
     {
         if (collector == nullptr || isParticleSensor(collector->getID()) ||
-            GasUnitConverter::isGasSensor(collector->getID()))
+            GasUnitConverter::isK7sSensor(collector->getID()))
         {
             continue;
         }
@@ -425,7 +425,7 @@ void collectorManager::poll()
     collectParticleChannels(_collectors, allData, finishMs);
     for (BaseCollector *collector : _collectors)
     {
-        if (collector == nullptr || !GasUnitConverter::isGasSensor(collector->getID()))
+        if (collector == nullptr || !GasUnitConverter::isK7sSensor(collector->getID()))
         {
             continue;
         }
@@ -459,7 +459,7 @@ void collectorManager::poll()
     {
         for (auto &item : allData->data_map)
         {
-            if (!GasUnitConverter::isGasSensor(item.first)) continue;
+            if (!GasUnitConverter::isK7sSensor(item.first)) continue;
             if (item.second == nullptr)
             {
                 item.second = unavailablePacket(item.first);
@@ -486,5 +486,55 @@ void collectorManager::poll()
         EventBus::getInstance().publish(EventID::RAW_DATA_COLLECTED,
                                         (void *)allData);
     }
+    allData->release();
+}
+
+bool collectorManager::isTvocMode() const {
+    return _collectors.size() == 1 && _collectors[0] != nullptr &&
+           GasUnitConverter::isTvocSensor(_collectors[0]->getID());
+}
+void collectorManager::pollTvoc(uint32_t cycleStartedMs, bool pumpRunning) {
+    if (!isTvocMode()) return;
+    static std::atomic<uint32_t> nextTrace(1);
+    TvocPolicy::Batch batch;
+    const uint32_t finish = cycleStartedMs + TvocPolicy::PUMP_MS;
+    for (uint8_t slot = 0; slot < TvocPolicy::PLANNED_SAMPLES; ++slot) {
+        const uint32_t target = cycleStartedMs + TvocPolicy::WINDOW_START_MS +
+                                uint32_t(slot) * TvocPolicy::INTERVAL_MS;
+        waitUntil(target);
+        TvocPolicy::Sample sample;
+        if (pumpRunning && TvocPolicy::slotAvailable(millis(), cycleStartedMs, slot)) {
+            DataPacket* point = _collectors[0]->collect(
+                ReadDeadline::at(target + TvocPolicy::INTERVAL_MS));
+            if (point != nullptr) {
+                sample.ppb = point->raw_ppb;
+                sample.valid = point->is_valid;
+                sample.status = dataStatusCode(point->status);
+                sample.flags = point->module_flags;
+                point->release();
+            }
+        }
+        batch.add(sample);
+    }
+    waitUntil(finish);
+    AllDataPacket* allData = new AllDataPacket();
+    allData->trace_id = nextTrace.fetch_add(1, std::memory_order_relaxed);
+    allData->last_update = currentCollectionTimestamp();
+    DataPacket* result = new DataPacket();
+    strncpy(result->sensor_id, TvocPolicy::ID, sizeof(result->sensor_id) - 1);
+    result->value = batch.average();
+    result->is_valid = batch.valid();
+    result->status = static_cast<DataStatus>(batch.status());
+    result->sample_count = batch.count;
+    result->valid_sample_count = batch.validCount;
+    result->module_flags = batch.count ? batch.samples[batch.count - 1].flags : 0;
+    storePacket(allData, TvocPolicy::ID, result);
+    LOG_INFO("[DIAG] TVOC_BATCH trace=%u samples=%u valid=%u invalid=%u ppb=%.3f flag=%c flags=0x%04X pump=%d",
+             (unsigned)allData->trace_id, batch.count, batch.validCount,
+             unsigned(batch.count - batch.validCount), result->value,
+             batch.status(), result->module_flags, pumpRunning ? 1 : 0);
+    const int subscribers = EventBus::getInstance().getSubscriberCount(EventID::RAW_DATA_COLLECTED);
+    for (int i = 0; i < subscribers; ++i) allData->retain();
+    EventBus::getInstance().publish(EventID::RAW_DATA_COLLECTED, allData);
     allData->release();
 }

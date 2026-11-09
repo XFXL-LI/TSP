@@ -1,6 +1,7 @@
 #pragma once
 
 #include <Arduino.h>
+#include "../tvoc/TvocPolicy.h"
 
 namespace GasUnitConverter {
 
@@ -12,15 +13,22 @@ static constexpr uint16_t STATUS_ALARM_MASK = 0x000F;
 static constexpr uint16_t STATUS_FAULT_MASK =
     STATUS_HIGH_CONCENTRATION_PROTECTION | STATUS_SENSOR_FAULT | STATUS_OVER_RANGE;
 
-inline bool isGasSensor(const String &sensorId)
+inline bool isK7sSensor(const String &sensorId)
 {
     return sensorId == "w34011" || sensorId == "a05024" ||
            sensorId == "a21004" ||
            sensorId == "a21005" || sensorId == "a21026";
 }
 
+inline bool isTvocSensor(const String &sensorId) { return sensorId == TvocPolicy::ID; }
+
+inline bool isGasSensor(const String &sensorId) {
+    return isK7sSensor(sensorId) || isTvocSensor(sensorId);
+}
+
 inline const char *defaultUnit(const String &sensorId)
 {
+    if (isTvocSensor(sensorId)) return "ppb";
     return sensorId == "a21005" ? "mg/m3" : "ug/m3";
 }
 
@@ -42,6 +50,7 @@ inline String normalizeUnit(const String &sensorId, const String &unit)
 
 inline float massConcentrationFactor(const String &sensorId)
 {
+    if (isTvocSensor(sensorId)) return TvocPolicy::MASS_FACTOR;
     if (sensorId == "w34011" || sensorId == "a05024") return 1.96319f; // O3
     if (sensorId == "a21004") return 1.88180f; // NO2
     if (sensorId == "a21005") return 1.14560f; // CO

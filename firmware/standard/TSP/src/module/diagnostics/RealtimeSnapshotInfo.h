@@ -5,6 +5,10 @@ struct RealtimeSnapshotInfo {
     uint32_t seq = 0;
     int64_t ageMs = -1;
     uint16_t validMask = 0;
+    uint8_t tvocSamples = 0;
+    uint8_t tvocValidSamples = 0;
+    uint16_t tvocFlags = 0;
+    char tvocStatus = 'N';
 };
 
 constexpr uint32_t nextRealtimeSequence(uint32_t seq) {

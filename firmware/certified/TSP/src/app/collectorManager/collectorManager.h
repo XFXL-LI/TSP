@@ -42,7 +42,7 @@ private:
         {"a01001", "485"},
         {"a01002", "485"},
         {"a01006", "485"},
-        {"a24035", "485"},
+        {"a99054", "485"},
         {"L90", "485"}
     };
 
@@ -61,6 +61,8 @@ public:
     void begin(COLLECTMAP& collectMap);
     void registerCollector(BaseCollector* collector);
     void poll();
+    bool isTvocMode() const;
+    void pollTvoc(uint32_t cycleStartedMs, bool pumpRunning);
     void galpoll();
     size_t getCollectorCount() const { return _collectors.size(); }
 };

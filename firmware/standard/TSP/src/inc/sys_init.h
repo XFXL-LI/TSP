@@ -11,7 +11,7 @@
 
 //新版本
 // Firmware 2.1.2: bounded gas status rechecks and startup SD mount recovery.
-#define VERSION2 "2.1.7"
+#define VERSION2 "2.2.0"
 
 struct SYSINFO {
     int csq;
@@ -60,6 +60,10 @@ struct DataPacket {
     float value;
     bool is_valid;
     DataStatus status;
+    uint8_t sample_count = 0;
+    uint8_t valid_sample_count = 0;
+    uint16_t module_flags = 0;
+    uint32_t raw_ppb = 0;
     std::atomic<int> refCount;
     DataPacket()
         : value(0.0f), is_valid(false),

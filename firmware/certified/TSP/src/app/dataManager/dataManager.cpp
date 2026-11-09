@@ -76,9 +76,18 @@ bool DataManager::readLatestValues(const char* const* ids, size_t idCount,
         sample->ageMs = realtimeAgeMs(_last_real_seq, _last_real_sampled_us,
                                      static_cast<uint64_t>(esp_timer_get_time()));
         sample->validMask = 0;
+        sample->tvocSamples = sample->tvocValidSamples = 0;
+        sample->tvocFlags = 0;
+        sample->tvocStatus = 'N';
     }
     for (size_t i = 0; i < idCount; ++i) {
         if (ids[i] == nullptr) continue;
+        if (sample != nullptr && strcmp(ids[i], "a99054") == 0) {
+            sample->tvocSamples = _tvocSamples;
+            sample->tvocValidSamples = _tvocValidSamples;
+            sample->tvocFlags = _tvocFlags;
+            sample->tvocStatus = _tvocStatus;
+        }
         for (const auto& item : _last_real_snapshot) {
             if (item.first.equals(ids[i])) {
                 if (item.second.is_valid && isfinite(item.second.value)) {
@@ -189,7 +198,7 @@ void DataManager::checkAndDispatch(AllDataPacket* rawData) {
     if (!firstSample && currentHour > _last_hour_time) {
         for (auto &item : _hour_stats) {
             if (item.second.count > 0) {
-                _day_stats[item.first].update(item.second.getAvg());
+                _day_stats[item.first].update(item.second.getAvg(), item.second.getStatus());
             } else if (item.second.invalid_observed) {
                 _day_stats[item.first].observeInvalid(item.second.invalid_status);
             }
@@ -235,8 +244,8 @@ void DataManager::checkAndDispatch(AllDataPacket* rawData) {
     for (auto const& [id, dataPtr] : rawData->data_map) {
         if (dataPtr == nullptr) continue;
         if (dataPtr->is_valid) {
-            _min_stats[id].update(dataPtr->value);
-            _hour_stats[id].update(dataPtr->value);
+            _min_stats[id].update(dataPtr->value, dataPtr->status);
+            _hour_stats[id].update(dataPtr->value, dataPtr->status);
         } else {
             _min_stats[id].observeInvalid(dataPtr->status);
             _hour_stats[id].observeInvalid(dataPtr->status);
@@ -252,6 +261,9 @@ void DataManager::updateLatestSnapshot(const AllDataPacket* rawData) {
         LOG_WARNING("DataManager: Failed to update serial real-time snapshot");
         return;
     }
+    _tvocSamples = _tvocValidSamples = 0;
+    _tvocFlags = 0;
+    _tvocStatus = 'N';
     // Reuse existing nodes; remove disabled factors instead of retaining stale data.
     for (auto it = _last_real_snapshot.begin(); it != _last_real_snapshot.end();) {
         if (rawData->data_map.find(it->first) == rawData->data_map.end()) {
@@ -266,6 +278,12 @@ void DataManager::updateLatestSnapshot(const AllDataPacket* rawData) {
             data.value = data.min_val = data.max_val = data.cou_val = item.second->value;
             data.is_valid = item.second->is_valid && isfinite(data.value);
             data.status = item.second->status;
+            if (item.first == "a99054") {
+                _tvocSamples = item.second->sample_count;
+                _tvocValidSamples = item.second->valid_sample_count;
+                _tvocFlags = item.second->module_flags;
+                _tvocStatus = dataStatusCode(item.second->status);
+            }
         }
         _last_real_snapshot[item.first] = data;
     }

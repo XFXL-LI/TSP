@@ -26,6 +26,7 @@ public:
     String(T v) : text(std::to_string(v)) {}
     size_t length() const { return text.size(); }
     const char* c_str() const { return text.c_str(); }
+    bool equals(const char* s) const { return text == s; }
     bool reserve(size_t n) { text.reserve(n); return true; }
     char charAt(size_t n) const { return n < text.size() ? text[n] : 0; }
     void setCharAt(size_t n, char c) { assert(n < text.size()); text[n] = c; }
@@ -429,6 +430,29 @@ static void testOzone() {
     assert(!HJ212_DataCenter::rewriteLegacyOzoneCode(corrupt) && corrupt == copy);
     std::puts("PASS 2017/2025 all CNs and ozone aliases; old frame migration preserves identity/value/length, refreshes CRC, rejects corruption");
 }
+static void testTvocPacking() {
+    HJ212_DataCenter center; HJ212CONFIG cfg;
+    for (const char* unit : {"ppb","ppm","ug/m3","mg/m3"}) {
+        ConfigManager::getInstance().map["a99054"].unit = unit;
+        for (DataTime type : {DataTime::REAL_DATA,DataTime::MIN_DATA,DataTime::HOUR_DATA,DataTime::DAY_DATA}) {
+            AllProcessedDataPacket d;d.dataTime=type;
+            auto& value=d.processed_data_map["a99054"];
+            value.value=value.min_val=value.max_val=1000;value.status='T';
+            for(bool newer : {false,true}) {
+                String frame=newer ? center.build2025Hj212Packet(&d,cfg) : center.build2017Hj212Packet(&d,cfg);
+                assert(HJ212_DataCenter::isValidPacket(frame));
+                assert(frame.indexOf("a24035")==-1 && frame.indexOf("a99054-Flag=T")>=0);
+                String field=String("a99054-")+(type==DataTime::REAL_DATA ? "Rtd=" : "Avg=");
+                const float converted=GasUnitConverter::convertFromPpb("a99054",1000,unit);
+                char number[48];std::snprintf(number,sizeof(number),"%.*f",GasUnitConverter::decimalsForUnit(unit),converted);
+                assert(frame.indexOf(field+String(number))>=0);
+            }
+        }
+    }
+    ConfigManager::getInstance().map.erase("a99054");
+    std::puts("PASS TVOC a99054: both HJ212 versions, all CNs, four units and over-range flag");
+}
+
 static void testPending() {
     filesysManager fs; AllProcessedDataPacket d; String a = "one", b = "two", c = "three";
     nowMs = 0; diskCalls = diskLatency = 0;
@@ -549,4 +573,4 @@ static void testNormalSd() {
     }));
     std::puts("PASS continuous SD: real/min/hour/day store, pending, queries, mount/raw paths, former 30/60/30 boundaries, 48h, wrap and slow I/O accounting");
 }
-int main() { testTransmission(); testPriorityInheritance(); testManagerPriorityLifecycle(); testOzone(); testPending(); testNormalSd(); std::puts("All upload fault tests passed; hardware not verified."); }
+int main() { testTransmission(); testPriorityInheritance(); testManagerPriorityLifecycle(); testOzone(); testTvocPacking(); testPending(); testNormalSd(); std::puts("All upload fault tests passed; hardware not verified."); }

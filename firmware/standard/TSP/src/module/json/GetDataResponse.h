@@ -63,6 +63,12 @@ inline bool build(char* buffer, size_t capacity, size_t& used,
             static_cast<unsigned>(device->write), static_cast<unsigned>(device->time),
             static_cast<unsigned>(sample.seq), static_cast<long long>(sample.ageMs),
             static_cast<unsigned>(mask));
+        if (sample.tvocSamples > 0) {
+            ok = ok && append(buffer, capacity, used,
+                ",\"tvoc\":{\"samples\":%u,\"valid\":%u,\"flags\":%u,\"flag\":\"%c\"}",
+                unsigned(sample.tvocSamples), unsigned(sample.tvocValidSamples),
+                unsigned(sample.tvocFlags), sample.tvocStatus);
+        }
         if (device->sd == 3 && device->hasSdError) {
             ok = ok && append(buffer, capacity, used, ",\"sd_error\":%ld",
                               static_cast<long>(device->sdError));

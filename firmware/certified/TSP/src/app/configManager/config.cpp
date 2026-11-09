@@ -152,7 +152,7 @@ static const SensorDefinition SENSOR_DEFINITIONS[] = {
     {"a21004", "NO2",           "ug/m3",    20},
     {"a21005", "CO",            "mg/m3",    20},
     {"a21026", "SO2",           "ug/m3",    20},
-    {"a24035", "TVOC",          "ug/m3",   500}
+    {"a99054", "TVOC",          "ppb",     500}
 };
 
 static constexpr size_t SENSOR_DEFINITION_COUNT =
@@ -208,6 +208,7 @@ struct SensorPatch {
 static int sensorDefinitionIndex(const char *id)
 {
     if (id == nullptr) return -1;
+    if (strcmp(id, TvocPolicy::LEGACY_ID) == 0) id = TvocPolicy::ID;
     for (size_t i = 0; i < SENSOR_DEFINITION_COUNT; ++i) {
         if (strcmp(SENSOR_DEFINITIONS[i].id, id) == 0) {
             return static_cast<int>(i);
@@ -343,7 +344,7 @@ static bool serializeSelectedSensors(const COLLECTMAP &catalog,
 
 static const char *profileForSelection(const bool *selected)
 {
-    const int tvoc = sensorDefinitionIndex("a24035");
+    const int tvoc = sensorDefinitionIndex(TvocPolicy::ID);
     if (tvoc >= 0 && selected[tvoc]) return "tvoc";
 
     const char *gasIds[] = {"w34011", "a21004", "a21005", "a21026"};
@@ -364,9 +365,29 @@ static const char *profileForSelection(const bool *selected)
 
 } // namespace
 
+// Input alias only. Never reinterpret old on-card TVOC values as new ppb data.
+static void normalizeTvocId(cJSON *sensors)
+{
+    if (!cJSON_IsObject(sensors)) return;
+    cJSON *old = cJSON_DetachItemFromObjectCaseSensitive(sensors, TvocPolicy::LEGACY_ID);
+    if (old == nullptr) return;
+    if (cJSON_GetObjectItemCaseSensitive(sensors, TvocPolicy::ID) != nullptr) {
+        cJSON_Delete(old);
+    } else {
+        cJSON_AddItemToObject(sensors, TvocPolicy::ID, old);
+    }
+}
+static bool validTvocSelection(cJSON *sensors)
+{
+    return cJSON_IsObject(sensors) &&
+           (cJSON_GetObjectItemCaseSensitive(sensors, TvocPolicy::ID) == nullptr ||
+            cJSON_GetArraySize(sensors) == 1);
+}
+
 static void normalizeGasUnitsInJson(cJSON *sensors)
 {
     if (!cJSON_IsObject(sensors)) return;
+    normalizeTvocId(sensors);
 
     cJSON *sensorEntry = nullptr;
     cJSON_ArrayForEach(sensorEntry, sensors)
@@ -560,11 +581,11 @@ void ConfigManager::_parseHJ212(cJSON *node, HJ212CONFIG &target)
     if ((item = cJSON_GetObjectItem(node, "retry_times")) && cJSON_IsNumber(item))
         target.retry_times = item->valueint;
 }
-void ConfigManager::_parseSensors(cJSON *objectNode, COLLECTMAP &target_map)
+bool ConfigManager::_parseSensors(cJSON *objectNode, COLLECTMAP &target_map)
 {
     if (!cJSON_IsObject(objectNode)) {
         LOG_ERROR("Sensors node is NOT an object!");
-        return;
+        return false;
     }
     char *rawJson = cJSON_Print(objectNode); // ��ʽ����ӡ����������
     if (rawJson) {
@@ -576,6 +597,10 @@ void ConfigManager::_parseSensors(cJSON *objectNode, COLLECTMAP &target_map)
         LOG_ERROR("Failed to print sensors JSON node.");
     }
     normalizeGasUnitsInJson(objectNode);
+    if (!validTvocSelection(objectNode)) {
+        LOG_ERROR("TVOC must be the only configured monitoring factor");
+        return false;
+    }
 
     cJSON *sensorEntry = nullptr;
     cJSON_ArrayForEach(sensorEntry, objectNode)
@@ -596,6 +621,7 @@ void ConfigManager::_parseSensors(cJSON *objectNode, COLLECTMAP &target_map)
             
         LOG_INFO("Successfully parsed sensor: %s (%s)", s.id.c_str(), s.name.c_str());
     }
+    return true;
 }
 bool ConfigManager::_parseSwitch(cJSON *node, SYSTEMSWITCH &target) {
     SwitchConfigPolicy::Controls controls;
@@ -611,7 +637,8 @@ void ConfigManager::_parseAlarm(cJSON *node, ALARMCONFIG &target) {
     if (!node) return;
     cJSON *item;
     if ((item = cJSON_GetObjectItem(node, "alarm_sensor")) && cJSON_IsString(item))
-        target.alarm_sensor = String(item->valuestring);
+        target.alarm_sensor = String(item->valuestring) == TvocPolicy::LEGACY_ID
+            ? String(TvocPolicy::ID) : String(item->valuestring);
     if ((item = cJSON_GetObjectItem(node, "alarm_upper_limit")) && cJSON_IsNumber(item))
         target.alarm_upper_limit = item->valuedouble;
     if ((item = cJSON_GetObjectItem(node, "alarm_lower_limit")) && cJSON_IsNumber(item))
@@ -667,7 +694,7 @@ bool ConfigManager::loadFromFile(const char *path)
             if (strcmp(path, CONFIG_PATH) == 0) {
                 _parseSystem(root, globalCfg.system);
             } else if (strcmp(path, MODEL_PATH) == 0) {
-                _parseSensors(root, globalCfg.collectConfig);
+                if (!_parseSensors(root, globalCfg.collectConfig)) return false;
             } else if (strcmp(path, SYSTEM_PATH) == 0) {
                // _parseSystemInfo(root, globalCfg.system);
             } else if (strcmp(path, TEMP_CONTROL_PATH) == 0) {
@@ -706,6 +733,16 @@ String ConfigManager::getConfigJson(const char *path){
             LOG_ERROR("JSON Syntax Error in %s! Parsing aborted.", path);
         }
     }
+    if (strcmp(path, MODEL_PATH) == 0 &&
+        content.indexOf("\"a24035\"") >= 0) {
+        cJSON *model = cJSON_Parse(content.c_str());
+        if (cJSON_IsObject(model)) {
+            normalizeGasUnitsInJson(model);
+            char *canonical = cJSON_PrintUnformatted(model);
+            if (canonical != nullptr) { content = canonical; cJSON_free(canonical); }
+        }
+        cJSON_Delete(model);
+    }
     return content;
 }
 bool ConfigManager::updateSystem(const char *json_str)
@@ -730,9 +767,9 @@ bool ConfigManager::updateSensors(const char *json_str)
         return false;
     }
 
-    _parseSensors(root, globalCfg.collectConfig);
+    const bool ok = _parseSensors(root, globalCfg.collectConfig);
     cJSON_Delete(root);
-    return true;
+    return ok;
 }
 bool ConfigManager::updateSetup(const SYSTEM_SETUP& newSetup)
 {
@@ -932,7 +969,7 @@ void ConfigManager::getSensorSubsetRes(cJSON *idsArray, configData *resData)
             return;
         }
         for (int previous = 0; previous < i; ++previous) {
-            if (strcmp(requestedIds[previous], item->valuestring) == 0) {
+            if (strcmp(requestedIds[previous], SENSOR_DEFINITIONS[sensorDefinitionIndex(item->valuestring)].id) == 0) {
                 resData->success = false;
                 resData->rawResponse =
                     "{\"operation\":\"get_config\",\"code\":\"NG\","
@@ -940,7 +977,7 @@ void ConfigManager::getSensorSubsetRes(cJSON *idsArray, configData *resData)
                 return;
             }
         }
-        requestedIds[i] = item->valuestring;
+        requestedIds[i] = SENSOR_DEFINITIONS[sensorDefinitionIndex(item->valuestring)].id;
     }
 
     String response;
@@ -987,6 +1024,7 @@ bool ConfigManager::loadSensorCatalog(COLLECTMAP &catalog)
     if (fs.readFFAT(SENSOR_CATALOG_PATH, stored) == 0 && stored.length() > 0) {
         config_json parser(stored.c_str());
         cJSON *root = parser.getJsonObject();
+        normalizeGasUnitsInJson(root);
         if (cJSON_IsObject(root)) {
             for (size_t i = 0; i < SENSOR_DEFINITION_COUNT; ++i) {
                 cJSON *item = cJSON_GetObjectItemCaseSensitive(
@@ -1062,7 +1100,7 @@ void ConfigManager::setSensorSelectionRes(cJSON *enabledArray,
         selected[index] = true;
     }
 
-    const int tvocIndex = sensorDefinitionIndex("a24035");
+    const int tvocIndex = sensorDefinitionIndex(TvocPolicy::ID);
     if (tvocIndex >= 0 && selected[tvocIndex] && enabledCount != 1) {
         setSensorProtocolFailure(resData, "tvoc_exclusive");
         return;
@@ -1137,7 +1175,7 @@ void ConfigManager::setSensorMergeRes(cJSON *contentObj,
             setSensorProtocolFailure(resData, "unsupported_field");
             return;
         }
-        const String sensorId(sensorItem->string);
+        const String sensorId(SENSOR_DEFINITIONS[sensorDefinitionIndex(sensorItem->string)].id);
         if (globalCfg.collectConfig.count(sensorId) == 0) {
             setSensorProtocolFailure(resData, "sensor_not_enabled");
             return;
@@ -1436,7 +1474,16 @@ void ConfigManager::setConfigRes(JSONCmdData* req){
             return;
         }
     } else if (fileName == "sensors") {
+        if (cJSON_GetObjectItemCaseSensitive(contentObj, TvocPolicy::ID) != nullptr &&
+            cJSON_GetObjectItemCaseSensitive(contentObj, TvocPolicy::LEGACY_ID) != nullptr) {
+            publishFailure("Duplicate TVOC IDs");
+            return;
+        }
         normalizeGasUnitsInJson(contentObj);
+        if (!validTvocSelection(contentObj)) {
+            publishFailure("TVOC must be the only monitoring factor");
+            return;
+        }
     }
 
     // The legacy full set_config path is kept for existing Remote clients,

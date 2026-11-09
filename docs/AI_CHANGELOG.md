@@ -92,3 +92,14 @@ history or firmware release changelogs.
   activity and phase/prefix context without new tasks or persisted controls.
 - Both builds and host regressions pass; prefix-loss diagnosis still requires
   field comparison. This diagnostic is not a qualified transport fix.
+
+## 2026-10-28 - TVOC exclusive daily-measurement branch
+
+- Added 2.2.0 / 2.2.0.1 TVOC, a99054 canonical identity and legacy input aliases,
+  without rewriting historical readings.
+- Separated shared gas unit conversion from K7S acquisition/calibration policy.
+- Added bounded five-second reads and one averaged 120-second batch inside the
+  existing task/pump schedule; air-station staging and SD layout remain.
+- Declared isobutylene mass units and optional sample-count diagnostics.
+  Calibration control and response/stabilization acceptance remain later work.
+  See PROJECT_CONTEXT and the TVOC daily-read contract.

@@ -77,8 +77,9 @@ struct CollectSetting { int alarmLimit = 100; String unit = "ppb"; };
 using COLLECTMAP = std::map<String, CollectSetting>;
 // Gas unit conversion is unchanged and is outside these control tests.
 namespace GasUnitConverter {
+bool isTvocSensor(const String &s) { return s == "a99054"; }
 bool isGasSensor(const String &s) {
-    return s == "a21004" || s == "a21005" || s == "a21026" || s == "w34011";
+    return isTvocSensor(s) || s == "a21004" || s == "a21005" || s == "a21026" || s == "w34011";
 }
 String normalizeUnit(const String &, const String &unit) { return unit.empty() ? "ppb" : unit; }
 float convertFromPpb(const String &, float value, const String &) { return value; }

@@ -316,3 +316,11 @@ end
 
 只有完成上述LCD/云端和设备联调后，才能标注已通过实机验收。
 仅更新LCD解析不能修复旧MCU的时间门槛；新版MCU也需要LCD按本约定显示无日期数据。
+
+## TVOC 可选扩展（2.2.0 / 2.2.0.1）
+
+请求 TVOC（a99054）且已有批次时，with_status:true 的 ds 可增加
+tvoc 对象，包含 samples（计划槽数）、valid（有效点数）、flags（最后槽标志）、
+flag（批次状态）。有效性仍以 valid_mask 为准。不增加查询、采样任务，
+空气微站和旧请求回复保持原样，800字节上限不变。详见
+[TVOC 日常读取协议](../TVOC_DAILY_READ_PROTOCOL.md)。

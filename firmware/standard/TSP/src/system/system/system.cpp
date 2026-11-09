@@ -509,6 +509,7 @@ static void CollectTask(void *pvParameters)
         const bool usePump = collectionUsesPump(collectMap);
         {
             RemoteOtaManager::BusinessActivityGuard businessActivity;
+            bool pumpRunning = false;
             if (usePump)
             {
                 if (pumpCutoffTimer == nullptr)
@@ -523,12 +524,18 @@ static void CollectTask(void *pvParameters)
                     {
                         digitalWrite(PUMP1_PIN, LOW);
                         LOG_ERROR("Pump stopped because cutoff timer could not be armed");
+                    } else {
+                        pumpRunning = true;
                     }
                 }
             }
-            delayUntilMilliseconds(cycleStartedMs +
-                                   NON_AIR_COLLECTION_OFFSET_MS);
-            collectorManager.poll();
+            if (collectorManager.isTvocMode()) {
+                collectorManager.pollTvoc(cycleStartedMs, pumpRunning);
+            } else {
+                delayUntilMilliseconds(cycleStartedMs +
+                                       NON_AIR_COLLECTION_OFFSET_MS);
+                collectorManager.poll();
+            }
             delayUntilMilliseconds(cycleStartedMs + PUMP_RUN_TIME_MS);
             SerialManager::getInstance().checkAndReportOverflow(SERIAL_485);
             digitalWrite(PUMP1_PIN, LOW);

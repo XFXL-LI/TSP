@@ -268,7 +268,8 @@ static bool legacyCalibrationContainsGas(const String &args)
             cJSON *id = cJSON_IsObject(item)
                 ? cJSON_GetObjectItemCaseSensitive(item, "id") : nullptr;
             if (cJSON_IsString(id) &&
-                GasUnitConverter::isGasSensor(String(id->valuestring))) {
+                (GasUnitConverter::isGasSensor(String(id->valuestring)) ||
+                 strcmp(id->valuestring, TvocPolicy::LEGACY_ID) == 0)) {
                 containsGas = true;
                 break;
             }
@@ -338,19 +339,21 @@ void PermissionSystem::sendRealtimeDataDirect(cJSON *request, Stream *stream)
                 sendResponse(stream, "get_data", "NG", "Invalid sensor id");
                 return;
             }
+            const char *canonicalId = strcmp(item->valuestring, TvocPolicy::LEGACY_ID) == 0
+                ? TvocPolicy::ID : item->valuestring;
             if (withStatus) {
-                if (!ConfigManager::isKnownSensorId(item->valuestring)) {
+                if (!ConfigManager::isKnownSensorId(canonicalId)) {
                     sendResponse(stream, "get_data", "NG", "Unknown sensor id");
                     return;
                 }
                 for (size_t i = 0; i < idCount; ++i) {
-                    if (strcmp(ids[i], item->valuestring) == 0) {
+                    if (strcmp(ids[i], canonicalId) == 0) {
                         sendResponse(stream, "get_data", "NG", "Duplicate sensor id");
                         return;
                     }
                 }
             }
-            ids[idCount++] = item->valuestring;
+            ids[idCount++] = canonicalId;
         }
     }
 
@@ -470,6 +473,10 @@ void PermissionSystem::executeCommand(const String &cmd, String args, Stream *st
 
     if (cmd == "gas_calibration")
     {
+        if (ConfigManager::getInstance().getCollectConfigs().count(TvocPolicy::ID)) {
+            sendMsg(stream, "{\"operation\":\"gas_calibration\",\"code\":\"NG\",\"reason\":\"tvoc_calibration_not_supported\"}");
+            return;
+        }
         char response[384] = {};
         if (!GasCalibrationManager::getInstance().handleRequest(
                 args.c_str(), response, sizeof(response))) {

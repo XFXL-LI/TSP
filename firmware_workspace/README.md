@@ -1,6 +1,6 @@
 # TSP ESP32-S3 固件工作区
 
-最后更新：2026-10-23
+最后更新：2026-10-28
 
 本目录是固件状态查看、构建、Release验证和受保护烧录入口。正式业务源码已迁移到
 仓库根目录的 `firmware/`，不再从 `tmp/` 或根目录旧 `TSP/` 构建。
@@ -9,14 +9,14 @@
 
 | Variant | 版本 | 源码路径 | 构建输入 | 源码指纹 |
 |---|---:|---|---:|---|
-| standard | 2.1.7 | `../firmware/standard/TSP` | 104 | `2B481FE81D0ECEA02FEA1F81DA523DF422157CCC622A267113D71A2FE32D321A` |
-| certified | 2.1.7.1 | `../firmware/certified/TSP` | 105 | `4894E25D48D29E62BE4D30EEDF1A393F9AEC563B3BD36926F5CB4D952F59F5B2` |
+| standard | 2.2.0 | `../firmware/standard/TSP` | 105 | `F046593515B11BE61F41E732823169926DE0F570C17D00A0E0425EA8812F4DB7` |
+| certified | 2.2.0.1 | `../firmware/certified/TSP` | 106 | `D294527487D25BFFAF12CA96A2FE1B219CFEAE9D1509D3E7358707B98198D6D3` |
 
-两版2.1.7系列恢复常规流程的构建均已通过，状态为
+两版2.2.0系列TVOC日常读取构建均已通过，状态为
 `compiled-not-hardware-verified`。当前构建目录分别为：
 
-- `build/standard-2.1.7-normal-sd-20261023`
-- `build/certified-2.1.7.1-normal-sd-20261023`
+- `build/standard-2.2.0-tvoc-final-20261028`
+- `build/certified-2.2.0.1-tvoc-final-20261028`
 
 继承2.1.4系列的HJ212软件串口写字节期间临时提高优先级、失败报文有界异步存储，
 以及存储事件队列满时不阻塞上传投递。臭氧HJ212出口统一使用平台指定的w34011，
@@ -118,3 +118,15 @@ flash-verified.cmd COM9 FLASH
 不要从源码目录、旧 `TSP/build`、历史 `.build_*`、OTA工具缓存或普通 `build/` 中直接
 挑选BIN。只有 `releases/` 下具有 `manifest.json`、`SHA256SUMS.txt`和明确烧录地址的
 目录才是正式可追溯发布包；其硬件验证状态仍以manifest和现场记录为准。
+
+## TVOC 2.2.0 / 2.2.0.1
+
+TVOC以a99054单因子互斥运行，读TVOC_PID20 v1.2.0的ppb浓度和状态。
+保持120秒周期及70秒开泵/50秒休息；候选10～70秒窗口每5秒采样，共12槽。
+有有效点即计算均值并提供数量；LCD、保存和上传均使用批次均值，
+分钟/小时/天沿用原数值统计。前10秒通气仍待标定联调确认，孤立高值不自动删除。
+质量单位按异丁烯当量、25℃、101.325kPa；默认ppb，支持ppm/ug/m3/mg/m3。
+空气微站流程、底板MCU、SD布局及认证四气体策略保持原样。
+两版主机回归与ESP32编译通过，静态RAM均为28120字节，状态为
+compiled-not-hardware-verified；没有实机烧录或验收。
+完整配置、状态及数量字段见[TVOC日常读取协议](../docs/protocols/TVOC_DAILY_READ_PROTOCOL.md)。

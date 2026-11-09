@@ -1,6 +1,6 @@
 # TSP 固件版本与目录说明
 
-最后更新：2026-10-23
+最后更新：2026-10-28
 
 本文件用于区分“正式实机验证固件”“对应的可编译源码”和“当前开发源码”。
 不要只根据目录名或 `TSP.ino` 文件名判断版本。
@@ -9,8 +9,8 @@
 
 | Variant | 版本 | 当前正式源码 | 构建输入 | 源码指纹 |
 |---|---:|---|---:|---|
-| standard | 2.1.7 | `firmware/standard/TSP` | 104 | `2B481FE81D0ECEA02FEA1F81DA523DF422157CCC622A267113D71A2FE32D321A` |
-| certified | 2.1.7.1 | `firmware/certified/TSP` | 105 | `4894E25D48D29E62BE4D30EEDF1A393F9AEC563B3BD36926F5CB4D952F59F5B2` |
+| standard | 2.2.0 | `firmware/standard/TSP` | 105 | `F046593515B11BE61F41E732823169926DE0F570C17D00A0E0425EA8812F4DB7` |
+| certified | 2.2.0.1 | `firmware/certified/TSP` | 106 | `D294527487D25BFFAF12CA96A2FE1B219CFEAE9D1509D3E7358707B98198D6D3` |
 
 当前构建入口为 `firmware_workspace/build-standard.cmd`、
 `firmware_workspace/build-certified.cmd`和兼容standard的
@@ -23,7 +23,7 @@
 
 该结论不是bit-identical；新旧BIN的差异已由编译时间及其派生镜像元数据完整解释。
 
-当前2.1.7/2.1.7.1恢复常规流程的版本已编译通过，均为 `compiled-not-hardware-verified`；
+当前2.2.0/2.2.0.1的TVOC日常读取版本已编译通过，均为 `compiled-not-hardware-verified`；
 实验版不随本次更新。新构建不覆盖已有INFO测试目录，也未生成新的正式Release。
 
 当前最新已发布的2026-09-07正式Release分别为：
@@ -913,3 +913,10 @@ MCU发送、存储和待传结果以及故障保留。SD操作返回时，耗时
 3. 需要继续开发：standard只使用`firmware/standard/TSP`，certified只使用`firmware/certified/TSP`；公共优化同步，认证策略只存在于certified；禁止使用2.0.11构建。
 4. 不在2.0.4独立源码目录中继续开发；需要改动时先复制或建立新的Git分支。
 5. 构建目录和归档目录均不作为日常源码入口。
+
+## Firmware 2.2.0 / 2.2.0.1：TVOC 日常读取
+
+两版已完成软件回归与编译，硬件验收待进行。构建目录和指纹见当前总览。
+功能与验证范围见[标准版变更](docs/changelog/CHANGELOG_2.2.0.md)、
+[认证版变更](docs/changelog/CHANGELOG_2.2.0.1.md)和
+[TVOC读取协议](docs/protocols/TVOC_DAILY_READ_PROTOCOL.md)。

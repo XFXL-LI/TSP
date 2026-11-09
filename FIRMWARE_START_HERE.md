@@ -1,6 +1,6 @@
 # TSP Firmware 从这里开始
 
-最后更新：2026-10-23
+最后更新：2026-10-28
 
 本文件是当前固件源码、构建和发布入口。详细版本关系见
 [固件版本与目录说明](FIRMWARE_VERSION_LOCATIONS.md)，仓库整体说明见
@@ -17,10 +17,10 @@ AI辅助开发应同时读取：
 
 | Variant | 版本 | 正式源码 | 构建输入 | 源码指纹 |
 |---|---:|---|---:|---|
-| standard | 2.1.7 | `firmware/standard/TSP` | 104 | `2B481FE81D0ECEA02FEA1F81DA523DF422157CCC622A267113D71A2FE32D321A` |
-| certified | 2.1.7.1 | `firmware/certified/TSP` | 105 | `4894E25D48D29E62BE4D30EEDF1A393F9AEC563B3BD36926F5CB4D952F59F5B2` |
+| standard | 2.2.0 | `firmware/standard/TSP` | 105 | `F046593515B11BE61F41E732823169926DE0F570C17D00A0E0425EA8812F4DB7` |
+| certified | 2.2.0.1 | `firmware/certified/TSP` | 106 | `D294527487D25BFFAF12CA96A2FE1B219CFEAE9D1509D3E7358707B98198D6D3` |
 
-两套2.1.7系列恢复常规流程的源码均已编译通过，状态为
+此前2.1.7系列恢复常规流程的源码均已编译通过，状态为
 `compiled-not-hardware-verified`。实时数据固定每120秒形成一批；有空气通道因子时气泵
 固定运行70秒，其他传感器从第45秒采集，颗粒物与气体在通气60秒后且泵仍运行时采集。
 颗粒物改为一次读取四通道，小时统计改为纳入每个有效实时批次。
@@ -48,8 +48,8 @@ JSON正常回显、采集阶段和正常复读详情不再默认输出。`HJ_UAR
 
 当前构建产物位于：
 
-- standard：`firmware_workspace/build/standard-2.1.7-normal-sd-20261023`
-- certified：`firmware_workspace/build/certified-2.1.7.1-normal-sd-20261023`
+- standard：`firmware_workspace/build/standard-2.2.0-tvoc-final-20261028`
+- certified：`firmware_workspace/build/certified-2.2.0.1-tvoc-final-20261028`
 
 迁移前的两个 `tmp` 历史源码副本已退出主工作树；需要追溯时使用仓库外历史归档和
 迁移安全备份。当前开发与构建只使用上表中的 `firmware/` 正式源码。
@@ -103,8 +103,10 @@ flash-verified.cmd       受保护烧录入口，必须明确授权后使用
 
 ## 当前版本文档
 
-- [当前2.1.7/2.1.7.1构建与版本记录](FIRMWARE_VERSION_LOCATIONS.md)
+- [当前2.2.0/2.2.0.1构建与版本记录](FIRMWARE_VERSION_LOCATIONS.md)
 - [LCD/远程端开关配置协议](docs/protocols/lcd/LCD_SWITCH_CONFIG_PROTOCOL.md)
+- [Firmware 2.2.0 变更记录](docs/changelog/CHANGELOG_2.2.0.md)
+- [Firmware 2.2.0.1 变更记录](docs/changelog/CHANGELOG_2.2.0.1.md)
 - [Firmware 2.1.7 变更记录](docs/changelog/CHANGELOG_2.1.7.md)
 - [Firmware 2.1.7.1 变更记录](docs/changelog/CHANGELOG_2.1.7.1.md)
 - [Firmware 2.1.0 变更记录](docs/changelog/CHANGELOG_2.1.0.md)
@@ -124,3 +126,15 @@ flash-verified.cmd       受保护烧录入口，必须明确授权后使用
 
 历史CHANGELOG、交接资料、开发日志和旧接口README统一保存在 `docs/archive/`，不得把
 其中的旧源码路径、旧版本状态或旧烧录说明当作当前操作依据。
+
+## TVOC 2.2.0 / 2.2.0.1
+
+TVOC以a99054单因子互斥运行，读TVOC_PID20 v1.2.0的ppb浓度和状态。
+保持120秒周期及70秒开泵/50秒休息；候选10～70秒窗口每5秒采样，共12槽。
+有有效点即计算均值并提供数量；LCD、保存和上传均使用批次均值，
+分钟/小时/天沿用原数值统计。前10秒通气仍待标定联调确认，孤立高值不自动删除。
+质量单位按异丁烯当量、25℃、101.325kPa；默认ppb，支持ppm/ug/m3/mg/m3。
+空气微站流程、底板MCU、SD布局及认证四气体策略保持原样。
+两版主机回归与ESP32编译通过，静态RAM均为28120字节，状态为
+compiled-not-hardware-verified；没有实机烧录或验收。
+完整配置、状态及数量字段见[TVOC日常读取协议](docs/protocols/TVOC_DAILY_READ_PROTOCOL.md)。

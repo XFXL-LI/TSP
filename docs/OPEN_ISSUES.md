@@ -666,3 +666,19 @@ failed files and compare written/read-back bytes, record layout and decoding
 under the same firmware; do not infer card damage or successful recovery merely
 from STORE ok=1. No device files are to be removed or reformatted as part of the
 normal-SD/logging change.
+
+## TVOC daily-mode target-device acceptance
+
+Status: Implemented; target-device validation pending
+
+Area: TVOC 2.2.0 / 2.2.0.1 collection, units and display
+
+The implementation adds five-second reads, a provisional 10..70-second window,
+one 120-second averaged batch, explicit validity and declared isobutylene mass
+units. Host tests do not validate gas stabilization, pump flow/duty, LCD a99054
+recognition, UART timing or target-board behavior. Validate the ten-second flush
+and 12 slots during real-gas calibration work. One valid point is accepted by
+explicit user policy; isolated high values are kept until evidence supports a
+filter. Check partial/all failures, over-range value/T status, unit changes, SD
+and all HJ212 types. Confirm province platform units separately. No bottom-board
+MCU changes or TVOC calibration write/session support are included.
