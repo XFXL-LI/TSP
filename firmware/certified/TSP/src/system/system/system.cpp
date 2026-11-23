@@ -3,6 +3,7 @@
 #include <freertos/queue.h>
 #include <freertos/task.h>
 #include <freertos/timers.h>
+#include <driver/gpio.h>
 #include "esp_task_wdt.h"
 #include <SoftwareSerial.h>
 #include <time.h>
@@ -17,6 +18,7 @@
 #include "../ota/remote_ota_manager.h"
 #include "../../module/Serial/SerialManager.h"
 #include "../../module/gas/GasCalibrationManager.h"
+#include "../../module/tvoc/TvocCalibrationManager.h"
 #include "../../module/gas/GasUnitConverter.h"
 #include "../../module/diagnostics/CalendarClock.h"
 #include "../../module/diagnostics/DeviceRuntimeStatus.h"
@@ -73,10 +75,41 @@ static void delayUntilMilliseconds(uint32_t targetMs)
     }
 }
 
+enum class PumpOwner : uint8_t { Off, Daily, TvocCalibration };
+static portMUX_TYPE pumpMux = portMUX_INITIALIZER_UNLOCKED;
+static PumpOwner pumpOwner = PumpOwner::Off;
+
+static void setSamplingPump(PumpOwner owner)
+{
+    portENTER_CRITICAL(&pumpMux);
+    pumpOwner = owner;
+    gpio_set_level(static_cast<gpio_num_t>(PUMP1_PIN), owner != PumpOwner::Off);
+    portEXIT_CRITICAL(&pumpMux);
+}
+
+static bool calibrationPumpOn()
+{
+    portENTER_CRITICAL(&pumpMux);
+    const bool on = pumpOwner == PumpOwner::TvocCalibration;
+    portEXIT_CRITICAL(&pumpMux);
+    return on;
+}
+
 static void pumpCutoffCallback(TimerHandle_t timer)
 {
-    (void)timer;
-    digitalWrite(PUMP1_PIN, LOW);
+    const PumpOwner timerOwner = pvTimerGetTimerID(timer) == nullptr
+        ? PumpOwner::Daily : PumpOwner::TvocCalibration;
+    portENTER_CRITICAL(&pumpMux);
+    if (pumpOwner == timerOwner) {
+        pumpOwner = PumpOwner::Off;
+        gpio_set_level(static_cast<gpio_num_t>(PUMP1_PIN), 0);
+    }
+    portEXIT_CRITICAL(&pumpMux);
+}
+
+static bool tvocCalibrationRequested()
+{
+    return TvocCalibrationManager::getInstance().active();
 }
 
 // Firmware 2.0.4 (2026-07-31):
@@ -489,12 +522,14 @@ static void CollectTask(void *pvParameters)
     auto &collectMap = ConfigManager::getInstance().getCollectConfigs();
 
     collectorManager.begin(collectMap);
+    const bool tvocMode = collectorManager.isTvocMode();
+    auto& tvocCalibration = TvocCalibrationManager::getInstance();
 
     TickType_t xLastWakeTime = xTaskGetTickCount();
     const TickType_t xFrequency = pdMS_TO_TICKS(REALTIME_COLLECTION_PERIOD_MS);
 
     pinMode(PUMP1_PIN, OUTPUT);
-    digitalWrite(PUMP1_PIN, LOW);
+    setSamplingPump(PumpOwner::Off);
     TimerHandle_t pumpCutoffTimer = xTimerCreate(
         "PumpCutoff", pdMS_TO_TICKS(PUMP_RUN_TIME_MS), pdFALSE,
         nullptr, pumpCutoffCallback);
@@ -503,8 +538,31 @@ static void CollectTask(void *pvParameters)
         DeviceRuntimeStatus::criticalInitFailed();
         LOG_ERROR("Failed to create pump cutoff timer");
     }
+    TimerHandle_t calibrationCutoffTimer = nullptr;
+    if (tvocMode && pumpCutoffTimer != nullptr) {
+        static uint8_t calibrationTimerId;
+        calibrationCutoffTimer = xTimerCreate("TvocCalCutoff",
+            pdMS_TO_TICKS(TvocCalibrationManager::SessionLimitMs +
+                          TvocCalibrationManager::CleanupLimitMs + 1000),
+            pdFALSE, &calibrationTimerId, pumpCutoffCallback);
+        if (calibrationCutoffTimer == nullptr || !tvocCalibration.begin()) {
+            LOG_ERROR("TVOC calibration unavailable: pump cutoff or RS485");
+        }
+    }
     while (true)
     {
+        if (tvocMode && tvocCalibrationRequested()) {
+            const bool armed = calibrationCutoffTimer != nullptr &&
+                xTimerStart(calibrationCutoffTimer, pdMS_TO_TICKS(100)) == pdPASS;
+            if (armed) {
+                setSamplingPump(PumpOwner::TvocCalibration);
+                tvocCalibration.run(calibrationPumpOn);
+            }
+            setSamplingPump(PumpOwner::Off);
+            if (armed) xTimerStop(calibrationCutoffTimer, pdMS_TO_TICKS(100));
+            tvocCalibration.finishWorker(armed ? nullptr : "pump_unavailable");
+            xLastWakeTime = xTaskGetTickCount();
+        }
         const uint32_t cycleStartedMs = millis();
         const bool usePump = collectionUsesPump(collectMap);
         {
@@ -518,35 +576,44 @@ static void CollectTask(void *pvParameters)
                 }
                 else
                 {
-                    digitalWrite(PUMP1_PIN, HIGH);
+                    setSamplingPump(PumpOwner::Daily);
                     if (xTimerStart(pumpCutoffTimer,
                                     pdMS_TO_TICKS(100)) != pdPASS)
                     {
-                        digitalWrite(PUMP1_PIN, LOW);
+                        setSamplingPump(PumpOwner::Off);
                         LOG_ERROR("Pump stopped because cutoff timer could not be armed");
                     } else {
                         pumpRunning = true;
                     }
                 }
             }
-            if (collectorManager.isTvocMode()) {
-                collectorManager.pollTvoc(cycleStartedMs, pumpRunning);
+            if (tvocMode) {
+                collectorManager.pollTvoc(cycleStartedMs, pumpRunning, tvocCalibrationRequested);
             } else {
                 delayUntilMilliseconds(cycleStartedMs +
                                        NON_AIR_COLLECTION_OFFSET_MS);
                 collectorManager.poll();
             }
-            delayUntilMilliseconds(cycleStartedMs + PUMP_RUN_TIME_MS);
+            if (!tvocMode) delayUntilMilliseconds(cycleStartedMs + PUMP_RUN_TIME_MS);
             SerialManager::getInstance().checkAndReportOverflow(SERIAL_485);
-            digitalWrite(PUMP1_PIN, LOW);
+            setSamplingPump(PumpOwner::Off);
             if (pumpCutoffTimer != nullptr)
             {
                 xTimerStop(pumpCutoffTimer, pdMS_TO_TICKS(100));
             }
         }
-        // vTaskDelayUntil advances xLastWakeTime itself. Do not reset it to
-        // the delayed actual wake tick, otherwise scheduling latency accumulates.
-        vTaskDelayUntil(&xLastWakeTime, xFrequency);
+        if (tvocMode) {
+            // Preserve the periodic anchor while allowing LCD start during pump rest.
+            xLastWakeTime += xFrequency;
+            while (!tvocCalibrationRequested()) {
+                const int32_t remaining = static_cast<int32_t>(xLastWakeTime - xTaskGetTickCount());
+                if (remaining <= 0) break;
+                const TickType_t slice = pdMS_TO_TICKS(50);
+                vTaskDelay(static_cast<TickType_t>(remaining) < slice ? remaining : slice);
+            }
+        } else {
+            vTaskDelayUntil(&xLastWakeTime, xFrequency);
+        }
     }
 
     vTaskDelete(NULL);

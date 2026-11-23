@@ -56,17 +56,23 @@ modbus_manager::modbus_manager()
 }
 modbus_manager::~modbus_manager()
 {
+    delete static_cast<AbortableModbusRTU*>(_mb_instances);
     LOG_INFO("modbus_manager Destructor");
 }
-void modbus_manager::modbus_init(Stream *current_port)
+void modbus_manager::modbus_init(Stream *current_port, uint32_t interFrameTimeUs)
 {
     if (modbusResSem == NULL)
     {
         modbusResSem = xSemaphoreCreateBinary();
     }
+    delete static_cast<AbortableModbusRTU*>(_mb_instances);
     _serial_ports = current_port;
     _mb_instances = new AbortableModbusRTU();
     _mb_instances->begin(current_port);
+    if (interFrameTimeUs != 0)
+    {
+        _mb_instances->setInterFrameTime(interFrameTimeUs);
+    }
     _mb_instances->master();
 }
 
@@ -242,6 +248,20 @@ bool modbus_manager::writeModbusRegs(uint8_t slaveId, uint16_t startAddr,
                                      uint32_t responseTimeoutMs,
                                      uint32_t retryDelayMs)
 {
+    return writeRegisters(slaveId, startAddr, count, dataBuffer, maxAttempts,
+                          responseTimeoutMs, retryDelayMs, false);
+}
+
+bool modbus_manager::writeModbusRegOnce(uint8_t slaveId, uint16_t address, uint16_t value)
+{
+    return writeRegisters(slaveId, address, 1, &value, 1, 500, 0, true);
+}
+
+bool modbus_manager::writeRegisters(uint8_t slaveId, uint16_t startAddr,
+                                    uint16_t count, uint16_t *dataBuffer,
+                                    uint8_t maxAttempts, uint32_t responseTimeoutMs,
+                                    uint32_t retryDelayMs, bool singleRegister)
+{
     if (_mb_instances == nullptr || modbusResSem == NULL || dataBuffer == nullptr ||
         count == 0 || maxAttempts == 0)
         return false;
@@ -265,7 +285,10 @@ bool modbus_manager::writeModbusRegs(uint8_t slaveId, uint16_t startAddr,
         }
         if (mb->slave()) abortableMb->abortTransaction();
 
-        if (mb->writeHreg(slaveId, startAddr, dataBuffer, count, cbRes))
+        const bool started = singleRegister
+            ? mb->writeHreg(slaveId, startAddr, dataBuffer[0], cbRes)
+            : mb->writeHreg(slaveId, startAddr, dataBuffer, count, cbRes);
+        if (started)
         {
             const uint32_t startedAt = millis();
             while (millis() - startedAt < responseTimeoutMs)

@@ -3,6 +3,11 @@
 #include "Hj212TxGuard.h"
 #include "../diagnostics/SdIoDiagnostics.h"
 
+#if defined(TSP_HJ212_TX_DIAGNOSTIC)
+#include <esp_rom_crc.h>
+#include <string.h>
+#endif
+
 DTUDriver::DTUDriver(String name, int id) : _name(name), _id(id), _stream(nullptr) {
 }
 
@@ -11,6 +16,21 @@ DTUDriver::~DTUDriver() {
 size_t DTUDriver::writeWire(const uint8_t* data, size_t length, bool newline,
                             Hj212PriorityScope* priorityScope) {
     const bool protect = _name == "HJ212";
+#if defined(TSP_HJ212_TX_DIAGNOSTIC)
+    const bool recordFrame = protect && !newline;
+    const uint32_t frameCrc = recordFrame ? esp_rom_crc32_le(0, data, length) : 0;
+    constexpr size_t qnOffset = sizeof("##0000QN=") - 1;
+    constexpr size_t qnLength = 17;
+    char qn[qnLength + 1] = "-";
+    if (recordFrame && length > qnOffset + qnLength &&
+        memcmp(data, "##", 2) == 0 && memcmp(data + 6, "QN=", 3) == 0 &&
+        data[qnOffset + qnLength] == ';') {
+        const char* digits = reinterpret_cast<const char*>(data + qnOffset);
+        if (strspn(digits, "0123456789") == qnLength) {
+            memcpy(qn, digits, qnLength);
+        }
+    }
+#endif
     size_t written = 0;
     bool protectionOk = true;
     uint32_t started = 0, finished = 0;
@@ -67,6 +87,13 @@ size_t DTUDriver::writeWire(const uint8_t* data, size_t length, bool newline,
                       (unsigned)priorityTx, (unsigned)priorityEnd, (unsigned)written);
         }
     }
+#if defined(TSP_HJ212_TX_DIAGNOSTIC)
+    if (recordFrame) {
+        LOG_INFO("[DIAG] HJ_TX_DIAG qn=%s bytes=%u crc32=%08X written=%u elapsed_ms=%u",
+                 qn, (unsigned)length, (unsigned)frameCrc, (unsigned)written,
+                 (unsigned)(finished - started));
+    }
+#endif
     return protectionOk ? written : 0;
 }
 

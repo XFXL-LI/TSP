@@ -56,7 +56,8 @@ enum class UploadProtocolMode : uint8_t
 constexpr uint32_t OTA_TASK_STACK_SIZE = 6 * 1024;
 uint8_t otaDataBuffer[OTA_BUFFER_SIZE];
 
-std::atomic<bool> otaActive(false);
+enum class MaintenanceOwner : uint8_t { None, Ota, TvocCalibration };
+std::atomic<MaintenanceOwner> maintenanceOwner(MaintenanceOwner::None);
 std::atomic<uint8_t> lcdMode(
     static_cast<uint8_t>(RemoteOtaManager::LcdInputMode::Normal));
 std::atomic<uint32_t> lcdModeEpoch(1);
@@ -963,9 +964,9 @@ void otaListenerTask(void *pvParameters)
             continue;
         }
 
-        bool expected = false;
-        if (!otaActive.compare_exchange_strong(expected, true,
-                                               std::memory_order_acq_rel))
+        MaintenanceOwner expected = MaintenanceOwner::None;
+        if (!maintenanceOwner.compare_exchange_strong(expected, MaintenanceOwner::Ota,
+                                                       std::memory_order_acq_rel))
         {
             publishUploadResponse(request);
             if (uploadMode == UploadProtocolMode::ProtocolV1)
@@ -991,7 +992,7 @@ void otaListenerTask(void *pvParameters)
         vTaskPrioritySet(nullptr, otaActivePriority);
         runOtaSession(statusSize, uploadMode, remoteSession, updatePartition,
                       dtuPort, dtuMutex);
-        otaActive.store(false, std::memory_order_release);
+        maintenanceOwner.store(MaintenanceOwner::None, std::memory_order_release);
         vTaskPrioritySet(nullptr, otaIdlePriority);
         LOG_INFO("Remote OTA listener resumed after failed session");
         logOtaMemory("listener_resumed");
@@ -1032,7 +1033,21 @@ bool begin(UBaseType_t listenerPriority, UBaseType_t activePriority)
 
 bool isActive()
 {
-    return otaActive.load(std::memory_order_acquire);
+    return maintenanceOwner.load(std::memory_order_acquire) == MaintenanceOwner::Ota;
+}
+
+bool tryBeginTvocCalibration()
+{
+    MaintenanceOwner expected = MaintenanceOwner::None;
+    return maintenanceOwner.compare_exchange_strong(expected, MaintenanceOwner::TvocCalibration,
+                                                     std::memory_order_acq_rel);
+}
+
+void endTvocCalibration()
+{
+    MaintenanceOwner expected = MaintenanceOwner::TvocCalibration;
+    maintenanceOwner.compare_exchange_strong(expected, MaintenanceOwner::None,
+                                              std::memory_order_acq_rel);
 }
 
 LcdInputMode lcdInputMode()

@@ -25,6 +25,7 @@ struct CommandPermission
 const CommandPermission PERMISSION_TABLE[] = {
     {"gal_data", PermissionLevel::USER},
     {"gas_calibration", PermissionLevel::ADMIN},
+    {"tvoc_calibration", PermissionLevel::ADMIN},
     {"get_config", PermissionLevel::USER},
     {"restart", PermissionLevel::USER},
     {"set_log", PermissionLevel::USER},

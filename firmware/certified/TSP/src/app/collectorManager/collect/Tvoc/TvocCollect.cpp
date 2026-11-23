@@ -14,10 +14,12 @@ bool TvocCollect::modbusInit(Stream* port, String id, String portName,
     (void)portName; (void)factor; (void)unit;
     if (port == nullptr || id != TvocPolicy::ID) return false;
     _id = id;
-    _port = port;
+    _port = nullptr;
     _versionVerified = false;
+    _checkIdleBeforeDaily = true;
     if (_modbus == nullptr) _modbus = new modbus_manager();
-    _modbus->modbus_init(port);
+    _modbus->modbus_init(port, 4000);  // TVOC RTU frame gap in microseconds.
+    _port = port;
     return true;
 }
 bool TvocCollect::gal(int increment, int ratio) {
@@ -53,6 +55,20 @@ DataPacket* TvocCollect::collect(ReadDeadline deadline) {
             return packet;
         }
         _versionVerified = true;
+    }
+    // After startup or a calibration exit, check the board before triggering ADC.
+    if (_checkIdleBeforeDaily) {
+        uint16_t status[4]{};
+        if (!read(TvocPolicy::STATUS_REGISTER, 4, status)) {
+            xSemaphoreGive(mutex);
+            return packet;
+        }
+        if ((status[0] & 4U) != 0 || status[1] == 1 || status[1] == 3) {
+            packet->status = DataStatus::CALIBRATION;
+            xSemaphoreGive(mutex);
+            return packet;
+        }
+        _checkIdleBeforeDaily = false;
     }
     const TvocPolicy::Sample sample = TvocPolicy::readSample(read);
     xSemaphoreGive(mutex);

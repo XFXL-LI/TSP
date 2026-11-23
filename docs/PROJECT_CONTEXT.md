@@ -21,7 +21,12 @@ a delay. Runtime work is performed by FreeRTOS tasks and event queues.
 | Variant | Canonical source | Version | Build inputs | Source fingerprint |
 | --- | --- | ---: | ---: | --- |
 | standard | `firmware/standard/TSP` | 2.2.0 | 105 | `F046593515B11BE61F41E732823169926DE0F570C17D00A0E0425EA8812F4DB7` |
-| certified | `firmware/certified/TSP` | 2.2.0.1 | 106 | `D294527487D25BFFAF12CA96A2FE1B219CFEAE9D1509D3E7358707B98198D6D3` |
+| certified | `firmware/certified/TSP` | 2.2.3.1 | 108 | `26DD049F87791DA0DF31A916E51BC1C6D8315D63595295291D96ADDD92809A12` |
+
+The certified 2.2.3.1 mixed-sensor release reserves UART1 for HJ212 upload
+and UART2 for remote commands and OTA. Sensor RS-485 uses UART0, and CN2
+particulate collection uses software serial. Its build and single-device OTA
+smoke test are recorded in the [release notes](../firmware_workspace/releases/2.2.3.1/20261123-hj212-uart1-certified-mixed/RELEASE_NOTES.md).
 
 The certified variant adds `GasSpecificPolicy.h` and applies a 500 ppb upper
 cap to O3, NO2, and SO2. CO is not capped. Its certified calibration profile is

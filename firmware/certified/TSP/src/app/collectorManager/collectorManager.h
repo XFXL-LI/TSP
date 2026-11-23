@@ -62,7 +62,8 @@ public:
     void registerCollector(BaseCollector* collector);
     void poll();
     bool isTvocMode() const;
-    void pollTvoc(uint32_t cycleStartedMs, bool pumpRunning);
+    void pollTvoc(uint32_t cycleStartedMs, bool pumpRunning,
+                  bool (*interrupted)() = nullptr);
     void galpoll();
     size_t getCollectorCount() const { return _collectors.size(); }
 };

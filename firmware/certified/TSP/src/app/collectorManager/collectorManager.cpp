@@ -493,15 +493,29 @@ bool collectorManager::isTvocMode() const {
     return _collectors.size() == 1 && _collectors[0] != nullptr &&
            GasUnitConverter::isTvocSensor(_collectors[0]->getID());
 }
-void collectorManager::pollTvoc(uint32_t cycleStartedMs, bool pumpRunning) {
+void collectorManager::pollTvoc(uint32_t cycleStartedMs, bool pumpRunning,
+                                 bool (*interrupted)()) {
     if (!isTvocMode()) return;
+    const auto waitForSlot = [interrupted](uint32_t target) {
+        if (!interrupted) {
+            waitUntil(target);
+            return true;
+        }
+        while (!deadlineReached(target)) {
+            if (interrupted()) return false;
+            const uint32_t remaining = target - millis();
+            const TickType_t ticks = pdMS_TO_TICKS(remaining < 50 ? remaining : 50);
+            vTaskDelay(ticks == 0 ? 1 : ticks);
+        }
+        return !interrupted();
+    };
     static std::atomic<uint32_t> nextTrace(1);
     TvocPolicy::Batch batch;
     const uint32_t finish = cycleStartedMs + TvocPolicy::PUMP_MS;
     for (uint8_t slot = 0; slot < TvocPolicy::PLANNED_SAMPLES; ++slot) {
         const uint32_t target = cycleStartedMs + TvocPolicy::WINDOW_START_MS +
                                 uint32_t(slot) * TvocPolicy::INTERVAL_MS;
-        waitUntil(target);
+        if (!waitForSlot(target)) return;
         TvocPolicy::Sample sample;
         if (pumpRunning && TvocPolicy::slotAvailable(millis(), cycleStartedMs, slot)) {
             DataPacket* point = _collectors[0]->collect(
@@ -516,7 +530,7 @@ void collectorManager::pollTvoc(uint32_t cycleStartedMs, bool pumpRunning) {
         }
         batch.add(sample);
     }
-    waitUntil(finish);
+    if (!waitForSlot(finish)) return;
     AllDataPacket* allData = new AllDataPacket();
     allData->trace_id = nextTrace.fetch_add(1, std::memory_order_relaxed);
     allData->last_update = currentCollectionTimestamp();

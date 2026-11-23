@@ -6,6 +6,7 @@
 #include "../../module/json/GetDataResponse.h"
 #include "../../module/gas/GasUnitConverter.h"
 #include "../../module/gas/GasCalibrationManager.h"
+#include "../../module/tvoc/TvocCalibrationManager.h"
 #include "../../module/diagnostics/RuntimeMemoryDiagnostics.h"
 #include "../../system/event/eventBus.h"
 #include "../dataManager/dataManager.h"
@@ -114,6 +115,8 @@ void PermissionSystem::sendMsg(Stream *stream, const char *msg)
 {
     LOG_DEBUG("Msg: %s", msg);
     if (_Serialmanager != nullptr && stream == _lcdStream) {
+        // Temporary RS485 turnaround test for LCD requests that end with CRLF.
+        vTaskDelay(pdMS_TO_TICKS(5));
         _Serialmanager->println(_lcdSerialPort, msg);
     } else if (_Serialmanager != nullptr && stream == _dtuStream) {
         _Serialmanager->println(_dtuSerialPort, msg);
@@ -218,6 +221,10 @@ void PermissionSystem::processLine(String line, Stream *stream)
         }
         else if (op == "restart")
         {
+            if (TvocCalibrationManager::getInstance().active()) {
+                sendResponse(stream, op, "NG", "TVOC calibration active");
+                return;
+            }
             sendResponse(stream, "restart", "OK", "Device restarting...");
             ESP.restart();
         }
@@ -470,6 +477,27 @@ void PermissionSystem::executeCommand(const String &cmd, String args, Stream *st
         return;
     }
     _lastActivity = millis();
+
+    auto& tvocCalibration = TvocCalibrationManager::getInstance();
+    if (cmd == "tvoc_calibration") {
+        if (stream != _lcdStream) {
+            sendResponse(stream, cmd, "NG", "LCD interface required");
+            return;
+        }
+        char response[640] = {};
+        if (tvocCalibration.handleRequest(args.c_str(), response, sizeof(response))) {
+            sendMsg(stream, response);
+        } else {
+            sendResponse(stream, cmd, "NG", "Response build failed");
+        }
+        return;
+    }
+    if (tvocCalibration.active() &&
+        (cmd == "set_config" || cmd == "gal_data" || cmd == "gas_calibration" ||
+         cmd == "dtu_command" || cmd == "upload")) {
+        sendResponse(stream, cmd, "NG", "TVOC calibration active");
+        return;
+    }
 
     if (cmd == "gas_calibration")
     {

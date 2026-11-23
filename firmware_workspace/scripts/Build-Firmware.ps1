@@ -4,12 +4,15 @@ param(
     [string]$Variant = 'standard',
     [string]$SourcePath,
     [string]$BuildPath,
+    [ValidateSet('uart1')]
+    [string]$Hj212UartComparison,
     [switch]$DryRun
 )
 
 $ErrorActionPreference = 'Stop'
 $workspaceRoot = Split-Path -Parent $PSScriptRoot
 $repoRoot = Split-Path -Parent $workspaceRoot
+$explicitBuildPath = [bool]$BuildPath
 
 $variantSourcePaths = @{
     standard = Join-Path $repoRoot 'firmware\standard\TSP'
@@ -27,6 +30,17 @@ $BuildPath = [IO.Path]::GetFullPath($BuildPath)
 $allowedBuildRoot = [IO.Path]::GetFullPath((Join-Path $workspaceRoot 'build'))
 $cli = Join-Path $workspaceRoot 'toolchain\arduino-cli.exe'
 $fqbn = 'esp32:esp32:esp32s3:UploadSpeed=921600,USBMode=hwcdc,CDCOnBoot=default,MSCOnBoot=default,DFUOnBoot=default,UploadMode=default,CPUFreq=240,FlashMode=qio,FlashSize=16M,PartitionScheme=app3M_fat9M_16MB,DebugLevel=none,PSRAM=disabled,LoopCore=1,EventsCore=1,EraseFlash=none,JTAGAdapter=default,ZigbeeMode=default'
+if ($Variant -eq 'certified') {
+    $fqbn = $fqbn.Replace('CDCOnBoot=default', 'CDCOnBoot=cdc')
+}
+$compileOptions = @()
+if ($Hj212UartComparison) {
+    if ($Variant -ne 'certified' -or -not $explicitBuildPath) {
+        throw 'Use build-certified.cmd and set a dedicated -BuildPath for the UART1 profile.'
+    }
+    $cppExtraFlags = '-DTSP_HJ212_TX_DIAGNOSTIC=1 -DTSP_HJ212_UART_COMPARISON=1 -DTSP_HJ212_UART1=1'
+    $compileOptions = @('--build-property', "compiler.cpp.extra_flags=$cppExtraFlags")
+}
 
 if (-not (Test-Path -LiteralPath (Join-Path $SourcePath 'TSP.ino'))) {
     throw "Invalid source directory: $SourcePath"
@@ -106,6 +120,9 @@ Write-Host "Output: $BuildPath"
 Write-Host "Version: $firmwareVersion"
 Write-Host "Build inputs: $($sourceStateBefore.Files.Count)"
 Write-Host "Source fingerprint: $sourceFingerprint"
+if ($Hj212UartComparison) {
+    Write-Host 'Build profile: hj212-uart-comparison-uart1'
+}
 if ($DryRun) {
     Write-Host 'Dry check passed; no build directory was created and no compilation was performed.'
     return
@@ -118,7 +135,7 @@ New-Item -ItemType Directory -Path $BuildPath | Out-Null
 
 Write-Host 'Compile only; no MCU flashing will be performed.'
 
-& $cli compile --fqbn $fqbn --build-path $BuildPath $SourcePath
+& $cli compile --fqbn $fqbn --build-path $BuildPath @compileOptions $SourcePath
 if ($LASTEXITCODE -ne 0) {
     throw "Compile failed; arduino-cli exit code: $LASTEXITCODE"
 }
@@ -202,6 +219,11 @@ $manifest = [ordered]@{
         'SHT30 handled independently',
         $debugConstraint
     )
+}
+if ($Hj212UartComparison) {
+    $manifest['buildProfile'] = 'hj212-uart-comparison-uart1'
+    $manifest['compilerCppExtraFlags'] = $cppExtraFlags
+    $manifest['serialTransports'] = [ordered]@{ hj212 = 'uart1'; particle = 'software' }
 }
 $manifest | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $BuildPath 'build-manifest.json') -Encoding UTF8
 $sourceHashLines | Set-Content -LiteralPath (Join-Path $BuildPath 'source-files.sha256') -Encoding UTF8

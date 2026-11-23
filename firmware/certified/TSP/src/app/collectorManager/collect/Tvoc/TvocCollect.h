@@ -5,11 +5,13 @@
 
 class TvocCollect : public BaseCollector {
 private:
+    friend class TvocCalibrationManager;
     TvocCollect() = default;
     String _id;
     Stream* _port = nullptr;
     modbus_manager* _modbus = nullptr;
     bool _versionVerified = false;
+    bool _checkIdleBeforeDaily = true;
 public:
     static TvocCollect& getInstance();
     bool begin() override;

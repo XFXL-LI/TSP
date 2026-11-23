@@ -1,6 +1,6 @@
 # TSP 固件版本与目录说明
 
-最后更新：2026-10-28
+最后更新：2026-11-23
 
 本文件用于区分“正式实机验证固件”“对应的可编译源码”和“当前开发源码”。
 不要只根据目录名或 `TSP.ino` 文件名判断版本。
@@ -10,7 +10,9 @@
 | Variant | 版本 | 当前正式源码 | 构建输入 | 源码指纹 |
 |---|---:|---|---:|---|
 | standard | 2.2.0 | `firmware/standard/TSP` | 105 | `F046593515B11BE61F41E732823169926DE0F570C17D00A0E0425EA8812F4DB7` |
-| certified | 2.2.0.1 | `firmware/certified/TSP` | 106 | `D294527487D25BFFAF12CA96A2FE1B219CFEAE9D1509D3E7358707B98198D6D3` |
+| certified | 2.2.3.1 | `firmware/certified/TSP` | 108 | `26DD049F87791DA0DF31A916E51BC1C6D8315D63595295291D96ADDD92809A12` |
+
+**认证混合机型定点版 2.2.3.1** 沿用 2.2.2.1 B 版的串口分配和诊断，已完成单台远程 OTA 冒烟验证。复建配置、验证范围及应用镜像哈希见发布记录。[发布记录](firmware_workspace/releases/2.2.3.1/20261123-hj212-uart1-certified-mixed/RELEASE_NOTES.md) · [GitHub Release](https://github.com/XFXL-LI/TSP/releases/tag/fw-2.2.3.1-20261123-certified-mixed)
 
 当前构建入口为 `firmware_workspace/build-standard.cmd`、
 `firmware_workspace/build-certified.cmd`和兼容standard的
@@ -23,10 +25,10 @@
 
 该结论不是bit-identical；新旧BIN的差异已由编译时间及其派生镜像元数据完整解释。
 
-当前2.2.0/2.2.0.1的TVOC日常读取版本已编译通过，均为 `compiled-not-hardware-verified`；
+2026-10-28 的 2.2.0/2.2.0.1 TVOC 日常读取基线已编译通过，均为 `compiled-not-hardware-verified`；
 实验版不随本次更新。新构建不覆盖已有INFO测试目录，也未生成新的正式Release。
 
-当前最新已发布的2026-09-07正式Release分别为：
+2026-09-07 已发布的 Release 分别为：
 
 - standard：`firmware_workspace/releases/2.0.22/20260907-gas-pacing-diagnostics`
 - certified：`firmware_workspace/releases/2.0.22.1/20260907-gas-pacing-diagnostics-certified`

@@ -11,6 +11,9 @@ class modbus_manager
 private:
     ModbusRTU* _mb_instances;;
     Stream* _serial_ports;
+    bool writeRegisters(uint8_t slaveId, uint16_t address, uint16_t count,
+                        uint16_t* values, uint8_t attempts, uint32_t timeoutMs,
+                        uint32_t retryDelayMs, bool singleRegister);
 
 public:
 
@@ -20,9 +23,10 @@ public:
     modbus_manager(const modbus_manager&) = delete;
     modbus_manager& operator=(const modbus_manager&) = delete;
 
-    void modbus_init(Stream *current_port);
+    void modbus_init(Stream *current_port, uint32_t interFrameTimeUs = 4000);
     uint16_t readModbusReg(uint8_t slave, uint16_t addr);
     bool writeModbusReg(uint8_t slaveId, uint16_t startAddr, uint32_t writeValue);
+    bool writeModbusRegOnce(uint8_t slaveId, uint16_t address, uint16_t value);
 
     bool readModbusRegs(uint8_t slaveId, uint16_t startAddr, uint16_t count,
                         uint16_t* destBuffer, uint8_t maxAttempts = 3,

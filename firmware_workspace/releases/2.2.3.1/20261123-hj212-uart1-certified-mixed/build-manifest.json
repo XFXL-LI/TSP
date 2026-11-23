@@ -1,0 +1,27 @@
+﻿{
+    "firmwareVersion":  "2.2.3.1",
+    "variant":  "certified",
+    "status":  "compiled-not-hardware-verified",
+    "compiledAt":  "2026-11-23T11:57:40+08:00",
+    "sourcePath":  "D:\\ChatGPT-Pro\\TSP-ESP32-S3\\firmware\\certified\\TSP",
+    "buildInputCount":  108,
+    "sourceFingerprintSha256":  "26DD049F87791DA0DF31A916E51BC1C6D8315D63595295291D96ADDD92809A12",
+    "esp32Core":  "3.3.7",
+    "fqbn":  "esp32:esp32:esp32s3:UploadSpeed=921600,USBMode=hwcdc,CDCOnBoot=cdc,MSCOnBoot=default,DFUOnBoot=default,UploadMode=default,CPUFreq=240,FlashMode=qio,FlashSize=16M,PartitionScheme=app3M_fat9M_16MB,DebugLevel=none,PSRAM=disabled,LoopCore=1,EventsCore=1,EraseFlash=none,JTAGAdapter=default,ZigbeeMode=default",
+    "applicationBytes":  717088,
+    "applicationSha256":  "D7D47F1F3DF5271DED07259D0124334D01C107407AB12A7C7DBE167AEDCBE61C",
+    "constraints":  [
+                        "hourly statistics include every valid realtime batch",
+                        "realtime collection period fixed at 120 seconds",
+                        "air-path pump runtime fixed at 70 seconds",
+                        "HJ212 packet gap 3000ms",
+                        "SHT30 handled independently",
+                        "Runtime logging: LOG_LEVEL_INFO"
+                    ],
+    "buildProfile":  "hj212-uart-comparison-uart1",
+    "compilerCppExtraFlags":  "-DTSP_HJ212_TX_DIAGNOSTIC=1 -DTSP_HJ212_UART_COMPARISON=1 -DTSP_HJ212_UART1=1",
+    "serialTransports":  {
+                             "hj212":  "uart1",
+                             "particle":  "software"
+                         }
+}

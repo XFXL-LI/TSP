@@ -3,6 +3,14 @@
 #include "SerialManager.h"
 #include <SoftwareSerial.h>
 
+#if !ARDUINO_USB_CDC_ON_BOOT
+#error "Enable USB CDC On Boot to reserve UART0 for the sensor RS-485 bus."
+#endif
+
+#if defined(TSP_HJ212_UART1) && !defined(TSP_HJ212_UART_COMPARISON)
+#error "Reassign the particle sensor to software serial before using UART1 for HJ212."
+#endif
+
 static constexpr size_t REMOTE_DTU_RX_BUFFER_SIZE = 2048;
 
 SerialManager& SerialManager::getInstance() {
@@ -11,12 +19,35 @@ SerialManager& SerialManager::getInstance() {
 }
 
 void SerialManager::begin(void){
+#if defined(TSP_HJ212_UART_COMPARISON)
+    SoftwarePortInit(SERIAL_TTL, TTL_RXD, TTL_TXD, TTL_BAUD);
+#else
     HardwarePortInit(SERIAL_TTL, &Serial1, TTL_BAUD, TTL_RXD, TTL_TXD);
+#endif
     HardwarePortInit(SERIAL_DTU, &Serial2, DTU_BAUD, DTU_RXD, DTU_TXD);
+    HardwarePortInit(SERIAL_485, &Serial0, RS485_BAUD, RS485_RXD, RS485_TXD);
+    LOG_INFO("[DIAG] SENSOR_RS485 transport=uart0 rx=%d tx=%d baud=%u",
+             RS485_RXD, RS485_TXD, (unsigned)RS485_BAUD);
     
     SoftwarePortInit(SERIAL_LCD, LCD_RXD, LCD_TXD, LCD_BAUD);
-    SoftwarePortInit(SERIAL_485, RS485_RXD, RS485_TXD, RS485_BAUD);
+#if defined(TSP_HJ212_UART1)
+    constexpr size_t hj212RxBufferSize = 1024;
+    const size_t configuredSize = Serial1.setRxBufferSize(hj212RxBufferSize);
+    if (configuredSize < hj212RxBufferSize) {
+        LOG_ERROR("HJ212 UART1 RX buffer setup failed: requested=%u actual=%u",
+                  (unsigned)hj212RxBufferSize, (unsigned)configuredSize);
+    }
+    HardwarePortInit(SERIAL_HJ212, &Serial1, HJ212_BAUD, HJ212_RXD, HJ212_TXD);
+    LOG_INFO("[DIAG] UART_COMPARISON hj212=uart1 particle=software");
+    if (!Serial1) {
+        LOG_ERROR("HJ212 UART1 initialization failed");
+    }
+#else
     SoftwarePortInit(SERIAL_HJ212, HJ212_RXD, HJ212_TXD, HJ212_BAUD);
+#if defined(TSP_HJ212_UART_COMPARISON)
+    LOG_INFO("[DIAG] UART_COMPARISON hj212=software particle=software");
+#endif
+#endif
     SoftwarePortInit(SERIAL_LED, LED_RXD, LED_TXD, LED_BAUD);
 
     LOG_INFO("Serial init success!");

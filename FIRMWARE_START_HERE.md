@@ -1,6 +1,6 @@
 # TSP Firmware 从这里开始
 
-最后更新：2026-10-28
+最后更新：2026-11-23
 
 本文件是当前固件源码、构建和发布入口。详细版本关系见
 [固件版本与目录说明](FIRMWARE_VERSION_LOCATIONS.md)，仓库整体说明见
@@ -18,7 +18,9 @@ AI辅助开发应同时读取：
 | Variant | 版本 | 正式源码 | 构建输入 | 源码指纹 |
 |---|---:|---|---:|---|
 | standard | 2.2.0 | `firmware/standard/TSP` | 105 | `F046593515B11BE61F41E732823169926DE0F570C17D00A0E0425EA8812F4DB7` |
-| certified | 2.2.0.1 | `firmware/certified/TSP` | 106 | `D294527487D25BFFAF12CA96A2FE1B219CFEAE9D1509D3E7358707B98198D6D3` |
+| certified | 2.2.3.1 | `firmware/certified/TSP` | 108 | `26DD049F87791DA0DF31A916E51BC1C6D8315D63595295291D96ADDD92809A12` |
+
+认证混合机型定点版使用硬件 UART1 上报，已完成单台实机远程 OTA 冒烟验证。应用 OTA 使用 Release 中的 `firmware.bin`。复建认证混合机型使用 `build-certified.cmd -Hj212UartComparison uart1` 和独立的 `-BuildPath`。[2.2.3.1 发布记录](firmware_workspace/releases/2.2.3.1/20261123-hj212-uart1-certified-mixed/RELEASE_NOTES.md)
 
 此前2.1.7系列恢复常规流程的源码均已编译通过，状态为
 `compiled-not-hardware-verified`。实时数据固定每120秒形成一批；有空气通道因子时气泵
@@ -46,7 +48,7 @@ JSON正常回显、采集阶段和正常复读详情不再默认输出。`HJ_UAR
 恢复失败、LED写入失败、最终无效传感器及SD读写异常保留提示；操作返回时耗时至少3秒
 记录`SD_IO_SLOW`，不强行取消SDK调用。小时／日历史读取异常和现场残帧仍未宣称解决。
 
-当前构建产物位于：
+2026-10-28 TVOC 台架基线的构建目录为：
 
 - standard：`firmware_workspace/build/standard-2.2.0-tvoc-final-20261028`
 - certified：`firmware_workspace/build/certified-2.2.0.1-tvoc-final-20261028`
@@ -74,6 +76,10 @@ flash-verified.cmd       受保护烧录入口，必须明确授权后使用
 `firmware_workspace/scripts/`保存正式构建、验证和烧录逻辑。
 
 ## 最新已发布 Release
+
+- [认证混合机型 2.2.3.1](https://github.com/XFXL-LI/TSP/releases/tag/fw-2.2.3.1-20261123-certified-mixed)，状态 `hardware-smoke-tested`。
+
+2026-09-07 的已发布版本：
 
 | Variant | Release | 状态 |
 |---|---|---|

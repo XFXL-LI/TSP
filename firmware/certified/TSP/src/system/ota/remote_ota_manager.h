@@ -18,6 +18,8 @@ enum class LcdInputMode : uint8_t
 bool begin(UBaseType_t listenerPriority, UBaseType_t activePriority);
 
 bool isActive();
+bool tryBeginTvocCalibration();
+void endTvocCalibration();
 
 // LCD OTA coordination. During WaitAck the LCD parser accepts only the
 // current ota_status_ack. During Drain it keeps emptying the RX buffer but
